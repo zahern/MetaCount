@@ -1,0 +1,25 @@
+#!/bin/bash -l
+#PBS -N path_data
+#PBS -l walltime=23:59:00
+#PBS -l mem=30GB
+#PBS -l ncpus=1
+#PBS -l ngpus=1
+#PBS -j eo
+#PBS -m n
+#PBS -r y
+
+
+
+
+
+
+
+cd $PBS_O_WORKDIR
+
+module purge
+module load anaconda3/2019.10
+conda activate py10
+conda list
+echo "Input line: $LINENUM"
+
+python zeke.py $LINENUM

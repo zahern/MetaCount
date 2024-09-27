@@ -1,0 +1,29 @@
+#!/bin/bash -l
+#PBS -N path_data
+#PBS -l walltime=23:59:00
+#PBS -l mem=100GB
+#PBS -l ncpus=1
+#PBS -l ngpus=0
+#PBS -j eo
+#PBS -m n
+#PBS -r y
+
+
+
+
+
+
+
+cd $PBS_O_WORKDIR
+
+module purge
+module load anaconda3/2019.10
+conda activate myenv
+conda list
+echo "Input line: $LINENUM"
+
+# Remove all .o files
+rm -f *.o
+rm -f *.e
+
+python main.py $LINENUM

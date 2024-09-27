@@ -1,0 +1,2 @@
+Model Types,Objective Type,Objective Metric,MAXTIME,Iterations,Train Split,Validation Split,Test Split
+['Poisson'],Multi,BIC,240000,234.0,80,0,100
