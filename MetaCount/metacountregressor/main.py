@@ -297,7 +297,9 @@ def main(args, **kwargs):
 
         if not np.isnan(data_info['data']['Grouped'][0]):
             args['group'] = data_info['data']['Grouped'][0]
-        args['panels'] = data_info['data']['Panel'][0]
+            args['ID'] = data_info['data']['Grouped'][0]
+        if not np.isnan(data_info['data']['Panel'][0]):
+            args['panels'] = data_info['data']['Panel'][0]
 
         df = pd.read_csv(str(data_info['data']['Problem'][0]))
         x_df = df.drop(columns=[data_info['data']['Y'][0]])
@@ -321,6 +323,8 @@ def main(args, **kwargs):
         args['group'] = 'group'
         args['panels'] = 'ind_id'
         args['ID'] = 'ind_id'
+
+
 
     args['complexity_level'] = args.get('complexity_level', 6)
 
