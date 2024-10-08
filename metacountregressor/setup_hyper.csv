@@ -1,0 +1,2 @@
+Model Types,Objective Type,Primary Objective Metric,Secondary Objective Metric,MAXTIME,Iterations,Train Split,Validation Split,Test Split
+"[0,1]",Multi,BIC,RMSE,240000,100,60,20,20
