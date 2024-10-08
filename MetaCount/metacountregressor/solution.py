@@ -2540,7 +2540,7 @@ class ObjectiveFunction(object):
         random.seed(seed)
 
     def set_random_seed(self):
-        print('Imbdedding Seed', self._random_seed)
+        print('Imbedding Seed', self._random_seed)
         np.random.seed(self._random_seed)
 
         random.seed(self._random_seed)
