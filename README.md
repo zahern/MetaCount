@@ -8,10 +8,24 @@
 
 The tutorial provides more extensive examples on how to run the code and perform experiments. Further documentation is currently in development.
 
-##### Quick Setup
+# For an Application Setup Download the following GUI
+[Download Application](https://github.com/zahern/MetaCount/tree/master/metacountregressor/application_gui/dist/meta_app)
+
+The application involves setting up a problem instance to run the models.
+
+### Entire [Git Repository](https://github.com/zahern/MetaCount.git) is available to clone.
+#### Steps
+1. Clone Project
+2. Navigate to "metacountregressor/application_gui/dist/meta_app"
+3. Run meta_app.exe
+4. Navigate to metacountregressor/app_main.py
+5. Run app_main.py
+
+
+## Setup For Python Package Approach
 The Below code demonstrates how to set up automatic optimization assisted by the harmony search algorithm. References to the Differential Evolution and Simulated Annealing has been mentioned (change accordingly)
 
-## Quick install: Requires Python 3.10
+## Install: Requires Python 3.10
 
 Install `metacountregressor` using pip as follows:
 
