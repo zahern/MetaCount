@@ -1,9 +1,0 @@
-Column,Level 1,Level 2,Level 3,Level 4,Level 5,Level 6,Distributions,Transformations
-US,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-RSHS,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-RSMS,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-Offset,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-LNAADT,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-LNMCV,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-Curve50,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-Constant,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
