@@ -1,9 +1,38 @@
 Column,Level 1,Level 2,Level 3,Level 4,Level 5,Level 6,Distributions,Transformations
-US,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-RSHS,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-RSMS,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-Offset,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-LNAADT,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-LNMCV,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-Curve50,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
-Constant,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform']",[]
+zonal_ID,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+weather_station,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+DP01,FALSE,FALSE,FALSE,FALSE,TRUE,FALSE,['Normal'],['no']
+DP10,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+DSND,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+DSNW,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+DX32,FALSE,FALSE,FALSE,FALSE,TRUE,FALSE,['Normal'],['no']
+PRCP,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+SNOW,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+TAVG,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+TMAX,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+TMIN,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+max_prcp,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+max_snow,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+year,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+month,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+dummy_winter,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+dummy_winter_2,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+inj.fat,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+PDO,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+segment_length,FALSE,TRUE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']",['no']
+curve,FALSE,TRUE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']",['no']
+speed,FALSE,TRUE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']",['no']
+jurisdiction,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+left_shoulder_width,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+right_shoulder_width,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+paved_shoulder,FALSE,TRUE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']",['no']
+num_lanes,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+rumble_install_year,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+FAADT,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+town,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+orig_ID,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+maint_region,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+ANNUAL_ADT,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+monthly_AADT,FALSE,TRUE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']",['no']
+ln_AADT,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+ln_seg,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"

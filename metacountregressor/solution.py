@@ -30,7 +30,7 @@ from scipy.special import gammaln
 from sklearn.metrics import mean_absolute_error as MAE
 from sklearn.metrics import mean_squared_error as MSPE
 from statsmodels.tools.numdiff import approx_fprime, approx_hess
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from texttable import Texttable
 
 try:
@@ -42,7 +42,7 @@ except ImportError:
     from pareto_file import Pareto, Solution
     from data_split_helper import DataProcessor
 
-
+from scipy import stats
 np.seterr(divide='ignore', invalid='ignore')
 warnings.simplefilter("ignore")
 
@@ -124,10 +124,11 @@ class ObjectiveFunction(object):
 
         self.reg_penalty = 0
         self.power_up_ll = False
-
+        self.nb_parma = 1
         self.bic = None
         self.other_bic = False
         self.test_flag = 1
+        self.no_extra_param =1 #if true, fix dispersion. w
         if self.other_bic:
             print('change this to false latter ')
 
@@ -138,7 +139,7 @@ class ObjectiveFunction(object):
         self.verbose_safe = True
         self.please_print = kwargs.get('please_print', 0)
         self.group_halton = None
-        self.grad_yes = False
+        self.grad_yes = True
         self.hess_yes = False
         self.group_halton_test = None
         self.panels = None
@@ -174,8 +175,10 @@ class ObjectiveFunction(object):
         self._panels = None
         self.is_multi = True
         self.method_ll = 'Nelder-Mead-BFGS'
+
         self.method_ll = 'L-BFGS-B'  # alternatives 'BFGS_2', 'BFGS
         self.method_ll = 'BFGS_2'
+        #self.method_ll = 'Nelder-Mead-BFGS'
         self.Keep_Fit = 2
         self.MP = 0
         # Nelder-Mead-BFGS
@@ -214,6 +217,11 @@ class ObjectiveFunction(object):
         self._maximize = False  # do we maximize or minimize?
 
         x_data = sm.add_constant(x_data)
+        standardize_the_data = 0
+        if standardize_the_data:
+            print('we are standardize the data')
+            x_data = self.self_standardize_positive(x_data)
+
         self._input_data(x_data, y_data)
 
 
@@ -232,7 +240,7 @@ class ObjectiveFunction(object):
             if self.test_percentage == 0:
                 self.is_multi = False
 
-            if 'panels' in kwargs and not np.isnan(kwargs.get('panels')):
+            if 'panels' in kwargs and not (kwargs.get('panels') == None):
                 self.group_names = np.asarray(x_data[kwargs['group']].astype('category').cat._parent.dtype.categories)
 
                 x_data[kwargs['group']] = x_data[kwargs['group']].astype(
@@ -275,11 +283,11 @@ class ObjectiveFunction(object):
 
         #self.n_obs = N
         self._characteristics_names = list(self._x_data.columns)
-        self._max_group_all_means = 1
+        self._max_group_all_means = 2
 
         exclude_this_test = [4]
         
-        if 'panels' in kwargs and not np.isnan(kwargs.get('panels')):
+        if 'panels' in kwargs and not (kwargs.get('panels') == None):
             self.panels = np.asarray(df_train[kwargs['panels']])
             self.panels_test = np.asarray(df_test[kwargs['panels']])
             self.ids = np.asarray(
@@ -295,6 +303,8 @@ class ObjectiveFunction(object):
             self.group_halton = group.copy()
             self.group_dummies = pd.get_dummies(group)
             Xnew, Ynew, panel_info = self._balance_panels(X, Y, panel)
+
+            Xnew = pd.DataFrame(Xnew, columns=X.columns)
             self.panel_info = panel_info
             self.N, self.P = panel_info.shape
             Xnew.drop(kwargs['panels'], axis=1, inplace=True)
@@ -385,7 +395,7 @@ class ObjectiveFunction(object):
 
 
 
-        self.Ndraws = 200  # todo: change back
+        self.Ndraws = 1400  # todo: change back
         self.draws1 = None
         self.initial_sig = 1  # pass the test of a single model
         self.pvalue_sig_value = .1
@@ -408,7 +418,7 @@ class ObjectiveFunction(object):
         # self._transformations = ["no", "sqrt", "log", "exp", "fact", "arcsinh", 2, 3]
         self._transformations = ["no", "sqrt", "log", "arcsinh"]
         self._transformations = kwargs.get('_transformation', ["no", "sqrt", "log", 'arcsinh'])
-
+        self._transformations = kwargs.get('_transformation', ["no", "log", "sqrt", "arcsinh"])
         # self._distribution = ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal', 'lindley']
 
         self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal'])
@@ -766,6 +776,8 @@ class ObjectiveFunction(object):
         if dispersion == 0:
             return None, None
         elif dispersion == 2 or dispersion == 1:
+            if self.no_extra_param:
+                return self.nb_parma, None
             return betas[-1], None
 
         elif dispersion == 3:
@@ -817,6 +829,8 @@ class ObjectiveFunction(object):
                     distro = ast.literal_eval(extra.iloc[matched_index, 7].values.tolist()[0])
                     distro = self.rename_distro(distro)
                     set_alpha = set_alpha+[distro]
+                elif col == 'const':
+                    set_alpha = set_alpha +[['normal']]
             return set_alpha
         return  [[x for x in self._distribution]] * self._characteristics
 
@@ -897,10 +911,12 @@ class ObjectiveFunction(object):
             return ([self._model_type_codes[dispersion]])
 
     def naming_for_printing(self, betas=None, no_draws=0, dispersion=0, fixed_fit=None, rdm_fit=None, rdm_cor_fit=None, obj_1=None, model_nature=None):
-        r'''
+        '''
         setup for naming of the model summary
         '''
+        if self.no_extra_param and dispersion ==1:
 
+            betas = np.append(betas, self.nb_parma)
 
         self.name_deleter = []
         group_rpm = None
@@ -1025,7 +1041,7 @@ class ObjectiveFunction(object):
             try:
                 if len(betas) != len(names):
                     print('no draws is', no_draws)
-                    print('fix_theano')
+
             except Exception as e:
                 print(e)
 
@@ -1052,7 +1068,8 @@ class ObjectiveFunction(object):
         if not isinstance(self.pvalues, np.ndarray):
             raise Exception
 
-
+        if 'nb' in self.coeff_names and self.no_extra_param:
+            self.pvalues = np.append(self.pvalues,0)
 
         if self.please_print or save_state:
 
@@ -1068,17 +1085,22 @@ class ObjectiveFunction(object):
 
                 if solution is not None:
                     print(f"{self._obj_2}: {self.round_with_padding(solution[self._obj_2], 2)}")
-
+            
             self.pvalues = [self.round_with_padding(
                 x, 2) for x in self.pvalues]
             signif_list = self.pvalue_asterix_add(self.pvalues)
             if model == 1:
 
-                self.coeff_[-1] = 1/np.exp(self.coeff_[-1])
-                if self.coeff_[-1] < 0.25:
+                #self.coeff_[-1] = 1/np.exp(self.coeff_[-1])
+                if self.no_extra_param:
+                    self.coeff_ = np.append(self.coeff_, self.nb_parma)
+                    self.stderr = np.append(self.stderr, 0.00001)
+                    self.zvalues = np.append(self.zvalues, 50)
+
+                elif self.coeff_[-1] < 0.25:
                     print(self.coeff_[-1], 'Warning Check Dispersion')
                     print(np.exp(self.coeff_[-1]))
-                    self.coeff_[-1] = np.exp(self.coeff_[-1])  # min possible value for negbinom
+                    #self.coeff_[-1] = np.exp(self.coeff_[-1])  # min possible value for negbinom
 
             self.coeff_ = [self.round_with_padding(x, 2) for x in self.coeff_]
 
@@ -1301,6 +1323,7 @@ class ObjectiveFunction(object):
 
             if 'AADT' in self._characteristics_names[col]:
                 new_transform = [['log']]
+                #new_transform = [['no']]
                 transform_set = transform_set + new_transform
 
             elif all(x_data[col] <= 5):
@@ -1340,6 +1363,18 @@ class ObjectiveFunction(object):
 
         return transform_set
 
+    def poisson_mean_get_dispersion(self, betas, X, y):
+        eVy = self._loglik_gradient(betas, X, y, None, X, None, None, False, False, dispersion=0,
+                                    return_EV=True,
+                                    zi_list=None, draws_grouped=None, Xgroup=None)
+        
+        ab = ((y - eVy)**2 - eVy)/eVy
+        bb = eVy -1
+        disp = sm.OLS(ab.ravel(), bb.ravel()).fit()
+        gamma = disp.params[0]
+        print(f'dispersion is {gamma}')
+        return gamma
+
     def validation(self, betas, y, X, Xr=None, dispersion=0, rdm_cor_fit=None, zi_list=None, exog_infl=None,
                    model_nature=None, halton=1, testing=1, validation=0):
         'validation if mu needs to be calculated'
@@ -1373,7 +1408,7 @@ class ObjectiveFunction(object):
                         XG = model_nature.get('XGtest')[:total_percent, :, :]
                     else:
                         XG = model_nature.get('XGtest')[total_percent:, :, :]
-                    print('chekc this is doing it wright')
+
             else:
                 if 'XG' in model_nature:
                     XG = model_nature.get('XG')
@@ -1495,7 +1530,7 @@ class ObjectiveFunction(object):
         5: herogeneity_in _means
 
 
-        a: how to transofrm the original data
+        a: how to transform the original data
         b: grab dispersion '''
 
         # todo: better way
@@ -1843,7 +1878,10 @@ class ObjectiveFunction(object):
         elif dispersion == 4:
             return 2
         else:
-            return 1
+            if self.no_extra_param:
+                return 0
+            else:
+                return 1
 
     def get_pvalue_info_alt(self, pvalues, names, sig_value=0.05, dispersion=0, is_halton=1, delete=0,
                             return_violated_terms=0):
@@ -1858,6 +1896,7 @@ class ObjectiveFunction(object):
 
         else:
             slice_this_amount = self.num_dispersion_params(dispersion)
+            slice_this_amount = 1 #TODO handle this
             if pvalues[-1] > sig_value:
                 vio_counts += 1
             subpvalues = pvalues[:-slice_this_amount].copy()
@@ -3502,20 +3541,37 @@ class ObjectiveFunction(object):
         # if gamma <= 0.01: #min defined value for stable nb
         #  gamma = 0.01
 
+        #g = stats.gamma.rvs(gamma, scale = lam/gamma, size = 1.0 / gamma * lam ** Q )
 
+        #gg = stats.poisson.rvs(g)
 
+        
 
+        
         endog = y
         mu = lam
+        ''''
+        mu = lam*np.exp(gamma) #TODO check that this does not need to be multiplied
         alpha = np.exp(gamma)
-        #size = 1.0 / alpha * mu ** Q
-        alpha_size = alpha * mu ** Q
-        # prob = size/(size+mu)
-        prob = alpha / (alpha + mu)
-        # prob = 1/(1+mu*alpha)
+        
+        '''
+        alpha = gamma
+        size = 1.0 / alpha * mu ** Q
+
+        prob = size/(size+mu)
+
+
 
         '''test'''
 
+
+        '''
+        size = 1 / np.exp(gamma) * mu ** 0
+        prob = size / (size + mu)
+        coeff = (gammaln(size + y) - gammaln(y + 1) -
+             gammaln(size)) 
+        llf = coeff + size * np.log(prob) + y * np.log(1 - prob)
+        '''
 
         try:
             # print(np.shape(y),np.shape(size), np.shape(prob))
@@ -3528,22 +3584,28 @@ class ObjectiveFunction(object):
             #start_time = time.time()
             #for _ in range(10000):
 
-            #gg = self.negbinom_pmf(alpha_size, prob, y)
+
             #end_time = time.time()
             #print("Custom functieon time:", end_time - start_time)
             #start_time = time.time()
             #for _ in range(10000):
+            '''
             gg = np.exp(
                 gammaln(y + alpha) - gammaln(y + 1) - gammaln(alpha) + y * np.log(mu) + alpha * np.log(alpha) - (
                         y + alpha) * np.log(mu + alpha))
             gg[np.isnan(gg)] = 1
+            '''
+            gg_alt = nbinom.pmf(y ,1/alpha, prob)
+            #gg_alt_2 = (gammaln(size + y) - gammaln(y + 1) -
+             #gammaln(size)) + size * np.log(prob) + y * np.log(1 - prob)
+            #print('check theses')
             #gg = nbinom.pmf(y ,alpha, prob)
             #end_time = time.time()
             #print("Custom functieon time:", end_time - start_time)
 
         except Exception as e:
             print(e)
-        return gg
+        return gg_alt
 
     def lindley_pmf(self, x, r, theta, k=50):
         """
@@ -3690,8 +3752,8 @@ class ObjectiveFunction(object):
 
         if dispersion == 1 or dispersion == 4:  # nb
             # if model_nature is not None and 'dispersion_penalty' in model_nature:
-
-
+            #b_gam = 1/np.exp(b_gam)
+            #print(b_gam)
             if b_gam <= 0:
                 #penalty += 100
                 #penalty += abs(b_gam)
@@ -3699,9 +3761,9 @@ class ObjectiveFunction(object):
                 #b_gam = 1
 
                 # if b_gam < 0.03:
-                penalty += min(1, np.abs(b_gam))
+                penalty += min(1, np.abs(b_gam), 0)
 
-                b_gam = 0.001
+                #b_gam = 0.001
                 #
             
             #if b_gam >= 10:
@@ -3733,8 +3795,15 @@ class ObjectiveFunction(object):
     def eXB_calc(self, params_main, Xd, offset, dispersion, b_gam=None):
 
         # print('this was 0')
-        eta = np.dot(Xd, params_main)[:, :, None] + np.array(offset[:, :, :])
+        if dispersion:
+            eta=  np.dot(Xd, params_main)[:, :, None] + np.array(offset[:, :, :])
+
+            #eta=  np.dot(Xd, params_main)[:, :, None] + np.array(offset[:, :, :])+dispersion
+            #print('check if this holds size')
+        else:
+            eta = np.dot(Xd, params_main)[:, :, None] + np.array(offset[:, :, :])
         eta = np.array(eta)
+
         # eta  = np.float64(eta)
         # eta = np.dot(Xd, params_main)+offset[:,:,0]
         # eta2 = np.dot(Xd, params_main)[:,:,None]+np.array(offset[:,:,:])
@@ -3907,6 +3976,8 @@ class ObjectiveFunction(object):
         if dispersion == 0 or dispersion == 3:
             return 0
         else:
+            
+
             return 1
 
     def _prob_product_across_panels(self, pch, panel_info):
@@ -3962,7 +4033,7 @@ class ObjectiveFunction(object):
                 if y[i] == 0:
                     gr_e[i] = 0
 
-        if self.is_dispersion(dispersion):
+        if self.is_dispersion(dispersion) and not self.no_extra_param:
             gr_d = np.zeros((N, 1))
             if dispersion == 1:
                 # trying alt
@@ -4067,9 +4138,9 @@ class ObjectiveFunction(object):
         dprod_r = dev.np.einsum("njk,njr -> nkr", Xdr,
                                 einsum_model_form, dtype=np.float64)  # (N,K,R)
         der_prod_r = dprod_r * der * proba_n[:, None, :]  # (N,K,R)
-        der_prod_r = dprod_r * der * proba_n[:, X_tril_idx, :]  # I think this is the case check
+        #der_prod_r = dprod_r * der * proba_n[:, X_tril_idx, :]  # I think this is the case check
         der_prod_r = dprod_r[:, X_tril_idx, :] * der * proba_n[:, None, :]  # or this one
-        print('which one of these')
+        #print('which one of these')
         der_t = self._compute_derivatives(
             br, draws_[:, draws_tril_idx, :], brstd, self.dist_fit)  # (N,K,R)
         # er_t = self._compute_derivatives(br, draws_, brstd[:, draws_tril_idx,: ], self.dist_fit, draws_tril_idx)
@@ -4132,8 +4203,12 @@ class ObjectiveFunction(object):
             grad_n = self._concat_gradients(
                 (gr_f, gr_u, gr_s, gr_e)) / Rlik  # (N,K)
         else:
-            grad_n = self._concat_gradients(
-                (gr_f, gr_u, gr_s, gr_h, gr_hs, gr_d[:, None])) / Rlik  # (N,K)
+            if self.no_extra_param:
+                grad_n = self._concat_gradients(
+                    (gr_f, gr_u, gr_s, gr_h, gr_hs)) / Rlik  # (N,K)
+            else:    
+                grad_n = self._concat_gradients(
+                    (gr_f, gr_u, gr_s, gr_h, gr_hs, gr_d[:, None])) / Rlik  # (N,K)
         grad_n = np.nan_to_num(grad_n, nan=0, posinf=10000, neginf=-10000)
         grad_n = np.clip(grad_n, -1000, 1000)
         n = np.shape(grad_n)[0]
@@ -4290,7 +4365,7 @@ class ObjectiveFunction(object):
             return proba_r.sum(axis=1), np.squeeze(proba_r)
 
     def _penalty_betas(self, betas, dispersion, penalty, penalty_ap=100.0):
-        penalty_val = 0.05
+        penalty_val = 0.1
         penalty_val_max = 130
 
         # print('change_later')
@@ -4306,8 +4381,8 @@ class ObjectiveFunction(object):
             if abs(i) > penalty_val_max:
                 penalty += abs(i)
 
-        # if abs(i) < penalty_val:
-        #  penalty += 5
+        #if abs(i) < penalty_val:
+        #    penalty += 5
 
         # penalty = 0
         return penalty
@@ -4414,8 +4489,7 @@ class ObjectiveFunction(object):
                 index += 1
 
         brstd = br_std
-        print(brstd)
-        print(brstd)
+
 
 
     def _loglik_gradient(self, betas, Xd, y, draws=None, Xf=None, Xr=None, batch_size=None, return_gradient=False,
@@ -4447,7 +4521,7 @@ class ObjectiveFunction(object):
             penalty = self._penalty_betas(
                 betas, dispersion, penalty, float(len(y) / 10.0))
             self.n_obs = len(y)  # feeds into gradient
-            if draws is None and draws_grouped is None and (
+            if draws is None and draws_grouped is None and (model_nature is None or
                     'draws_hetro' not in model_nature or model_nature.get('draws_hetro').shape[1] == 0):
                 #TODO do i shuffle the draws
                 if type(Xd) == dict:
@@ -4594,7 +4668,9 @@ class ObjectiveFunction(object):
                 Kf = 0
             else:
                 if n_coeff != len(betas):
-                    raise Exception
+                    raise Exception(
+
+                    )
                 Bf = betas[0:Kf]  # Fixed betas
 
 
@@ -4696,7 +4772,8 @@ class ObjectiveFunction(object):
                 eVd = self.lam_transform(eVd, dispersion, betas[-1])
 
             if self.is_dispersion(dispersion):
-                penalty, betas[-1] = self._penalty_dispersion(
+                if not self.no_extra_param:
+                    penalty, betas[-1] = self._penalty_dispersion(
                     dispersion, betas[-1], eVd, y, penalty, model_nature)
 
             ''' 
@@ -5341,7 +5418,7 @@ class ObjectiveFunction(object):
         return a
 
     def fitRegression(self, mod,
-                      dispersion=0, maxiter=2000, batch_size=None, num_hess=False):
+                      dispersion=0, maxiter=2000, batch_size=None, num_hess=False, **kwargs):
 
         """
         Fits a poisson regression given data and outcomes if dispersion is not declared
@@ -5387,6 +5464,8 @@ class ObjectiveFunction(object):
                     _g, pg, kg = 0, 0, 0
 
                 dispersion_param_num = self.is_dispersion(dispersion)
+                if self.no_extra_param:
+                    dispersion_param_num =0
 
                 #paramNum = self.get_param_num(dispersion)
                 self.no_random_paramaters = 0
@@ -5441,17 +5520,26 @@ class ObjectiveFunction(object):
                 else:
                     bb[0] = self.constant_value
                     if dispersion == 1:
-                        bb[-1] = self.negative_binomial_value
+                        if not self.no_extra_param:
+                            bb[-1] = self.negative_binomial_value
                     bounds = None
+
+
 
                 # intial_beta = minimize(self._loglik_gradient, bb, args =(XX, y, None, None, None, None, calc_gradient, hess_est, dispersion, 0, False, 0, None, sub_zi, exog_infl, None, None, mod), method = 'nelder-mead', options={'gtol': 1e-7*len(XX)})
                 hess_est = False if method2 in ['L-BFGS-B', 'BFGS_2', 'Nelder-Mead-BFGS'] else True
-                initial_beta = self._minimize(self._loglik_gradient, bb,
+                
+                if self.no_extra_param:
+                    dispersion_poisson = 0
+                    initial_beta = self._minimize(self._loglik_gradient, bb,
                                               args=(XX, y, None, None, None, None, calc_gradient, hess_est,
-                                                    dispersion, 0, False, 0, None, None, None, None, None,
+                                                    dispersion_poisson, 0, False, 0, None, None, None, None, None,
                                                     mod),
                                               method=method2, tol=1e-5, options={'gtol': tol['gtol']},
                                               bounds=bounds)
+                    if dispersion:
+                        nb_parma = self.poisson_mean_get_dispersion(initial_beta.x, XX, y)
+                    
 
 
 
@@ -5551,7 +5639,7 @@ class ObjectiveFunction(object):
 
                         b = [b[i] if i > len(self.none_handler(self.fixed_fit)) + len(
                             self.none_handler(self.rdm_fit)) + len(
-                            self.none_handler(self.rdm_cor_fit)) else b[i] / 1.3 for i in range(len(b))]
+                            self.none_handler(self.rdm_cor_fit)) else b[i] / 1 for i in range(len(b))]
                     else:
                         b = bb
 
@@ -5561,9 +5649,10 @@ class ObjectiveFunction(object):
                         else:
                             b = np.insert(b, -1, np.random.uniform(0.05, 0.1))
                     if dispersion == 1:
-                        b[-1] = np.abs(b[-1])
-                        if b[-1] > 10:
-                            b[-1] = 5
+                        if not self.no_extra_param:
+                            b[-1] = np.abs(b[-1])
+                            if b[-1] > 10:
+                                b[-1] = 5
                     elif dispersion == 2:
                         b[-1] = .5
                     if method == 'L-BFGS-B' or method2 == 'L-BFGS-B':
@@ -5689,13 +5778,30 @@ class ObjectiveFunction(object):
 
                     if draws is None and draws_hetro is not None:
                         print('hold')
-                    betas_est = self._minimize(self._loglik_gradient, b, args=(
-                        X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion, 0, False, 0,
-                        self.rdm_cor_fit, None, None, draws_grouped, XG, mod),
-                                               method=method2, tol=tol['ftol'],
-                                               options={'gtol': tol['gtol']}, bounds=bounds,
-                                               hess_calc=True if method2 == 'Nelder-Mead-BFGS' else False)
+                    #self.grad_yes = True
+                    #self.hess_yes = True
 
+                    if self.no_extra_param:
+                        dispersion_poisson = 0
+                        betas_est = self._minimize(self._loglik_gradient, b, args=(
+                            X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion_poisson, 0, False, 0,
+                            self.rdm_cor_fit, None, None, draws_grouped, XG, mod),
+                                                method=method2, tol=tol['ftol'],
+                                                options={'gtol': tol['gtol']}, bounds=bounds,
+                                                hess_calc=True if method2 == 'Nelder-Mead-BFGS' else False)
+                        if dispersion:
+                            initial_fit_beta = betas_est.x
+                            parmas = np.append(initial_fit_beta, nb_parma)
+                            self.nb_parma = nb_parma
+                            print(f'neg binomi,{self.nb_parma}')
+                            betas_est = self._minimize(self._loglik_gradient, initial_fit_beta, args=(
+                            X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion, 0, False, 0,
+                            self.rdm_cor_fit, None, None, draws_grouped, XG, mod),
+                                                method=method2, tol=tol['ftol'],
+                                                options={'gtol': tol['gtol']}, bounds=bounds,
+                                                hess_calc=True if method2 == 'Nelder-Mead-BFGS' else False)
+                            
+                            print('refit with estimation of NB')
                     # self.numerical_hessian_calc = True
                     if self.numerical_hessian_calc:
                         try:
@@ -5994,7 +6100,7 @@ class ObjectiveFunction(object):
         return delim + self._model_type_codes[dispersion]
 
     def self_standardize_positive(self, X):
-        scaler = StandardScaler()
+        scaler = MinMaxScaler()
         if type(X) == list:
             return X
 
@@ -6004,12 +6110,26 @@ class ObjectiveFunction(object):
             # Reshaping to 2D - combining the last two dimensions
             df_tf_reshaped = X.reshape(original_shape[0], -1)
             df_tf_scaled = scaler.fit_transform(df_tf_reshaped)
-            df_tf_scaled = df_tf_scaled - df_tf_scaled.min()
+            #df_tf_scaled = df_tf_scaled - df_tf_scaled.min()
             # Reshape back to original 3D shape if necessary
             df_tf = df_tf_scaled.reshape(original_shape)
             return df_tf
         else:
-            raise X
+            # Initialize the MinMaxScaler
+            scaler = MinMaxScaler()
+            float_columns = X.select_dtypes(include=['float64', 'float32', 'int']).columns.difference(['const', 'offset, "EXPOSE', 'Constant', 'constant'])
+            non_numeric_columns = X.select_dtypes(exclude=['float64', 'float32', 'int']).columns
+
+            # Fit the scaler to the float columns and transform them
+            X[float_columns] = scaler.fit_transform(X[float_columns])
+            # Fit the scaler to the data and transform it
+            #scaled_data = scaler.fit_transform(X)
+
+            # Convert the result back to a DataFrame
+            #scaled_df = pd.DataFrame(scaled_data, columns=X.columns)
+
+
+            return X
 
     def make_regression_from_terms(self, fixed=None, rdm=None, rdm_cor_fit=None, distribution=None, dispersion=None,
                                    *args, **kwargs):
@@ -6065,7 +6185,7 @@ class ObjectiveFunction(object):
                     t, idx, df_test[:, :, idx])
             if np.max(df_tf[:, :, idx]) >= 77000:
 
-                raise Exception('should not be possible')
+                print('should not be possible')
 
         self.define_selfs_fixed_rdm_cor(model_nature)
         indices = self.get_named_indices(self.fixed_fit)

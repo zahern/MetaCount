@@ -41,6 +41,12 @@ def process_arguments():
                 'hyper': hyper}
     return new_data
 
+def process_package_argumemnts():
+
+    new_data = {}
+    pass
+
+
 def main(args, **kwargs):
     '''METACOUNT REGRESSOR TESTING ENVIRONMENT'''
 
@@ -162,8 +168,8 @@ def main(args, **kwargs):
             'rdm_cor_terms': [],
             'grouped_terms': [],
             'hetro_in_means': [],
-            'transformations': ['no', 'log', 'log', 'no', 'no', 'no', 'no'],
-            'dispersion': 1
+            'transformations': ['no', 'log', 'no', 'no', 'no', 'no', 'no'],
+            'dispersion': 0
         }
 
         keep = ['Constant', 'US', 'RSMS', 'MCV', 'RSHS', 'AADT', 'Curve50', 'Offset']
@@ -172,13 +178,27 @@ def main(args, **kwargs):
     elif dataset == 4:
         manual_fit_spec = {
             'fixed_terms': ['const', 'LOWPRE', 'GBRPM', 'FRICTION'],
-            'rdm_terms': ['Expose:normal', 'INTPM:normal', 'CPM:normal', 'HISNOW:normal'],
+            'rdm_terms': ['EXPOSE:normal', 'INTPM:normal', 'CPM:normal', 'HISNOW:normal'],
             'rdm_cor_terms': [],
             'grouped_terms': [],
             'hetro_in_means': [],
             'transformations': ['no', 'no', 'no', 'no', 'no', 'no', 'no', 'no'],
             'dispersion': 1
         }
+        '''
+        manual_fit_spec = {
+            'fixed_terms': ['const', 'LOWPRE', 'GBRPM', 'FRICTION', 'EXPOSE', 'INTPM', 'CPM', 'HISNOW'],
+            'rdm_terms': [],
+            'rdm_cor_terms': [],
+            'grouped_terms': [],
+            'hetro_in_means': [],
+            'transformations': ['no', 'no', 'no', 'no', 'no', 'no', 'no', 'no'],
+            'dispersion': 1
+        }
+        '''
+
+
+        '''
         print('overriding this delete, just want to test the NB')
         manual_fit_spec = {
             'fixed_terms': ['const'],
@@ -189,7 +209,7 @@ def main(args, **kwargs):
             'transformations': ['no'],
             'dispersion': 1
         }
-
+        '''
         df = pd.read_csv('./data/Ex-16-3.csv')  # read in the data
         y_df = df[['FREQ']].copy()  # only consider crashes
         y_df.rename(columns={"FREQ": "Y"}, inplace=True)
@@ -262,6 +282,17 @@ def main(args, **kwargs):
         x_df = helperprocess.interactions(x_df, drop_this_perc=0.8)
         x_df['county'] = group_grab
 
+        print('benchmark specification')
+        manual_fit_spec = {
+            'fixed_terms': ['const', 'monthly_AADT', 'segment_length', 'speed', 'paved_shoulder', 'curve'],
+            'rdm_terms': [],
+            'rdm_cor_terms': [],
+            'grouped_terms': ['DP01:normal', 'DX32:normal'],
+            'hetro_in_means': [],
+            'transformations': ['no', 'no', 'no', 'no', 'no', 'no'],
+            'dispersion': 0
+        }
+
     elif dataset == 9:
         df = pd.read_csv('panel_synth.csv')  # read in the data
         y_df = df[['Y']].copy()  # only consider crashes
@@ -286,6 +317,8 @@ def main(args, **kwargs):
         keep = ['group', 'constant', 'element_ID']
 
         x_df = helperprocess.interactions(x_df, keep)
+
+
     else:  # the dataset has been selected in the program as something else
         data_info = process_arguments()
         data_info['hyper']
@@ -442,11 +475,11 @@ if __name__ == '__main__':
             if "-algorithm" in action.option_strings:
                 parser._optionals._actions[i].help = "optimization algorithm"
 
-        override = True
+        override = False
         if override:
-            print('todo turn off, in testing phase')
+            print('WARNING: TESTING ENVIRONMENT, TURN OFF FOR RELEASE')
             parser.add_argument('-problem_number', default='10')
-            print('did it make it')
+
         if 'algorithm' not in args:
             parser.add_argument('-algorithm', type=str, default='hs',
                                 help='optimization algorithm')

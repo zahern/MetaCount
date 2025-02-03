@@ -9,12 +9,13 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame
 from pandas.io.parsers import TextFileReader
-import helperprocess
-from metaheuristics import (differential_evolution,
-                            harmony_search,
-                            simulated_annealing)
-from solution import ObjectiveFunction
 
+
+from metacountregressor.solution import ObjectiveFunction
+from metacountregressor.metaheuristics import (harmony_search,
+                                            differential_evolution,
+                                            simulated_annealing)
+from metacountregressor import helperprocess
 
 warnings.simplefilter("ignore")
 

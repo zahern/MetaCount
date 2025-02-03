@@ -1,0 +1,9 @@
+Column,Level 1,Level 2,Level 3,Level 4,Level 5,Level 6,Distributions,Transformations
+US,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+RSHS,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+RSMS,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+Offset,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+LNAADT,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+LNMCV,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+Curve50,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"
+Constant,True,True,True,True,True,True,"['Normal', 'Triangular', 'Uniform', 'Log-Normal', 'Trunc-Normal']","['no', 'sqrt', 'log', 'arcsinh']"

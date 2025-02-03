@@ -69,15 +69,20 @@ def main(args, **kwargs):
     #data_info['data']['Group'][0]
     #data_info['data']['Panel'][0]
     args['decisions'] = data_info['analyst']
-
-    if not np.isnan(data_info['data']['Grouped'][0]):
+    grouped_c = data_info['data']['Grouped'][0]
+    if isinstance(data_info['data']['Grouped'][0],str):
         args['group'] = data_info['data']['Grouped'][0]
-        args['ID'] = data_info['data']['Grouped'][0]
-    if not np.isnan(data_info['data']['Panel'][0]):
+        args['ID'] = data_info['data']['Panel'][0]
+    if isinstance(data_info['data']['Panel'][0],str):
         args['panels'] = data_info['data']['Panel'][0]
 
     df = pd.read_csv(str(data_info['data']['Problem'][0]))
     x_df = df.drop(columns=[data_info['data']['Y'][0]])
+    # drop the columns of x_df where column is string exclude the column stype args['group']
+    exclude_column = args['group']
+    columns_to_keep = x_df.dtypes != 'object'
+    columns_to_keep |= (x_df.columns == exclude_column)
+    x_df = x_df.loc[:, columns_to_keep]
     y_df = df[[data_info['data']['Y'][0]]]
     y_df.rename(columns={data_info['data']['Y'][0]: "Y"}, inplace=True)
 
