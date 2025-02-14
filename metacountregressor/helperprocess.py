@@ -3,6 +3,7 @@ import pandas as pd
 import csv
 import matplotlib.pyplot as plt
 
+
 plt.style.use('https://github.com/dhaitz/matplotlib-stylesheets/raw/master/pitayasmoothie-dark.mplstyle')
 
 ##Select the best Features Based on RF
@@ -149,6 +150,74 @@ def remove_files(yes=1):
             os.remove('log.csv')
         if os.path.exists('pop_log.csv'):
             os.remove('pop_log.csv')
+
+
+# Function to process the DataFrame
+'''
+Example usuage
+# Configuration dictionary
+config = {
+    'Age': {
+        'type': 'bin',
+        'bins': [0, 18, 35, 50, 100],
+        'labels': ['Child', 'YoungAdult', 'MiddleAged', 'Senior'],
+        'prefix': 'Age_Binned'
+    },
+    'Income': {
+        'type': 'bin',
+        'bins': [0, 2000, 5000, 10000],
+        'labels': ['Low', 'Medium', 'High'],
+        'prefix': 'Income_Binned'
+    },
+    'Gender': {
+        'type': 'one-hot',
+        'prefix': 'Gender'
+    },
+    'Score': {
+        'type': 'none'
+    }
+}
+'''
+
+
+def transform_dataframe(df, config):
+    output_df = pd.DataFrame()
+
+    for column, settings in config.items():
+        if settings['type'] == 'bin':
+            # Apply binning
+            binned = pd.cut(
+                df[column],
+                bins=settings['bins'],
+                labels=settings['labels'],
+                right=False
+            )
+            # One-hot encode the binned column
+            binned_dummies = pd.get_dummies(binned, prefix=settings['prefix'])
+            output_df = pd.concat([output_df, binned_dummies], axis=1)
+
+        elif settings['type'] == 'one-hot':
+            # One-hot encode the column
+            one_hot_dummies = pd.get_dummies(df[column], prefix=settings.get('prefix', column))
+            output_df = pd.concat([output_df, one_hot_dummies], axis=1)
+
+        elif settings['type'] == 'continuous':
+            # Apply function to continuous data
+            data = df[column]
+            if 'bounds' in settings:
+                # Apply bounds filtering
+                lower, upper = settings['bounds']
+                data = data[(data >= lower) & (data <= upper)]
+            if 'apply_func' in settings:
+                # Apply custom function
+                data = data.apply(settings['apply_func'])
+            output_df[column] = data
+
+        elif settings['type'] == 'none':
+            # Leave the column unchanged
+            output_df = pd.concat([output_df, df[[column]]], axis=1)
+
+    return output_df
 
 
 def as_wide_factor(x_df, yes=1, min_factor=2, max_factor=8, keep_original=0, exclude=[]):
@@ -330,3 +399,5 @@ def entries_to_remove(entries, the_dict):
     for key in entries:
         if key in the_dict:
             del the_dict[key]
+
+

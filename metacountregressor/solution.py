@@ -152,7 +152,7 @@ class ObjectiveFunction(object):
         self.dist_fit = None
 
         self.MAE = None
-        self.best_obj_1 = 100000000.0
+        self.best_obj_1 = 1000000.0
         self._obj_1 = 'bic'
         self._obj_2 = 'MSE'
         self.numerical_hessian_calc = 0  # calculates hessian by statsmodels otherwise scipy
@@ -395,7 +395,7 @@ class ObjectiveFunction(object):
 
 
 
-        self.Ndraws = 1400  # todo: change back
+        self.Ndraws = 200  # todo: change back
         self.draws1 = None
         self.initial_sig = 1  # pass the test of a single model
         self.pvalue_sig_value = .1
@@ -449,8 +449,17 @@ class ObjectiveFunction(object):
         if 'model_types' in kwargs:
             model_types = kwargs['model_types']
         else:
-            model_types = [[0, 1]]  # add 2 for Generalized Poisson
+            print('the type of models possible are:')
 
+            model_types = [[0, 1]]  # add 2 for Generalized Poisson
+            model_types = [[0]]
+            #TODO change back and fix NB
+        model_t_dict = {'Poisson':0,
+                        "NB":1}
+        # Retrieve the keys (model names) corresponding to the values in model_types
+        model_keys = [key for key, value in model_t_dict.items() if value in model_types[0]]
+        # Print the formatted result
+        print(f'The type of models possible are: {", ".join(model_keys)}')
         self._discrete_values = self._discrete_values + self.define_poissible_transforms(
             self._transformations, kwargs.get('decisions',None)) + model_types
 
@@ -470,6 +479,7 @@ class ObjectiveFunction(object):
         #Manually fit from analyst specification
         manual_fit = kwargs.get('Manual_Fit')
         if manual_fit is not None:
+            print('fitting manual')
             self.process_manual_fit(manual_fit)
 
         self.solution_analyst = None
@@ -1372,7 +1382,7 @@ class ObjectiveFunction(object):
         bb = eVy -1
         disp = sm.OLS(ab.ravel(), bb.ravel()).fit()
         gamma = disp.params[0]
-        print(f'dispersion is {gamma}')
+        #print(f'dispersion is {gamma}')
         return gamma
 
     def validation(self, betas, y, X, Xr=None, dispersion=0, rdm_cor_fit=None, zi_list=None, exog_infl=None,
@@ -2321,7 +2331,7 @@ class ObjectiveFunction(object):
             sorted(my_dict, key=lambda x: x[0]['pval_percentage'])
 
     def get_fitness(self, vector, multi=False, verbose=False, max_routine=3):
-        obj_1 = 10.0 ** 8
+        obj_1 = 10.0 ** 5
         obj_best = None
         sub_slns = list()
 
@@ -2332,7 +2342,7 @@ class ObjectiveFunction(object):
         try:
             self.repair(vector)
         except Exception as e:
-            print('prob here')
+            print('prolem repairing here')
             print(vector)
             print(e)
         layout = vector.copy()
@@ -2613,7 +2623,7 @@ class ObjectiveFunction(object):
             self._hmcr = (
                     self._hmcr_min + ((self._hmcr_max - self._hmcr_min) / self._max_imp) * iteration)
 
-    # end def
+
 
     def update_par(self, iteration, is_sin=False):
         """
@@ -2832,10 +2842,6 @@ class ObjectiveFunction(object):
         return score
         '''
         #return score
-
-
-
-
 
         try:
             if alpha is None:
@@ -3467,6 +3473,8 @@ class ObjectiveFunction(object):
             corr_pairs = list(itertools.combinations(self.Kr, 2))
         else:
             corr_pairs = list(itertools.combinations(corr_indices, 2))
+            if len(corr_pairs) >0:
+                print('maybe get the terms here')
 
         for ii, corr_pair in enumerate(corr_pairs):
             # lower cholesky matrix
@@ -3495,7 +3503,7 @@ class ObjectiveFunction(object):
         a = 0
         b = 0
         stuff = []
-        # todo get order
+        # TODO get order
         for j, i in enumerate(list_sizes):
             br_mean = betas_hetro[a:i + a]
             a += i
@@ -3522,7 +3530,30 @@ class ObjectiveFunction(object):
         br_mean = betas_m
         br_sd = betas_sd  # Last Kr positions
         # Compute: betas = mean + sd*draws
-        betas_random = br_mean[None, :, None] + draws * br_sd[None, :, None]
+        if len(br_sd) != draws.shape[1]:
+            #get the same size as the mean
+            betas_random = self.Br.copy()
+
+            '''
+            c = self.get_num_params()[3:5]
+            
+            cor = []
+            for i in range(c[0]):
+                cor.append(i)
+            
+            vall =[]
+            for i, val in enumerate(reversed(br_sd)):
+                vall.append()
+                
+            remaining = draws.shape[1] - len(betas_sd)
+            '''
+
+        else:
+
+
+            betas_random = br_mean[None, :, None] + draws * br_sd[None, :, None]
+
+
         betas_random = self._apply_distribution(betas_random)
 
         return betas_random
@@ -3959,7 +3990,7 @@ class ObjectiveFunction(object):
             # proba_r = self.poisson_lognormal_pmf(y, eVd, sig)
             proba_r = np.array(store)
             proba_r = np.atleast_2d(proba_r).T
-            print(1)
+
 
         else:
             raise Exception('not implemented other modeling forms')
@@ -4137,12 +4168,13 @@ class ObjectiveFunction(object):
             br, draws_, brstd, dis_fit_long)  # (N,K,R)
         dprod_r = dev.np.einsum("njk,njr -> nkr", Xdr,
                                 einsum_model_form, dtype=np.float64)  # (N,K,R)
-        der_prod_r = dprod_r * der * proba_n[:, None, :]  # (N,K,R)
+        #der_prod_r = dprod_r * der * proba_n[:, None, :]  # (N,K,R)
         #der_prod_r = dprod_r * der * proba_n[:, X_tril_idx, :]  # I think this is the case check
-        der_prod_r = dprod_r[:, X_tril_idx, :] * der * proba_n[:, None, :]  # or this one
-        #print('which one of these')
+
+        der_prod_r = dprod_r * der * proba_n[:, None, :]  # or this one
+
         der_t = self._compute_derivatives(
-            br, draws_[:, draws_tril_idx, :], brstd, self.dist_fit)  # (N,K,R)
+            br[draws_tril_idx], draws_[:, draws_tril_idx, :], brstd, np.array(self.dist_fit)[draws_tril_idx])  # (N,K,R)
         # er_t = self._compute_derivatives(br, draws_, brstd[:, draws_tril_idx,: ], self.dist_fit, draws_tril_idx)
         der_prod_r_t = dprod_r[:, draws_tril_idx, :] * \
                        der_t * proba_n[:, None, :]  # (N,K,R)
@@ -4209,12 +4241,12 @@ class ObjectiveFunction(object):
             else:    
                 grad_n = self._concat_gradients(
                     (gr_f, gr_u, gr_s, gr_h, gr_hs, gr_d[:, None])) / Rlik  # (N,K)
-        grad_n = np.nan_to_num(grad_n, nan=0, posinf=10000, neginf=-10000)
-        grad_n = np.clip(grad_n, -1000, 1000)
+        grad_n = np.nan_to_num(grad_n, nan=0, posinf=1000, neginf=-1000)
+        grad_n = np.clip(grad_n, -100, 100)
         n = np.shape(grad_n)[0]
         # subtract out mean gradient value
-        # grad_n_sub = grad_n-(np.sum(grad_n, axis=0)/n)
-        # grad_n = grad_n_sub
+        grad_n_sub = grad_n-(np.sum(grad_n, axis=0)/n)
+        grad_n = grad_n_sub
         grad = grad_n.sum(axis=0)
         return grad, grad_n
 
@@ -4574,7 +4606,7 @@ class ObjectiveFunction(object):
                 penalty =  self.regularise_l2(betas)
 
                 if not np.isreal(loglik):
-                    loglik = - 1000000000.0
+                    loglik = - 10000000.0
 
                 output = (-loglik + penalty,)
                 if return_gradient:
@@ -4817,7 +4849,7 @@ class ObjectiveFunction(object):
             proba.append(dev.to_cpu(proba_))
 
             lik = np.stack(proba).sum(axis=0) / R  # (N, )
-            lik = np.clip(lik, min_comp_val, 10000)
+            lik = np.clip(lik, min_comp_val, 1000)
             # lik = np.nan_to_num(lik, )
             loglik = np.log(lik)
             llf_main = loglik
@@ -5435,7 +5467,7 @@ class ObjectiveFunction(object):
 
 
         sol = Solution()
-        log_ll = 10.0 ** 9
+
         tol = {'ftol': 1e-8, 'gtol': 1e-6}
         is_delete = 0
         dispersion = mod.get('dispersion')
@@ -5793,7 +5825,7 @@ class ObjectiveFunction(object):
                             initial_fit_beta = betas_est.x
                             parmas = np.append(initial_fit_beta, nb_parma)
                             self.nb_parma = nb_parma
-                            print(f'neg binomi,{self.nb_parma}')
+                            #print(f'neg binomi,{self.nb_parma}')
                             betas_est = self._minimize(self._loglik_gradient, initial_fit_beta, args=(
                             X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion, 0, False, 0,
                             self.rdm_cor_fit, None, None, draws_grouped, XG, mod),
@@ -5801,7 +5833,7 @@ class ObjectiveFunction(object):
                                                 options={'gtol': tol['gtol']}, bounds=bounds,
                                                 hess_calc=True if method2 == 'Nelder-Mead-BFGS' else False)
                             
-                            print('refit with estimation of NB')
+                            #print('refit with estimation of NB')
                     # self.numerical_hessian_calc = True
                     if self.numerical_hessian_calc:
                         try:
@@ -6184,6 +6216,7 @@ class ObjectiveFunction(object):
                 df_test[:, :, idx], model_nature.get('transformations')[idx] = self.transformer(
                     t, idx, df_test[:, :, idx])
             if np.max(df_tf[:, :, idx]) >= 77000:
+                #TODO need to normalise the data
 
                 print('should not be possible')
 
@@ -6242,7 +6275,7 @@ class ObjectiveFunction(object):
             model_nature['XH'] = XH
             X_test = None
         if np.isin(X, [np.inf, -np.inf, None, np.nan]).any():  # type ignore
-            raise Exception('there is some kind of error')
+            raise Exception('there is some kind of error in X')
 
         # numpy data setup fpr estimation
         indices2 = self.get_named_indices(self.rdm_fit)
@@ -6392,6 +6425,53 @@ class ObjectiveFunction(object):
                     self.summary_alternative(model=dispersion, solution=obj_1)
 
         return obj_1, model_nature
+
+    def get_X_tril(self):
+        '''For correlations find the repeating terms'''
+        varnames = self.none_join([self.rdm_grouped_fit, self.rdm_fit, self.rdm_cor_fit])
+        rv_count_all = 0
+        chol_count = 0
+        rv_count = 0
+        corr_indices = []
+        rv_indices = []
+        for ii, var in enumerate(varnames):  # TODO: BUGFIXf
+            if var in self.none_handler(self.rdm_cor_fit):
+                is_correlated = True
+            else:
+                is_correlated = False
+
+            rv_count_all += 1
+            if is_correlated:
+                chol_count += 1
+            else:
+                rv_count += 1
+
+            if var in self.none_handler(self.rdm_cor_fit):
+
+                corr_indices.append(rv_count_all - 1)  # TODO: what does tis do
+
+            else:
+                rv_indices.append(rv_count_all - 1)
+
+        # for s.d.: gr_w = (Obs prob. minus predicted probability) * obs. var * random draw
+        draws_tril_idx = np.array([corr_indices[j]
+                                   for i in range(len(self.none_handler(self.rdm_cor_fit)))
+                                   for j in range(i + 1)])  # varnames pos.
+        X_tril_idx = np.array([corr_indices[i]
+                               for i in range(len(self.none_handler(self.rdm_cor_fit)))
+                               for j in range(i + 1)])
+        # Find the s.d. for random variables that are not correlated
+        var_uncor = self.none_join([self.rdm_grouped_fit, self.rdm_fit])
+        range_var = [x for x in
+                     range(len(self.none_handler(var_uncor)))]
+        range_var = sorted(range_var)
+        draws_tril_idx = np.array(np.concatenate((range_var, draws_tril_idx)))
+        X_tril_idx = np.array(np.concatenate((range_var, X_tril_idx)))
+        draws_tril_idx = draws_tril_idx.astype(int)
+        X_tril_idx = X_tril_idx.astype(int)
+        return  X_tril_idx
+
+
 
     def modifyn(self, data):
         select_data = self._characteristics_names
@@ -6600,23 +6680,35 @@ class ObjectiveFunction(object):
         # N, D = draws.shape[0], draws.shape[1]
         N, R, Kr = draws.shape[0], draws.shape[2], draws.shape[1]
         der = dev.np.ones((N, Kr, R), dtype=draws.dtype)
-        if len(self.none_handler(self.rdm_cor_fit)) == 0:
-            Br_come_one = self.Br.copy()
-            # Br_come_one =
-        else:
 
-            Br_come_one = self.Br.copy()
         # betas_random = self._transform_rand_betas(betas, betas_std, draws)
         #todo make sure this works for ln and truncated normal
         if any(set(distribution).intersection(['ln_normal', 'tn_normal'])):
-            print('check this, intesection shouldn not happen for all')
+
+            #print('check this, intesection shouldn not happen for all')
+
+            if der.shape[1] != draws.shape[1]:
+                print('why')
             Br_come_one = self._transform_rand_betas(betas, betas_std, draws)
+            if der.shape[1] != draws.shape[1]:
+                print('why')
+            #TODO need to get the stuction of the rdms
             for k, dist_k in enumerate(distribution):
                 if dist_k == 'ln_normal':
+                    if der.shape[1] != draws.shape[1]:
+                        print('why')
                     der[:, k, :] = Br_come_one[:, k, :]
+                    if der.shape[1] != draws.shape[1]:
+                        print('why')
                 elif dist_k == 'tn_normal':
+                    if der.shape[1] != draws.shape[1]:
+                        print('why')
                     der[:, k, :] = 1 * (Br_come_one[:, k, :] > 0)
+                    if der.shape[1] != draws.shape[1]:
+                        print('why')
 
+        if der.shape[1] != draws.shape[1]:
+            print('why')
         return der
 
     def _copy_size_display_as_ones(self, matrix):

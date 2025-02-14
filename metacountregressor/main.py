@@ -28,12 +28,60 @@ def convert_df_columns_to_binary_and_wide(df):
     return df
 
 
-def process_arguments():
+def process_arguments(**kwargs):
     '''
     TRYING TO TURN THE CSV FILES INTO RELEVANT ARGS
     '''
-    data_characteristic = pd.read_csv('problem_data.csv')
-    analyst_d = pd.read_csv('decisions.csv')
+    #dataset
+    if kwargs.get('dataset_file', False
+    ):
+        dataset = pd.read_csv(kwargs.get('dataset_file'))
+        named_data_headers = dataset.columns.tolist()
+        decision_constants = {name: list(range(7)) for name in named_data_headers}
+        data_info = {
+
+
+            'AADT': {
+                'type': 'continuous',
+                'bounds': [0.0, np.infty],
+                'discrete': False,
+                'apply_func': (lambda x: np.log(x + 1)),
+            },
+            'SPEED': {
+                'type': 'continuous',
+                'bounds': [0, 100],
+                'enforce_bounds': True,
+                'discrete': True
+            },
+            'TIME': {
+                'type': 'continuous',
+                'bounds': [0, 23.999],
+                'discrete': False
+            }
+        }
+        #remove ID CoLUMNS from dataset
+        dataset = dataset.drop(columns = [
+            'ID'
+        ])
+        for c in dataset.columns:
+            if c not in data_info.keys():
+                data_info[c] = {'type': 'categorical'}
+
+        data_new  =helperprocess.transform_dataframe(dataset,data_info)
+
+        update_constant = kwargs.get('analyst_constraints')
+        #update the decision_constraints
+
+    data_characteristic = pd.read_csv(kwargs.get('problem_data', 'problem_data.csv'))
+    # Extract the column as a list of characteristic names
+    name_data_characteristics = data_characteristic.columns.tolist()
+
+    # Create the dictionary
+    decision_constraints = {name: list(range(7)) for name in name_data_characteristics}
+
+    print('this gets all the features, I need to remove...')
+
+    analyst_d = pd.read_csv(kwargs.get('decison_constraints', 'decisions.csv'))
     hyper = pd.read_csv('setup_hyper.csv')
 
     new_data = {'data': data_characteristic,
@@ -41,7 +89,7 @@ def process_arguments():
                 'hyper': hyper}
     return new_data
 
-def process_package_argumemnts():
+def process_package_arguments():
 
     new_data = {}
     pass
@@ -319,8 +367,8 @@ def main(args, **kwargs):
         x_df = helperprocess.interactions(x_df, keep)
 
 
-    else:  # the dataset has been selected in the program as something else
-        data_info = process_arguments()
+    elif dataset ==10:  # the dataset has been selected in the program as something else
+        data_info = process_arguments(**args)
         data_info['hyper']
         data_info['analyst']
         data_info['data']['Y']
@@ -339,6 +387,10 @@ def main(args, **kwargs):
         y_df = df[[data_info['data']['Y'][0]]]
         y_df.rename(columns={data_info['data']['Y'][0]: "Y"}, inplace=True)
         print('test') #FIXME
+    else:
+        print('PROCESS THE PACKAGE ARGUMENTS SIMULIAR TO HOW ONE WOULD DEFINE THE ENVIRONMENT')
+        data_info =process_package_argumemnts()
+
 
     if args['Keep_Fit'] == str(2) or args['Keep_Fit'] == 2:
         if manual_fit_spec is None:
@@ -444,55 +496,63 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='main',
                                      epilog=main.__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter, conflict_handler='resolve')
+    
+    
+    BATCH_JOB = True
 
-    parser.add_argument('-line', type=int, default=1,
-                        help='line to read in csv to pass in argument')
+    if BATCH_JOB:
+        parser.add_argument('-dataset_file', default='data/Ex-16-3.csv', help='supply the path to the dataset')
 
-    if vars(parser.parse_args())['line'] is not None:
-        reader = csv.DictReader(open('set_data.csv', 'r'))
-        args = list()
-        line_number_obs = 0
-        for dictionary in reader:  # TODO find a way to handle multiple args
-            args = dictionary
-            if line_number_obs == int(vars(parser.parse_args())['line']):
-                break
-            line_number_obs += 1
-        args = dict(args)
+        parser.add_argument('-line', type=int, default=1,
+                            help='line to read in csv to pass in argument')
 
-        for key, value in args.items():
-            try:
-                # Attempt to parse the string value to a Python literal if value is a string.
-                if isinstance(value, str):
-                    value = ast.literal_eval(value)
-            except (ValueError, SyntaxError):
-                # If there's a parsing error, value remains as the original string.
-                pass
+        if vars(parser.parse_args())['line'] is not None:
+            reader = csv.DictReader(open('set_data.csv', 'r'))
+            args = list()
+            line_number_obs = 0
+            for dictionary in reader:  # TODO find a way to handle multiple args
+                args = dictionary
+                if line_number_obs == int(vars(parser.parse_args())['line']):
+                    break
+                line_number_obs += 1
+            args = dict(args)
 
-            # Add the argument to the parser with the potentially updated value.
-            parser.add_argument(f'-{key}', default=value)
 
-        for i, action in enumerate(parser._optionals._actions):
-            if "-algorithm" in action.option_strings:
-                parser._optionals._actions[i].help = "optimization algorithm"
+            for key, value in args.items():
+                try:
+                    # Attempt to parse the string value to a Python literal if value is a string.
+                    if isinstance(value, str):
+                        value = ast.literal_eval(value)
+                except (ValueError, SyntaxError):
+                    # If there's a parsing error, value remains as the original string.
+                    pass
 
-        override = False
-        if override:
-            print('WARNING: TESTING ENVIRONMENT, TURN OFF FOR RELEASE')
-            parser.add_argument('-problem_number', default='10')
+                # Add the argument to the parser with the potentially updated value.
+                parser.add_argument(f'-{key}', default=value)
 
-        if 'algorithm' not in args:
-            parser.add_argument('-algorithm', type=str, default='hs',
-                                help='optimization algorithm')
-        elif 'Manual_Fit' not in args:
-            parser.add_argument('-Manual_Fit', action='store_false', default=None,
-                                help='To fit a model manually if desired.')
+            for i, action in enumerate(parser._optionals._actions):
+                if "-algorithm" in action.option_strings:
+                    parser._optionals._actions[i].help = "optimization algorithm"
 
-        parser.add_argument('-seperate_out_factors', action='store_false', default=False,
-                            help='Trie of wanting to split data that is potentially categorical as binary'
-                                 ' we want to split the data for processing')
-        parser.add_argument('-supply_csv', type = str, help = 'enter the name of the csv, please include it as a full directorys')
+            override = True
+            if override:
+                print('WARNING: TESTING ENVIRONMENT, TURN OFF FOR RELEASE')
+                parser.add_argument('-problem_number', default='10')
+
+            if 'algorithm' not in args:
+                parser.add_argument('-algorithm', type=str, default='hs',
+                                    help='optimization algorithm')
+            elif 'Manual_Fit' not in args:
+                parser.add_argument('-Manual_Fit', action='store_false', default=None,
+                                    help='To fit a model manually if desired.')
+
+            parser.add_argument('-seperate_out_factors', action='store_false', default=False,
+                                help='Trie of wanting to split data that is potentially categorical as binary'
+                                    ' we want to split the data for processing')
+            parser.add_argument('-supply_csv', type = str, help = 'enter the name of the csv, please include it as a full directories')
 
     else:  # DIDN"T SPECIFY LINES TRY EACH ONE MANNUALY
+        print("RUNNING WITH ARGS")
         parser.add_argument('-com', type=str, default='MetaCode',
                             help='line to read csv')
 
