@@ -444,53 +444,57 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='main',
                                      epilog=main.__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter, conflict_handler='resolve')
+    
+    
+    BATCH_JOB = True
 
-    parser.add_argument('-line', type=int, default=1,
-                        help='line to read in csv to pass in argument')
+    if BATCH_JOB:
+        parser.add_argument('-line', type=int, default=1,
+                            help='line to read in csv to pass in argument')
 
-    if vars(parser.parse_args())['line'] is not None:
-        reader = csv.DictReader(open('set_data.csv', 'r'))
-        args = list()
-        line_number_obs = 0
-        for dictionary in reader:  # TODO find a way to handle multiple args
-            args = dictionary
-            if line_number_obs == int(vars(parser.parse_args())['line']):
-                break
-            line_number_obs += 1
-        args = dict(args)
+        if vars(parser.parse_args())['line'] is not None:
+            reader = csv.DictReader(open('set_data.csv', 'r'))
+            args = list()
+            line_number_obs = 0
+            for dictionary in reader:  # TODO find a way to handle multiple args
+                args = dictionary
+                if line_number_obs == int(vars(parser.parse_args())['line']):
+                    break
+                line_number_obs += 1
+            args = dict(args)
 
-        for key, value in args.items():
-            try:
-                # Attempt to parse the string value to a Python literal if value is a string.
-                if isinstance(value, str):
-                    value = ast.literal_eval(value)
-            except (ValueError, SyntaxError):
-                # If there's a parsing error, value remains as the original string.
-                pass
+            for key, value in args.items():
+                try:
+                    # Attempt to parse the string value to a Python literal if value is a string.
+                    if isinstance(value, str):
+                        value = ast.literal_eval(value)
+                except (ValueError, SyntaxError):
+                    # If there's a parsing error, value remains as the original string.
+                    pass
 
-            # Add the argument to the parser with the potentially updated value.
-            parser.add_argument(f'-{key}', default=value)
+                # Add the argument to the parser with the potentially updated value.
+                parser.add_argument(f'-{key}', default=value)
 
-        for i, action in enumerate(parser._optionals._actions):
-            if "-algorithm" in action.option_strings:
-                parser._optionals._actions[i].help = "optimization algorithm"
+            for i, action in enumerate(parser._optionals._actions):
+                if "-algorithm" in action.option_strings:
+                    parser._optionals._actions[i].help = "optimization algorithm"
 
-        override = False
-        if override:
-            print('WARNING: TESTING ENVIRONMENT, TURN OFF FOR RELEASE')
-            parser.add_argument('-problem_number', default='10')
+            override = False
+            if override:
+                print('WARNING: TESTING ENVIRONMENT, TURN OFF FOR RELEASE')
+                parser.add_argument('-problem_number', default='10')
 
-        if 'algorithm' not in args:
-            parser.add_argument('-algorithm', type=str, default='hs',
-                                help='optimization algorithm')
-        elif 'Manual_Fit' not in args:
-            parser.add_argument('-Manual_Fit', action='store_false', default=None,
-                                help='To fit a model manually if desired.')
+            if 'algorithm' not in args:
+                parser.add_argument('-algorithm', type=str, default='hs',
+                                    help='optimization algorithm')
+            elif 'Manual_Fit' not in args:
+                parser.add_argument('-Manual_Fit', action='store_false', default=None,
+                                    help='To fit a model manually if desired.')
 
-        parser.add_argument('-seperate_out_factors', action='store_false', default=False,
-                            help='Trie of wanting to split data that is potentially categorical as binary'
-                                 ' we want to split the data for processing')
-        parser.add_argument('-supply_csv', type = str, help = 'enter the name of the csv, please include it as a full directorys')
+            parser.add_argument('-seperate_out_factors', action='store_false', default=False,
+                                help='Trie of wanting to split data that is potentially categorical as binary'
+                                    ' we want to split the data for processing')
+            parser.add_argument('-supply_csv', type = str, help = 'enter the name of the csv, please include it as a full directorys')
 
     else:  # DIDN"T SPECIFY LINES TRY EACH ONE MANNUALY
         parser.add_argument('-com', type=str, default='MetaCode',
