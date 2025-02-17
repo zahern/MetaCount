@@ -449,7 +449,7 @@ class ObjectiveFunction(object):
         if 'model_types' in kwargs:
             model_types = kwargs['model_types']
         else:
-            print('the type of models possible are:')
+
 
             model_types = [[0, 1]]  # add 2 for Generalized Poisson
             model_types = [[0]]
@@ -459,7 +459,7 @@ class ObjectiveFunction(object):
         # Retrieve the keys (model names) corresponding to the values in model_types
         model_keys = [key for key, value in model_t_dict.items() if value in model_types[0]]
         # Print the formatted result
-        print(f'The type of models possible are: {", ".join(model_keys)}')
+        print(f'The type of models possible will consider: {", ".join(model_keys)}')
         self._discrete_values = self._discrete_values + self.define_poissible_transforms(
             self._transformations, kwargs.get('decisions',None)) + model_types
 

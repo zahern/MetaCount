@@ -246,8 +246,7 @@ def guess_column_type(column_name, series):
         if unique_values < 5:
             return {'type': 'one-hot', 'prefix': column_name}
 
-
-        elif series.max() - series.min() > 20:
+        elif np.max(series) - np.min(series) > 20:
             # If there are few unique values, assume binning with default bins
             guess_low_medium_high(column_name,series)
         else:
