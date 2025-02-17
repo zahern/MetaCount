@@ -311,14 +311,26 @@ def interactions(df, keep=None, drop_this_perc=0.6, interact = False):
         df = pd.concat([df, df_interactions], axis=1, sort=False)
 
     # second
-    corr_matrix = df.corr().abs()
+    # Remove `keep` columns from the correlation matrix
+    if keep is not None:
+        df_corr = df.drop(columns=keep, errors='ignore')  # Exclude `keep` columns
+    else:
+        df_corr = df
+
+    # Compute the absolute correlation matrix
+    corr_matrix = df_corr.corr().abs()
+
+    # Keep only the upper triangle of the correlation matrix
     upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
 
-    # Find features with correlation greater than 0.6
+    # Find features with correlation greater than the threshold
     to_drop = [column for column in upper.columns if any(upper[column] > drop_this_perc)]
+
+    # Ensure `keep` columns are not dropped
     if keep is not None:
         to_drop = [column for column in to_drop if column not in keep]
-    # Drop features
+
+    # Drop the identified features
     df.drop(to_drop, axis=1, inplace=True)
 
     return df
