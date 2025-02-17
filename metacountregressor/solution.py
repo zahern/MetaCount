@@ -2983,7 +2983,7 @@ class ObjectiveFunction(object):
         argument = prob.mean(axis=1)
         # if less than 0 penalise
         if np.min(argument) < 0:
-            print('what the fuck')
+            print('Error with args..')
         if np.min(argument) < limit:
             # add a penalty for too small argument of log
             log_lik += -np.sum(np.minimum(0.0, argument - limit)) / limit
@@ -3634,7 +3634,7 @@ class ObjectiveFunction(object):
             #print("Custom functieon time:", end_time - start_time)
 
         except Exception as e:
-            print(e)
+            print("Neg Binom error.")
         return gg_alt
 
     def lindley_pmf(self, x, r, theta, k=50):
@@ -3968,7 +3968,7 @@ class ObjectiveFunction(object):
 
 
         # proba_d = self.dnegbimonli(y, eVd, b_gam )
-        # print('fuck if this actually works')
+
 
         elif dispersion == 2:
 
