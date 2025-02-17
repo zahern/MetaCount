@@ -61,6 +61,6 @@ setuptools.setup(
     install_requires=[
         'numpy>=1.13.1',
         'scipy>=1.0.0',
-        'requests'
+        'requests','latextable'
     ]
 )
