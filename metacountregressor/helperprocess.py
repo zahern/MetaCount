@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import csv
 import matplotlib.pyplot as plt
-
+from sklearn.preprocessing import StandardScaler
 
 plt.style.use('https://github.com/dhaitz/matplotlib-stylesheets/raw/master/pitayasmoothie-dark.mplstyle')
 
@@ -218,6 +218,31 @@ def transform_dataframe(df, config):
             output_df = pd.concat([output_df, df[[column]]], axis=1)
 
     return output_df
+
+# Helper function to guess column type and update `config`
+def guess_column_type(column_name, series):
+    if series.dtype == 'object' or series.dtype.name == 'category':
+        # If the column is categorical (e.g., strings), assume one-hot encoding
+        return {'type': 'one-hot', 'prefix': column_name}
+    elif pd.api.types.is_numeric_dtype(series):
+        unique_values = series.nunique()
+        if unique_values < 10:
+            # If there are few unique values, assume binning with default bins
+            min_val, max_val = series.min(), series.max()
+            bins = np.linspace(min_val, max_val, num=unique_values + 1)
+            labels = [f'Bin_{i}' for i in range(1, len(bins))]
+            return {'type': 'bin', 'bins': bins, 'labels': labels, 'prefix': f'{column_name}_Binned'}
+        else:
+           # # Otherwise, assume continuous data with normalization
+            # Otherwise, fallback to continuous standardization
+            return {
+                'type': 'continuous',
+                'apply_func': (lambda x: (x - series.mean()) / series.std())  # Z-Score Standardization
+            }
+    else:
+        # Default fallback (leave the column unchanged)
+        return {'type': 'none'}
+
 
 
 def as_wide_factor(x_df, yes=1, min_factor=2, max_factor=8, keep_original=0, exclude=[]):

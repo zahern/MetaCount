@@ -389,7 +389,7 @@ def main(args, **kwargs):
         print('test') #FIXME
     else:
         print('PROCESS THE PACKAGE ARGUMENTS SIMULIAR TO HOW ONE WOULD DEFINE THE ENVIRONMENT')
-        data_info =process_package_argumemnts()
+        data_info =process_package_arguments()
 
 
     if args['Keep_Fit'] == str(2) or args['Keep_Fit'] == 2:
