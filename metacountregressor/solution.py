@@ -3473,8 +3473,7 @@ class ObjectiveFunction(object):
             corr_pairs = list(itertools.combinations(self.Kr, 2))
         else:
             corr_pairs = list(itertools.combinations(corr_indices, 2))
-            if len(corr_pairs) >0:
-                print('maybe get the terms here')
+
 
         for ii, corr_pair in enumerate(corr_pairs):
             # lower cholesky matrix

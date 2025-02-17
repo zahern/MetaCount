@@ -180,6 +180,23 @@ config = {
 '''
 
 
+# Function to guess Low, Medium, High ranges
+def guess_low_medium_high(column_name, series):
+    # Compute the tertiles (33rd and 66th percentiles)
+    low_threshold = series.quantile(0.33)
+    high_threshold = series.quantile(0.66)
+
+    # Define the bins and labels
+    bins = [series.min() - 1, low_threshold, high_threshold, series.max()]
+    labels = ['Low', 'Medium', 'High']
+
+    return {
+        'type': 'bin',
+        'bins': bins,
+        'labels': labels,
+        'prefix': f'{column_name}_Binned'
+    }
+
 def transform_dataframe(df, config):
     output_df = pd.DataFrame()
 
@@ -226,12 +243,13 @@ def guess_column_type(column_name, series):
         return {'type': 'one-hot', 'prefix': column_name}
     elif pd.api.types.is_numeric_dtype(series):
         unique_values = series.nunique()
-        if unique_values < 10:
+        if unique_values < 5:
+            return {'type': 'one-hot', 'prefix': column_name}
+
+
+        elif series.range() > 20:
             # If there are few unique values, assume binning with default bins
-            min_val, max_val = series.min(), series.max()
-            bins = np.linspace(min_val, max_val, num=unique_values + 1)
-            labels = [f'Bin_{i}' for i in range(1, len(bins))]
-            return {'type': 'bin', 'bins': bins, 'labels': labels, 'prefix': f'{column_name}_Binned'}
+            guess_low_medium_high(column_name,series)
         else:
            # # Otherwise, assume continuous data with normalization
             # Otherwise, fallback to continuous standardization

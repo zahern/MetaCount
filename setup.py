@@ -53,7 +53,7 @@ setuptools.setup(
     long_description_content_type='text/markdown',  # Specify the content type as Markdown
     url='https://github.com/zahern/CountDataEstimation',
     author='Zeke Ahern',
-    author_email='zeke.ahern@hdr.qut.edu.au',
+    author_email='z.ahern@qut.edu.au',
     license='QUT',
     packages=['metacountregressor'],
     zip_safe=False,
@@ -61,6 +61,7 @@ setuptools.setup(
     install_requires=[
         'numpy>=1.13.1',
         'scipy>=1.0.0',
-        'requests','latextable'
+        'requests',
+        'latextable'
     ]
 )
