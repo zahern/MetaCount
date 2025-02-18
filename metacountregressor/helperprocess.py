@@ -179,15 +179,54 @@ config = {
     }
 }
 '''
+def set_up_analyst_constraints(data_characteristic, variable_decisions_alt = None):
+    name_data_characteristics = data_characteristic.columns.tolist()
+    distu = ['n', 'u', 't']
+    tra = ['no']
+    variable_decisions = {
+        name: {
+            'levels': list(range(6)),
+            'distributions': distu,
+            'transformations': tra
+        }
+        for name in name_data_characteristics
+    }
+    # Override elements in the original dictionary with the alt dictionary
+    if variable_decisions_alt is not None:
+        for key, alt_value in variable_decisions_alt.items():
+            if key in variable_decisions:
+                # Update the existing entry
+                variable_decisions[key].update(alt_value)
+            else:
+                # Add new entry if it doesn't exist
+                variable_decisions[key] = alt_value
+    # Prepare the data for the DataFrame
+    rows = []
+    for column_name, details in variable_decisions.items():
+        # Create a row dictionary
+        row = {'Column': column_name}
 
+        # Add levels as True/False for Level 0 through Level 5
+        for level in range(6):  # Assuming Level 0 to Level 5
+            row[f'Level {level}'] = level in details['levels']
+
+        # Add distributions and transformations directly
+        row['distributions'] = details['distributions']
+        row['transformations'] = details['transformations']
+
+        rows.append(row)
+
+    # Create the DataFrame
+    df = pd.DataFrame(rows)
+    return  df
 
 # Function to guess Low, Medium, High ranges
 def guess_low_medium_high(column_name, series):
     # Compute the tertiles (33rd and 66th percentiles)
-    print('did it make it...')
-    mode_value = st.mode(series)  # Get the most frequent value
-    print('good')
-    series = pd.to_numeric(series, errors='coerce').fillna(mode_value)
+    #print('did it make it...')
+    #mode_value = st.mode(series)  # Get the most frequent value
+    #print('good')
+   # series = pd.to_numeric(series, errors='coerce').fillna(mode_value)
     low_threshold = np.quantile(series, 0.33)
     high_threshold = np.quantile(series,0.66)
 
