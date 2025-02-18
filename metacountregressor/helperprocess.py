@@ -192,7 +192,19 @@ def guess_low_medium_high(column_name, series):
 
     # Define the bins and labels
     bins = [np.min(series) - 1, low_threshold, high_threshold, np.max(series)]
-    labels = ['Low', 'Medium', 'High']
+    # Handle duplicate bins by adjusting labels
+    if len(set(bins)) < len(bins):  # Check for duplicate bin edges
+        if low_threshold == high_threshold:
+            # Collapse to two bins (Low and High)
+            bins = [np.min(series) - 1, low_threshold, np.max(series)]
+            labels = ['Low', 'High']
+        else:
+            # Collapse to three unique bins
+            bins = sorted(set(bins))  # Remove duplicate edges
+            labels = [f'Bin {i + 1}' for i in range(len(bins) - 1)]
+    else:
+        # Standard case: Low, Medium, High
+        labels = ['Low', 'Medium', 'High']
 
     return {
         'type': 'bin',
@@ -211,7 +223,8 @@ def transform_dataframe(df, config):
                 df[column],
                 bins=settings['bins'],
                 labels=settings['labels'],
-                right=False
+                right=False,
+
             )
             # One-hot encode the binned column
             binned_dummies = pd.get_dummies(binned, prefix=settings['prefix'])
