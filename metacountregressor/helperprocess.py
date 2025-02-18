@@ -1,9 +1,12 @@
+from os.path import exists
+
 import numpy as np
 import pandas as pd
 import csv
 import matplotlib.pyplot as plt
 from scipy import stats as st
 from sklearn.preprocessing import StandardScaler
+from win32comext.shell.demos.IActiveDesktop import existing_item
 
 plt.style.use('https://github.com/dhaitz/matplotlib-stylesheets/raw/master/pitayasmoothie-dark.mplstyle')
 
@@ -179,17 +182,38 @@ config = {
     }
 }
 '''
-def set_up_analyst_constraints(data_characteristic, variable_decisions_alt = None):
+def null_handler(vari):
+    if vari in locals():
+        return vari
+    else:
+        print(f'{vari} does not exist, setting None..')
+        return None
+
+
+def set_up_analyst_constraints(data_characteristic, model_terms,  variable_decisions_alt = None):
+
+
     name_data_characteristics = data_characteristic.columns.tolist()
-    distu = ['n', 'u', 't']
-    tra = ['no']
+    # Get non-None values as a list
+    non_none_terms = [value for value in model_terms.values() if value is not None]
+    # how to make name_data_characteristics - non_none_terms
+
+    result = [item for item in name_data_characteristics if item not in non_none_terms]
+    distu = ['Normal', 'Uniform', 'Triangular']
+    tra = ['no', 'sqrt', 'arcsinh']
+    if model_terms.get('grouped') is None:
+        print('cant have grouped rpm, removing level 4 from every item')
+        MAKE_ALL_4_FALSE = True
+    else:
+        MAKE_ALL_4_FALSE = False
+
     variable_decisions = {
         name: {
             'levels': list(range(6)),
             'distributions': distu,
             'transformations': tra
         }
-        for name in name_data_characteristics
+        for name in result
     }
     # Override elements in the original dictionary with the alt dictionary
     if variable_decisions_alt is not None:
@@ -208,7 +232,11 @@ def set_up_analyst_constraints(data_characteristic, variable_decisions_alt = Non
 
         # Add levels as True/False for Level 0 through Level 5
         for level in range(6):  # Assuming Level 0 to Level 5
-            row[f'Level {level}'] = level in details['levels']
+
+            if level == 4 and MAKE_ALL_4_FALSE:
+                row[f'Level {level}'] = False
+            else:
+                row[f'Level {level}'] = level in details['levels']
 
         # Add distributions and transformations directly
         row['distributions'] = details['distributions']
@@ -218,7 +246,9 @@ def set_up_analyst_constraints(data_characteristic, variable_decisions_alt = Non
 
     # Create the DataFrame
     df = pd.DataFrame(rows)
-    return  df
+
+    data_new = data_characteristic.rename(columns={v: k for k, v in model_terms.items() if v in data_characteristic.columns})
+    return  df, data_new
 
 # Function to guess Low, Medium, High ranges
 def guess_low_medium_high(column_name, series):
