@@ -183,6 +183,7 @@ config = {
 # Function to guess Low, Medium, High ranges
 def guess_low_medium_high(column_name, series):
     # Compute the tertiles (33rd and 66th percentiles)
+    print('why')
     mode_value = np.mode(series)  # Get the most frequent value
     series = pd.to_numeric(series, errors='coerce').fillna(mode_value)
     low_threshold = np.quantile(series, 0.33)
