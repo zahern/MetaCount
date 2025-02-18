@@ -183,11 +183,13 @@ config = {
 # Function to guess Low, Medium, High ranges
 def guess_low_medium_high(column_name, series):
     # Compute the tertiles (33rd and 66th percentiles)
+    mode_value = np.mode(series)  # Get the most frequent value
+    series = pd.to_numeric(series, errors='coerce').fillna(mode_value)
     low_threshold = np.quantile(series, 0.33)
     high_threshold = np.quantile(series,0.66)
 
     # Define the bins and labels
-    bins = [np.min(series) - 1, low_threshold, high_threshold, np.min(series)]
+    bins = [np.min(series) - 1, low_threshold, high_threshold, np.max(series)]
     labels = ['Low', 'Medium', 'High']
 
     return {
@@ -238,6 +240,10 @@ def transform_dataframe(df, config):
 
 # Helper function to guess column type and update `config`
 def guess_column_type(column_name, series):
+
+    if series.empty:
+        raise ValueError(f"The column {column_name} contains no numeric data.")
+
     if series.dtype == 'object' or series.dtype.name == 'category':
         # If the column is categorical (e.g., strings), assume one-hot encoding
         return {'type': 'one-hot', 'prefix': column_name}
