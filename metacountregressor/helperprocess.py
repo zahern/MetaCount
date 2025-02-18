@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import csv
 import matplotlib.pyplot as plt
+from scipy import stats as st
 from sklearn.preprocessing import StandardScaler
 
 plt.style.use('https://github.com/dhaitz/matplotlib-stylesheets/raw/master/pitayasmoothie-dark.mplstyle')
@@ -184,7 +185,7 @@ config = {
 def guess_low_medium_high(column_name, series):
     # Compute the tertiles (33rd and 66th percentiles)
     print('did it make it...')
-    mode_value = np.mode(series)  # Get the most frequent value
+    mode_value = st.mode(series)  # Get the most frequent value
     print('good')
     series = pd.to_numeric(series, errors='coerce').fillna(mode_value)
     low_threshold = np.quantile(series, 0.33)
