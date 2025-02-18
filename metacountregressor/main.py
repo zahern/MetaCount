@@ -28,11 +28,16 @@ def convert_df_columns_to_binary_and_wide(df):
     return df
 
 
+
+
+
+
 def process_arguments(**kwargs):
     '''
     TRYING TO TURN THE CSV FILES INTO RELEVANT ARGS
     '''
     #dataset
+    '''
     if kwargs.get('dataset_file', False
     ):
         dataset = pd.read_csv(kwargs.get('dataset_file'))
@@ -71,15 +76,15 @@ def process_arguments(**kwargs):
 
         update_constant = kwargs.get('analyst_constraints')
         #update the decision_constraints
-
+    '''
     data_characteristic = pd.read_csv(kwargs.get('problem_data', 'problem_data.csv'))
     # Extract the column as a list of characteristic names
-    name_data_characteristics = data_characteristic.columns.tolist()
+    #name_data_characteristics = data_characteristic.columns.tolist()
 
     # Create the dictionary
-    decision_constraints = {name: list(range(7)) for name in name_data_characteristics}
+    #decision_constraints = {name: list(range(7)) for name in name_data_characteristics}
 
-    print('this gets all the features, I need to remove...')
+    #print('this gets all the features, I need to remove...')
 
     analyst_d = pd.read_csv(kwargs.get('decison_constraints', 'decisions.csv'))
     hyper = pd.read_csv('setup_hyper.csv')
@@ -377,10 +382,10 @@ def main(args, **kwargs):
         #data_info['data']['Panel'][0]
         args['decisions'] = data_info['analyst']
 
-        if not np.isnan(data_info['data']['Grouped'][0]):
+        if type(data_info['data']['Grouped'][0]) == str and len(data_info['data']['Grouped'][0]) >1:
             args['group'] = data_info['data']['Grouped'][0]
             args['ID'] = data_info['data']['Grouped'][0]
-        if not np.isnan(data_info['data']['Panel'][0]):
+        if type(data_info['data']['Panel'][0]) == str and len(data_info['data']['Panel'][0])>1:
             args['panels'] = data_info['data']['Panel'][0]
 
         df = pd.read_csv(str(data_info['data']['Problem'][0]))
