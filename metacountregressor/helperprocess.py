@@ -183,8 +183,9 @@ config = {
 # Function to guess Low, Medium, High ranges
 def guess_low_medium_high(column_name, series):
     # Compute the tertiles (33rd and 66th percentiles)
-    print('why')
+    print('did it make it...')
     mode_value = np.mode(series)  # Get the most frequent value
+
     series = pd.to_numeric(series, errors='coerce').fillna(mode_value)
     low_threshold = np.quantile(series, 0.33)
     high_threshold = np.quantile(series,0.66)
@@ -250,12 +251,14 @@ def guess_column_type(column_name, series):
         return {'type': 'one-hot', 'prefix': column_name}
     elif pd.api.types.is_numeric_dtype(series):
         unique_values = series.nunique()
+
         if unique_values < 5:
             return {'type': 'one-hot', 'prefix': column_name}
 
         elif np.max(series) - np.min(series) > 20:
+            print('made it through here')
             # If there are few unique values, assume binning with default bins
-            guess_low_medium_high(column_name,series)
+            return guess_low_medium_high(column_name,series)
         else:
            # # Otherwise, assume continuous data with normalization
             # Otherwise, fallback to continuous standardization
