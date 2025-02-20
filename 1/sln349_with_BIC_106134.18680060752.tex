@@ -1,0 +1,70 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 106134.19 Log-Likelihood: -52981.98 RMSE_TEST: 24.42}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			LENGTH & no & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			MIMEDSH & arcsinh & -0.02 & 1.00 & -0.02 & 0.98 \\
+			\hline
+			MXMEDSH & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			SPEED & arcsinh & -0.06 & 1.00 & -0.06 & 0.96 \\
+			\hline
+			SINGLE & log & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			DOUBLE & sqrt & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			GRADEBR & no & -0.03 & 1.00 & -0.03 & 0.97 \\
+			\hline
+			MIGRADE & no & -0.00 & 1.00 & -0.00 & 1.00 \\
+			\hline
+			MXGRADE & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			MXGRDIFF & arcsinh & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			TANGENT & arcsinh & -0.00 & 1.00 & -0.00 & 1.00 \\
+			\hline
+			MEDWIDTH & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			WIDTH & log & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			SLOPE & no & 0.02 & 1.00 & 0.02 & 0.99 \\
+			\hline
+			URB & no & 0.02 & 1.00 & 0.02 & 0.99 \\
+			\hline
+			ADTLANE & sqrt & -1.02 & 1.00 & -1.02 & 0.31 \\
+			\hline
+			INTECHAG & no & 0.03 & 1.00 & 0.03 & 0.98 \\
+			\hline
+			WIDTH (Std. Dev.) normal &  & -0.05 & 0.07 & -0.66 & 0.51 \\
+			\hline
+			SLOPE (Std. Dev.) triangular &  & -0.06 & 0.07 & -0.77 & 0.44 \\
+			\hline
+			 Chol: URB (Std. Dev. triangular) ) &  & -0.01 & 0.07 & -0.21 & 0.84 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. normal) ) &  & 0.08 & 0.07 & 1.12 & 0.26 \\
+			\hline
+			 Chol: INTECHAG (Std. Dev. tn_normal) ) &  & 0.08 & 0.07 & 1.07 & 0.29 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. normal) . URB (Std. Dev.   triangular ) &  & 0.06 & 0.07 & 0.89 & 0.38 \\
+			\hline
+			 Chol: INTECHAG (Std. Dev. tn_normal) . URB (Std. Dev.   triangular ) &  & 0.05 & 0.07 & 0.74 & 0.46 \\
+			\hline
+			 Chol: INTECHAG (Std. Dev. tn_normal) . ADTLANE (Std. Dev.   normal ) & no & 0.07 & 0.07 & 0.99 & 0.32 \\
+			\hline
+			main: DECLANES: hetro group 0 & no & 0.07 & 1.00 & 0.07 & 0.94 \\
+			\hline
+			ACCESS: hetro group 0 & no & 0.06 & 1.00 & 0.06 & 0.95 \\
+			\hline
+			AVESNOW: hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			main: DECLANES: hetro group 0:uniform:sd  hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

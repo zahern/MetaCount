@@ -1,0 +1,76 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 31986.52 Log-Likelihood: -15900.26 RMSE_TEST: 24.97}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			LENGTH & no & 0.68 & 1.00 & 0.68 & 0.50 \\
+			\hline
+			MIMEDSH & arcsinh & -0.20 & 1.00 & -0.20 & 0.84 \\
+			\hline
+			URB & no & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			TRAIN & no & 0.04 & 1.00 & 0.04 & 0.97 \\
+			\hline
+			MIGRADE & no & -0.08 & 1.00 & -0.08 & 0.94 \\
+			\hline
+			CURVES & arcsinh & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			MINRAD & arcsinh & -0.28 & 1.00 & -0.28 & 0.78 \\
+			\hline
+			ACCESS & no & -0.13 & 1.00 & -0.13 & 0.90 \\
+			\hline
+			FRICTION & log & -0.16 & 1.00 & -0.16 & 0.87 \\
+			\hline
+			TANGENT & no & 0.08 & 1.00 & 0.08 & 0.94 \\
+			\hline
+			ADTLANE & arcsinh & -0.72 & 1.00 & -0.72 & 0.47 \\
+			\hline
+			INTECHAG & no & 0.12 & 1.00 & 0.12 & 0.90 \\
+			\hline
+			INCLANES & no & -0.27 & 1.00 & -0.27 & 0.79 \\
+			\hline
+			AADT & log & -0.76 & 1.00 & -0.76 & 0.45 \\
+			\hline
+			MXGRADE & no & 0.28 & 1.00 & 0.28 & 0.78 \\
+			\hline
+			MXGRDIFF & arcsinh & 0.00 & 1.00 & 0.00 & 1.00 \\
+			\hline
+			TANGENT (Std. Dev.) normal &  & -0.25 & 0.07 & -3.48 & 0.00*** \\
+			\hline
+			ADTLANE (Std. Dev.) ln_normal &  & 0.01 & 0.07 & 0.13 & 0.90 \\
+			\hline
+			INTECHAG (Std. Dev.) triangular &  & 0.07 & 0.07 & 0.96 & 0.34 \\
+			\hline
+			 Chol: INCLANES (Std. Dev. ln_normal) ) &  & 0.06 & 0.07 & 0.87 & 0.39 \\
+			\hline
+			 Chol: AADT (Std. Dev. triangular) ) &  & 0.06 & 0.07 & 0.84 & 0.40 \\
+			\hline
+			 Chol: MXGRADE (Std. Dev. normal) ) &  & 0.05 & 0.07 & 0.69 & 0.49 \\
+			\hline
+			 Chol: MXGRDIFF (Std. Dev. ln_normal) ) &  & 0.06 & 0.07 & 0.88 & 0.38 \\
+			\hline
+			 Chol: AADT (Std. Dev. triangular) . INCLANES (Std. Dev.   ln_normal ) &  & 0.08 & 0.07 & 1.17 & 0.25 \\
+			\hline
+			 Chol: MXGRADE (Std. Dev. normal) . INCLANES (Std. Dev.   ln_normal ) &  & 0.06 & 0.07 & 0.88 & 0.38 \\
+			\hline
+			 Chol: MXGRADE (Std. Dev. normal) . AADT (Std. Dev.   triangular ) &  & 0.06 & 0.07 & 0.80 & 0.42 \\
+			\hline
+			 Chol: MXGRDIFF (Std. Dev. ln_normal) . INCLANES (Std. Dev.   ln_normal ) &  & 0.07 & 0.07 & 1.03 & 0.30 \\
+			\hline
+			 Chol: MXGRDIFF (Std. Dev. ln_normal) . AADT (Std. Dev.   triangular ) &  & 0.05 & 0.07 & 0.73 & 0.47 \\
+			\hline
+			 Chol: MXGRDIFF (Std. Dev. ln_normal) . MXGRADE (Std. Dev.   normal ) & no & 0.07 & 0.07 & 0.92 & 0.36 \\
+			\hline
+			main: DECLANES: hetro group 0 & arcsinh & 0.08 & 1.00 & 0.08 & 0.94 \\
+			\hline
+			AVESNOW: hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			main: DECLANES: hetro group 0:normal:sd  hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

@@ -1,0 +1,66 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 97233.02 Log-Likelihood: -48538.65 RMSE_TEST: 983.38}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			URB & no & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			SINGLE & no & -0.16 & 1.00 & -0.16 & 0.87 \\
+			\hline
+			CURVES & no & -0.11 & 1.00 & -0.11 & 0.91 \\
+			\hline
+			AVEPRE & no & -0.18 & 1.00 & -0.18 & 0.86 \\
+			\hline
+			MXMEDSH & no & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			TRAIN & arcsinh & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			GRADEBR & arcsinh & -0.08 & 1.00 & -0.08 & 0.94 \\
+			\hline
+			MXGRADE & arcsinh & 0.01 & 1.00 & 0.01 & 1.00 \\
+			\hline
+			ACCESS & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			SLOPE & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			AVESNOW & no & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			INCLANES & no & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			WIDTH & arcsinh & -0.13 & 1.00 & -0.13 & 0.90 \\
+			\hline
+			MXMEDSH (Std. Dev.) tn_normal &  & -0.07 & 0.07 & -1.03 & 0.30 \\
+			\hline
+			TRAIN (Std. Dev.) uniform &  & 1.90 & 0.07 & 26.31 & 0.00*** \\
+			\hline
+			GRADEBR (Std. Dev.) uniform &  & -0.34 & 0.07 & -4.68 & 0.00*** \\
+			\hline
+			MXGRADE (Std. Dev.) uniform &  & 0.05 & 0.07 & 0.73 & 0.47 \\
+			\hline
+			ACCESS (Std. Dev.) tn_normal &  & 0.08 & 0.07 & 1.06 & 0.29 \\
+			\hline
+			SLOPE (Std. Dev.) ln_normal &  & 0.08 & 0.07 & 1.09 & 0.28 \\
+			\hline
+			AVESNOW (Std. Dev.) normal &  & 0.06 & 0.07 & 0.88 & 0.38 \\
+			\hline
+			 Chol: INCLANES (Std. Dev. ln_normal) ) &  & 0.09 & 0.07 & 1.21 & 0.23 \\
+			\hline
+			 Chol: WIDTH (Std. Dev. triangular) ) &  & 0.09 & 0.07 & 1.26 & 0.21 \\
+			\hline
+			 Chol: WIDTH (Std. Dev. triangular) . INCLANES (Std. Dev.   ln_normal ) & no & 0.07 & 0.07 & 1.00 & 0.32 \\
+			\hline
+			main: DECLANES: hetro group 0 & no & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			TANGENT: hetro group 0 & sqrt & 0.07 & 1.00 & 0.07 & 0.95 \\
+			\hline
+			ADTLANE: hetro group 0 &  & 0.07 & 1.00 & 0.07 & 0.95 \\
+			\hline
+			main: DECLANES: hetro group 0:uniform:sd  hetro group 0 &  & 0.05 & 1.00 & 0.05 & 0.96 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

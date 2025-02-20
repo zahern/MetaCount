@@ -1,0 +1,72 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 89998.74 Log-Likelihood: -44913.38 RMSE_TEST: 24.41}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.25 & 1.00 & -0.25 & 0.80 \\
+			\hline
+			INCLANES & no & -2.07 & 1.00 & -2.07 & 0.04* \\
+			\hline
+			MIMEDSH & no & -2.07 & 1.00 & -2.07 & 0.04* \\
+			\hline
+			MXMEDSH & arcsinh & -0.92 & 1.00 & -0.92 & 0.36 \\
+			\hline
+			FC & no & -3.35 & 1.00 & -3.35 & 0.00*** \\
+			\hline
+			SINGLE & no & -0.87 & 1.00 & -0.87 & 0.39 \\
+			\hline
+			DOUBLE & log & 0.19 & 1.00 & 0.19 & 0.85 \\
+			\hline
+			FRICTION & no & 0.72 & 1.00 & 0.72 & 0.47 \\
+			\hline
+			ADTLANE & arcsinh & -4.24 & 1.00 & -4.24 & 0.00*** \\
+			\hline
+			INTECHAG & no & 2.37 & 1.00 & 2.37 & 0.02* \\
+			\hline
+			AVESNOW & arcsinh & -0.38 & 1.00 & -0.38 & 0.71 \\
+			\hline
+			DECLANES & no & -1.93 & 1.00 & -1.93 & 0.06. \\
+			\hline
+			WIDTH & arcsinh & -1.66 & 1.00 & -1.66 & 0.10 \\
+			\hline
+			GRADEBR & arcsinh & 3.38 & 1.00 & 3.38 & 0.00*** \\
+			\hline
+			MXGRADE & no & 2.56 & 1.00 & 2.56 & 0.01* \\
+			\hline
+			AVEPRE & arcsinh & -1.25 & 1.00 & -1.25 & 0.21 \\
+			\hline
+			DECLANES (Std. Dev.) uniform &  & -1.05 & 0.07 & -14.50 & 0.00*** \\
+			\hline
+			 Chol: WIDTH (Std. Dev. uniform) ) &  & 0.14 & 0.07 & 1.88 & 0.06. \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. triangular) ) &  & -0.35 & 0.07 & -4.79 & 0.00*** \\
+			\hline
+			 Chol: MXGRADE (Std. Dev. normal) ) &  & 0.10 & 0.07 & 1.37 & 0.17 \\
+			\hline
+			 Chol: AVEPRE (Std. Dev. ln_normal) ) &  & 0.09 & 0.07 & 1.24 & 0.22 \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. triangular) . WIDTH (Std. Dev.   uniform ) &  & 0.06 & 0.07 & 0.78 & 0.44 \\
+			\hline
+			 Chol: MXGRADE (Std. Dev. normal) . WIDTH (Std. Dev.   uniform ) &  & 0.08 & 0.07 & 1.11 & 0.27 \\
+			\hline
+			 Chol: MXGRADE (Std. Dev. normal) . GRADEBR (Std. Dev.   triangular ) &  & 0.07 & 0.07 & 0.99 & 0.32 \\
+			\hline
+			 Chol: AVEPRE (Std. Dev. ln_normal) . WIDTH (Std. Dev.   uniform ) &  & 0.08 & 0.07 & 1.15 & 0.25 \\
+			\hline
+			 Chol: AVEPRE (Std. Dev. ln_normal) . GRADEBR (Std. Dev.   triangular ) &  & 0.05 & 0.07 & 0.75 & 0.45 \\
+			\hline
+			 Chol: AVEPRE (Std. Dev. ln_normal) . MXGRADE (Std. Dev.   normal ) & no & 0.06 & 0.07 & 0.78 & 0.43 \\
+			\hline
+			main: URB: hetro group 0 & arcsinh & 0.10 & 1.00 & 0.10 & 0.92 \\
+			\hline
+			MINRAD: hetro group 0 & no & 0.10 & 1.00 & 0.10 & 0.92 \\
+			\hline
+			SLOPE: hetro group 0 &  & 0.07 & 1.00 & 0.07 & 0.94 \\
+			\hline
+			main: URB: hetro group 0:uniform:sd  hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

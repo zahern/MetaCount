@@ -1,0 +1,86 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 2116.99 Log-Likelihood: -951.10 RMSE_TEST: 982.76}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.01 & 1.00 & -0.01 & 1.00 \\
+			\hline
+			LENGTH & no & 0.01 & 1.00 & 0.01 & 1.00 \\
+			\hline
+			AADT & log & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			SINGLE & log & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			DOUBLE & arcsinh & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			TRAIN & no & 0.03 & 1.00 & 0.03 & 0.98 \\
+			\hline
+			MXGRDIFF & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			MINRAD & arcsinh & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			ACCESS & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			FRICTION & sqrt & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			ADTLANE & log & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			SLOPE & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			SPEED & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			PEAKHR & no & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			MIGRADE & no & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			TANGENT & arcsinh & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			MEDWIDTH & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			DECLANES & no & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			URB & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			CURVES & arcsinh & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			SPEED (Std. Dev.) ln_normal &  & -0.05 & 0.07 & -0.69 & 0.49 \\
+			\hline
+			PEAKHR (Std. Dev.) tn_normal &  & -0.03 & 0.07 & -0.40 & 0.69 \\
+			\hline
+			MIGRADE (Std. Dev.) triangular &  & 0.05 & 0.07 & 0.73 & 0.47 \\
+			\hline
+			TANGENT (Std. Dev.) uniform &  & 0.03 & 0.07 & 0.47 & 0.64 \\
+			\hline
+			MEDWIDTH (Std. Dev.) normal &  & -0.04 & 0.07 & -0.51 & 0.61 \\
+			\hline
+			 Chol: DECLANES (Std. Dev. ln_normal) ) &  & 0.10 & 0.07 & 1.32 & 0.19 \\
+			\hline
+			 Chol: URB (Std. Dev. triangular) ) &  & 0.06 & 0.07 & 0.84 & 0.40 \\
+			\hline
+			 Chol: CURVES (Std. Dev. ln_normal) ) &  & 0.07 & 0.07 & 1.00 & 0.32 \\
+			\hline
+			 Chol: URB (Std. Dev. triangular) . DECLANES (Std. Dev.   ln_normal ) &  & 0.05 & 0.07 & 0.74 & 0.46 \\
+			\hline
+			 Chol: CURVES (Std. Dev. ln_normal) . DECLANES (Std. Dev.   ln_normal ) &  & 0.09 & 0.07 & 1.26 & 0.21 \\
+			\hline
+			 Chol: CURVES (Std. Dev. ln_normal) . URB (Std. Dev.   triangular ) & no & 0.06 & 0.07 & 0.79 & 0.43 \\
+			\hline
+			main: GRADEBR: hetro group 0 & no & 0.07 & 1.00 & 0.07 & 0.94 \\
+			\hline
+			INTECHAG: hetro group 0 & sqrt & 0.08 & 1.00 & 0.08 & 0.93 \\
+			\hline
+			AVEPRE: hetro group 0 & arcsinh & 0.06 & 1.00 & 0.06 & 0.96 \\
+			\hline
+			main: MIMEDSH: hetro group 1 & arcsinh & 0.05 & 1.00 & 0.05 & 0.96 \\
+			\hline
+			MXMEDSH: hetro group 1 &  & 0.08 & 1.00 & 0.08 & 0.94 \\
+			\hline
+			main: GRADEBR: hetro group 0:triangular:sd  hetro group 0 &  & 0.10 & 1.00 & 0.10 & 0.92 \\
+			\hline
+			main: MIMEDSH: hetro group 1:tn_normal:sd  hetro group 1 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

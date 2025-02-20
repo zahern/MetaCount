@@ -1,0 +1,72 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 37503.57 Log-Likelihood: -18664.29 RMSE_TEST: 29.45}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			DECLANES & no & -0.13 & 1.00 & -0.13 & 0.90 \\
+			\hline
+			MXMEDSH & no & -0.40 & 1.00 & -0.40 & 0.69 \\
+			\hline
+			URB & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			AADT & log & -0.56 & 1.00 & -0.56 & 0.58 \\
+			\hline
+			SINGLE & no & -0.16 & 1.00 & -0.16 & 0.87 \\
+			\hline
+			PEAKHR & arcsinh & -0.20 & 1.00 & -0.20 & 0.84 \\
+			\hline
+			MIGRADE & no & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			MXGRADE & arcsinh & -0.02 & 1.00 & -0.02 & 0.98 \\
+			\hline
+			TANGENT & no & -0.02 & 1.00 & -0.02 & 0.98 \\
+			\hline
+			CURVES & arcsinh & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			SLOPE & no & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			INTECHAG & no & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			AVEPRE & arcsinh & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			MIMEDSH & no & -0.27 & 1.00 & -0.27 & 0.79 \\
+			\hline
+			GRADEBR & arcsinh & -0.11 & 1.00 & -0.11 & 0.91 \\
+			\hline
+			FRICTION & sqrt & -0.41 & 1.00 & -0.41 & 0.68 \\
+			\hline
+			AVESNOW & no & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			LENGTH & no & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			SPEED & sqrt & -0.40 & 1.00 & -0.40 & 0.69 \\
+			\hline
+			TRAIN & arcsinh & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			MIMEDSH (Std. Dev.) uniform &  & 0.06 & 0.07 & 0.79 & 0.43 \\
+			\hline
+			GRADEBR (Std. Dev.) normal &  & 0.07 & 0.07 & 0.98 & 0.33 \\
+			\hline
+			FRICTION (Std. Dev.) normal &  & 0.10 & 0.07 & 1.34 & 0.18 \\
+			\hline
+			AVESNOW (Std. Dev.) normal &  & 0.10 & 0.07 & 1.34 & 0.18 \\
+			\hline
+			 Chol: LENGTH (Std. Dev. normal) ) &  & 0.05 & 0.07 & 0.71 & 0.48 \\
+			\hline
+			 Chol: SPEED (Std. Dev. ln_normal) ) &  & 0.07 & 0.07 & 0.92 & 0.36 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. triangular) ) &  & 0.06 & 0.07 & 0.84 & 0.40 \\
+			\hline
+			 Chol: SPEED (Std. Dev. ln_normal) . LENGTH (Std. Dev.   normal ) &  & 0.08 & 0.07 & 1.10 & 0.27 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. triangular) . LENGTH (Std. Dev.   normal ) &  & 0.08 & 0.07 & 1.15 & 0.25 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. triangular) . SPEED (Std. Dev.   ln_normal ) &  & 0.06 & 0.07 & 0.77 & 0.44 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

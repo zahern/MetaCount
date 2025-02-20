@@ -1,0 +1,64 @@
+\begin{table}
+	\caption{p model found through the de algorithm. bic: 1902.88 Log-Likelihood: -680.46 RMSE_TEST: 27.74}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & 8.80 & 1.00 & 8.80 & 0.00*** \\
+			\hline
+			MIMEDSH & no & -0.08 & 1.00 & -0.08 & 0.94 \\
+			\hline
+			SPEED & log & -1.71 & 1.00 & -1.71 & 0.09. \\
+			\hline
+			URB & no & 0.07 & 1.00 & 0.07 & 0.94 \\
+			\hline
+			GRADEBR & no & 0.05 & 1.00 & 0.05 & 0.96 \\
+			\hline
+			MXGRADE & no & 0.03 & 1.00 & 0.03 & 0.98 \\
+			\hline
+			MXGRDIFF & arcsinh & 0.12 & 1.00 & 0.12 & 0.90 \\
+			\hline
+			MINRAD & arcsinh & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			FRICTION & arcsinh & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			SLOPE & no & 0.02 & 1.00 & 0.02 & 0.98 \\
+			\hline
+			INTECHAG & no & 0.24 & 1.00 & 0.24 & 0.81 \\
+			\hline
+			LOWPRE & no & -0.47 & 1.00 & -0.47 & 0.64 \\
+			\hline
+			GBRPM & arcsinh & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			EXPOSE & no & -0.11 & 1.00 & -0.11 & 0.91 \\
+			\hline
+			MXMEDSH & no & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			CPM & no & -0.11 & 1.00 & -0.11 & 0.92 \\
+			\hline
+			INCLANES & no & 0.12 & 1.00 & 0.12 & 0.90 \\
+			\hline
+			PEAKHR & no & -0.27 & 1.00 & -0.27 & 0.79 \\
+			\hline
+			ACCESS & no & 0.28 & 1.00 & 0.28 & 0.78 \\
+			\hline
+			MXMEDSH (Std. Dev.) uniform &  & 0.08 & 0.07 & 1.16 & 0.25 \\
+			\hline
+			CPM (Std. Dev.) tn_normal &  & 0.08 & 0.07 & 1.12 & 0.26 \\
+			\hline
+			 Chol: INCLANES (Std. Dev. tn_normal) ) &  & 0.09 & 0.07 & 1.29 & 0.20 \\
+			\hline
+			 Chol: PEAKHR (Std. Dev. triangular) ) &  & 0.09 & 0.07 & 1.28 & 0.20 \\
+			\hline
+			 Chol: ACCESS (Std. Dev. normal) ) &  & 0.08 & 0.07 & 1.12 & 0.26 \\
+			\hline
+			 Chol: PEAKHR (Std. Dev. triangular) . INCLANES (Std. Dev.   tn_normal ) &  & 0.07 & 0.07 & 0.97 & 0.33 \\
+			\hline
+			 Chol: ACCESS (Std. Dev. normal) . INCLANES (Std. Dev.   tn_normal ) &  & 0.10 & 0.07 & 1.33 & 0.19 \\
+			\hline
+			 Chol: ACCESS (Std. Dev. normal) . PEAKHR (Std. Dev.   triangular ) &  & 0.07 & 0.07 & 1.01 & 0.31 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

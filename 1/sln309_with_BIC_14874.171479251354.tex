@@ -1,0 +1,74 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 14874.17 Log-Likelihood: -7346.97 RMSE_TEST: 983.38}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			LENGTH & no & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			SINGLE & log & -0.00 & 1.00 & -0.00 & 1.00 \\
+			\hline
+			DOUBLE & sqrt & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			MIGRADE & no & -0.00 & 1.00 & -0.00 & 1.00 \\
+			\hline
+			MXGRDIFF & no & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			MEDWIDTH & no & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			FRICTION & log & -0.10 & 1.00 & -0.10 & 0.92 \\
+			\hline
+			INTECHAG & no & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			AVEPRE & sqrt & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			WIDTH & log & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			MXGRADE & no & 0.04 & 1.00 & 0.04 & 0.97 \\
+			\hline
+			MINRAD & arcsinh & -0.08 & 1.00 & -0.08 & 0.94 \\
+			\hline
+			AVESNOW & no & -0.02 & 1.00 & -0.02 & 0.98 \\
+			\hline
+			FC & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			TRAIN & arcsinh & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			GRADEBR & arcsinh & -0.00 & 1.00 & -0.00 & 1.00 \\
+			\hline
+			WIDTH (Std. Dev.) ln_normal &  & -0.03 & 0.07 & -0.37 & 0.71 \\
+			\hline
+			MXGRADE (Std. Dev.) tn_normal &  & 0.02 & 0.07 & 0.32 & 0.75 \\
+			\hline
+			MINRAD (Std. Dev.) tn_normal &  & -1.03 & 0.07 & -14.34 & 0.00*** \\
+			\hline
+			AVESNOW (Std. Dev.) ln_normal &  & 0.01 & 0.07 & 0.10 & 0.92 \\
+			\hline
+			 Chol: FC (Std. Dev. tn_normal) ) &  & 0.09 & 0.07 & 1.31 & 0.19 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. ln_normal) ) &  & 0.07 & 0.07 & 0.91 & 0.36 \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. ln_normal) ) &  & 0.09 & 0.07 & 1.29 & 0.20 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. ln_normal) . FC (Std. Dev.   tn_normal ) &  & 0.06 & 0.07 & 0.87 & 0.38 \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. ln_normal) . FC (Std. Dev.   tn_normal ) &  & 0.08 & 0.07 & 1.17 & 0.24 \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. ln_normal) . TRAIN (Std. Dev.   ln_normal ) & no & 0.05 & 0.07 & 0.74 & 0.46 \\
+			\hline
+			main: URB: hetro group 0 & arcsinh & 0.08 & 1.00 & 0.08 & 0.93 \\
+			\hline
+			CURVES: hetro group 0 & sqrt & 0.08 & 1.00 & 0.08 & 0.93 \\
+			\hline
+			ADTLANE: hetro group 0 & no & 0.05 & 1.00 & 0.05 & 0.96 \\
+			\hline
+			SLOPE: hetro group 0 &  & 0.08 & 1.00 & 0.08 & 0.93 \\
+			\hline
+			main: URB: hetro group 0:uniform:sd  hetro group 0 &  & 0.06 & 1.00 & 0.06 & 0.95 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

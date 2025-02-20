@@ -153,14 +153,14 @@ class ObjectiveFunction(object):
 
         self.MAE = None
         self.best_obj_1 = 1000000.0
-        self._obj_1 = 'bic'
-        self._obj_2 = 'MSE'
+        self._obj_1 = kwargs.get('_obj_1', 'bic') 
+        self._obj_2 = kwargs.get('_obj_2', 'MSE') 
         self.numerical_hessian_calc = 0  # calculates hessian by statsmodels otherwise scipy
         self.full_model = None
         self.GP_parameter = 0
-        self.is_multi = 0
+        self.is_multi = kwargs.get('is_multi', False)
         self.complexity_level = 6
-        self._max_iterations_improvement = 100
+        self._max_iterations_improvement = 10000
         self.generated_sln = set()
         self.ave_mae = 0
         # defalt paramaters for hs #TODO unpack into harmony search class
@@ -168,7 +168,7 @@ class ObjectiveFunction(object):
         self._hms = 20
         self._max_time = 60 * 60 * 24
         self._hmcr = .5
-        self._par = 0.3
+        self._par = 0.3 #dont think this gets useted
         self._mpai = 1
         self._max_imp = 100000
         self._WIC = 1000  # Number of Iterations without Multiobjective Improvement #tod chuck into solution
@@ -395,7 +395,7 @@ class ObjectiveFunction(object):
 
 
 
-        self.Ndraws = 200  # todo: change back
+        self.Ndraws = kwargs.get('Ndraws', 200)
         self.draws1 = None
         self.initial_sig = 1  # pass the test of a single model
         self.pvalue_sig_value = .1

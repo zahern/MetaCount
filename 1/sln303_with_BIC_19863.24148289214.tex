@@ -1,0 +1,70 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 19863.24 Log-Likelihood: -9847.51 RMSE_TEST: 24.18}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			INCLANES & no & -0.21 & 1.00 & -0.21 & 0.83 \\
+			\hline
+			TRAIN & no & -0.11 & 1.00 & -0.11 & 0.92 \\
+			\hline
+			GRADEBR & arcsinh & -0.08 & 1.00 & -0.08 & 0.94 \\
+			\hline
+			MIGRADE & no & -0.02 & 1.00 & -0.02 & 0.99 \\
+			\hline
+			MXGRADE & no & 0.04 & 1.00 & 0.04 & 0.97 \\
+			\hline
+			MINRAD & arcsinh & -0.50 & 1.00 & -0.50 & 0.62 \\
+			\hline
+			ACCESS & no & -0.08 & 1.00 & -0.08 & 0.93 \\
+			\hline
+			MEDWIDTH & no & -0.27 & 1.00 & -0.27 & 0.79 \\
+			\hline
+			INTECHAG & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			AVESNOW & arcsinh & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			MIMEDSH & no & -0.30 & 1.00 & -0.30 & 0.76 \\
+			\hline
+			SPEED & log & -0.30 & 1.00 & -0.30 & 0.77 \\
+			\hline
+			TANGENT & arcsinh & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			CURVES & arcsinh & -0.12 & 1.00 & -0.12 & 0.90 \\
+			\hline
+			AVEPRE & log & -0.06 & 1.00 & -0.06 & 0.96 \\
+			\hline
+			WIDTH & arcsinh & -0.26 & 1.00 & -0.26 & 0.80 \\
+			\hline
+			ADTLANE & log & -0.55 & 1.00 & -0.55 & 0.58 \\
+			\hline
+			MIMEDSH (Std. Dev.) triangular &  & -0.08 & 0.07 & -1.09 & 0.28 \\
+			\hline
+			SPEED (Std. Dev.) normal &  & -0.19 & 0.07 & -2.57 & 0.01* \\
+			\hline
+			TANGENT (Std. Dev.) ln_normal &  & -0.14 & 0.07 & -1.89 & 0.06. \\
+			\hline
+			CURVES (Std. Dev.) uniform &  & 0.06 & 0.07 & 0.78 & 0.43 \\
+			\hline
+			AVEPRE (Std. Dev.) ln_normal &  & 0.09 & 0.07 & 1.23 & 0.22 \\
+			\hline
+			 Chol: WIDTH (Std. Dev. ln_normal) ) &  & 0.08 & 0.07 & 1.12 & 0.26 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. normal) ) &  & 0.06 & 0.07 & 0.77 & 0.44 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. normal) . WIDTH (Std. Dev.   ln_normal ) & no & 0.09 & 0.07 & 1.19 & 0.24 \\
+			\hline
+			main: LENGTH: hetro group 0 & no & 0.05 & 1.00 & 0.05 & 0.96 \\
+			\hline
+			DECLANES: hetro group 0 & arcsinh & 0.05 & 1.00 & 0.05 & 0.96 \\
+			\hline
+			MXGRDIFF: hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			main: LENGTH: hetro group 0:normal:sd  hetro group 0 &  & 0.10 & 1.00 & 0.10 & 0.92 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

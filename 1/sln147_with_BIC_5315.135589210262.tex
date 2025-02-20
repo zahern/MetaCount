@@ -1,0 +1,78 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 5315.14 Log-Likelihood: -2562.44 RMSE_TEST: 27.11}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.53 & 1.00 & -0.53 & 0.60 \\
+			\hline
+			INCLANES & no & -0.73 & 1.00 & -0.73 & 0.46 \\
+			\hline
+			MIMEDSH & arcsinh & -0.76 & 1.00 & -0.76 & 0.45 \\
+			\hline
+			MXMEDSH & arcsinh & 1.39 & 1.00 & 1.39 & 0.17 \\
+			\hline
+			GRADEBR & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			MIGRADE & no & -0.92 & 1.00 & -0.92 & 0.36 \\
+			\hline
+			TANGENT & arcsinh & 0.05 & 1.00 & 0.05 & 0.96 \\
+			\hline
+			FRICTION & log & -1.56 & 1.00 & -1.56 & 0.12 \\
+			\hline
+			AVESNOW & arcsinh & -0.53 & 1.00 & -0.53 & 0.60 \\
+			\hline
+			LENGTH & log & 3.43 & 1.00 & 3.43 & 0.00*** \\
+			\hline
+			WIDTH & log & -1.72 & 1.00 & -1.72 & 0.09. \\
+			\hline
+			FC & no & -0.11 & 1.00 & -0.11 & 0.91 \\
+			\hline
+			SINGLE & log & -1.43 & 1.00 & -1.43 & 0.15 \\
+			\hline
+			DOUBLE & log & 0.82 & 1.00 & 0.82 & 0.41 \\
+			\hline
+			TRAIN & no & -0.49 & 1.00 & -0.49 & 0.62 \\
+			\hline
+			PEAKHR & arcsinh & 0.41 & 1.00 & 0.41 & 0.68 \\
+			\hline
+			ACCESS & no & 0.41 & 1.00 & 0.41 & 0.69 \\
+			\hline
+			DECLANES & no & -0.44 & 1.00 & -0.44 & 0.66 \\
+			\hline
+			SLOPE & no & 0.58 & 1.00 & 0.58 & 0.57 \\
+			\hline
+			AVEPRE & no & 0.23 & 1.00 & 0.23 & 0.82 \\
+			\hline
+			LENGTH (Std. Dev.) ln_normal &  & 0.05 & 0.07 & 0.74 & 0.46 \\
+			\hline
+			WIDTH (Std. Dev.) ln_normal &  & 0.09 & 0.07 & 1.21 & 0.23 \\
+			\hline
+			FC (Std. Dev.) triangular &  & 0.10 & 0.07 & 1.36 & 0.17 \\
+			\hline
+			SINGLE (Std. Dev.) ln_normal &  & 0.05 & 0.07 & 0.76 & 0.45 \\
+			\hline
+			DOUBLE (Std. Dev.) ln_normal &  & 0.10 & 0.07 & 1.32 & 0.19 \\
+			\hline
+			TRAIN (Std. Dev.) ln_normal &  & 0.10 & 0.07 & 1.32 & 0.19 \\
+			\hline
+			PEAKHR (Std. Dev.) triangular &  & 0.06 & 0.07 & 0.83 & 0.41 \\
+			\hline
+			ACCESS (Std. Dev.) tn_normal &  & 0.10 & 0.07 & 1.38 & 0.17 \\
+			\hline
+			 Chol: DECLANES (Std. Dev. normal) ) &  & 0.05 & 0.07 & 0.73 & 0.47 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. triangular) ) &  & 0.05 & 0.07 & 0.70 & 0.48 \\
+			\hline
+			 Chol: AVEPRE (Std. Dev. uniform) ) &  & 0.07 & 0.07 & 1.01 & 0.31 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. triangular) . DECLANES (Std. Dev.   normal ) &  & 0.05 & 0.07 & 0.76 & 0.45 \\
+			\hline
+			 Chol: AVEPRE (Std. Dev. uniform) . DECLANES (Std. Dev.   normal ) &  & 0.07 & 0.07 & 0.92 & 0.36 \\
+			\hline
+			 Chol: AVEPRE (Std. Dev. uniform) . SLOPE (Std. Dev.   triangular ) &  & 0.10 & 0.07 & 1.34 & 0.18 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

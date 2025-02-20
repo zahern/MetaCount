@@ -1,0 +1,68 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 28417.43 Log-Likelihood: -14127.48 RMSE_TEST: 84.97}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.08 & 1.00 & -0.08 & 0.94 \\
+			\hline
+			LENGTH & no & 0.46 & 1.00 & 0.46 & 0.64 \\
+			\hline
+			WIDTH & log & -0.54 & 1.00 & -0.54 & 0.59 \\
+			\hline
+			TRAIN & arcsinh & 0.43 & 1.00 & 0.43 & 0.67 \\
+			\hline
+			PEAKHR & arcsinh & 0.50 & 1.00 & 0.50 & 0.62 \\
+			\hline
+			GRADEBR & no & -0.30 & 1.00 & -0.30 & 0.77 \\
+			\hline
+			MXGRDIFF & arcsinh & 2.28 & 1.00 & 2.28 & 0.02* \\
+			\hline
+			TANGENT & arcsinh & -0.26 & 1.00 & -0.26 & 0.79 \\
+			\hline
+			MINRAD & arcsinh & 0.39 & 1.00 & 0.39 & 0.70 \\
+			\hline
+			ACCESS & no & -0.89 & 1.00 & -0.89 & 0.37 \\
+			\hline
+			MEDWIDTH & no & -0.27 & 1.00 & -0.27 & 0.79 \\
+			\hline
+			FRICTION & sqrt & -1.36 & 1.00 & -1.36 & 0.18 \\
+			\hline
+			INCLANES & no & -0.62 & 1.00 & -0.62 & 0.54 \\
+			\hline
+			DECLANES & no & -0.50 & 1.00 & -0.50 & 0.62 \\
+			\hline
+			MIMEDSH & no & -1.07 & 1.00 & -1.07 & 0.28 \\
+			\hline
+			DOUBLE & arcsinh & 0.67 & 1.00 & 0.67 & 0.50 \\
+			\hline
+			CURVES & arcsinh & 2.75 & 1.00 & 2.75 & 0.01* \\
+			\hline
+			ADTLANE & log & -1.31 & 1.00 & -1.31 & 0.19 \\
+			\hline
+			SLOPE & no & 1.07 & 1.00 & 1.07 & 0.28 \\
+			\hline
+			INTECHAG & no & 2.31 & 1.00 & 2.31 & 0.02* \\
+			\hline
+			INCLANES (Std. Dev.) triangular &  & 0.05 & 0.07 & 0.70 & 0.48 \\
+			\hline
+			DECLANES (Std. Dev.) tn_normal &  & 0.09 & 0.07 & 1.31 & 0.19 \\
+			\hline
+			MIMEDSH (Std. Dev.) normal &  & 0.07 & 0.07 & 1.03 & 0.30 \\
+			\hline
+			DOUBLE (Std. Dev.) normal &  & 0.06 & 0.07 & 0.89 & 0.38 \\
+			\hline
+			CURVES (Std. Dev.) triangular &  & 0.09 & 0.07 & 1.21 & 0.23 \\
+			\hline
+			ADTLANE (Std. Dev.) uniform &  & 0.08 & 0.07 & 1.06 & 0.29 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. ln_normal) ) &  & 0.10 & 0.07 & 1.38 & 0.17 \\
+			\hline
+			 Chol: INTECHAG (Std. Dev. ln_normal) ) &  & 0.07 & 0.07 & 0.97 & 0.33 \\
+			\hline
+			 Chol: INTECHAG (Std. Dev. ln_normal) . SLOPE (Std. Dev.   ln_normal ) &  & 0.07 & 0.07 & 0.93 & 0.35 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

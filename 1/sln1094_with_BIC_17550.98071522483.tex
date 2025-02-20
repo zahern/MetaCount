@@ -1,0 +1,68 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 17550.98 Log-Likelihood: -8694.01 RMSE_TEST: 23.62}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			MXMEDSH & arcsinh & 0.51 & 1.00 & 0.51 & 0.61 \\
+			\hline
+			FC & no & -0.79 & 1.00 & -0.79 & 0.43 \\
+			\hline
+			MIGRADE & no & -0.26 & 1.00 & -0.26 & 0.80 \\
+			\hline
+			MXGRDIFF & no & 0.43 & 1.00 & 0.43 & 0.67 \\
+			\hline
+			ACCESS & no & -0.73 & 1.00 & -0.73 & 0.47 \\
+			\hline
+			FRICTION & sqrt & 0.00 & 1.00 & 0.00 & 1.00 \\
+			\hline
+			INTECHAG & no & 2.54 & 1.00 & 2.54 & 0.01* \\
+			\hline
+			AVESNOW & arcsinh & -0.95 & 1.00 & -0.95 & 0.34 \\
+			\hline
+			DECLANES & no & -0.35 & 1.00 & -0.35 & 0.73 \\
+			\hline
+			SINGLE & sqrt & -0.38 & 1.00 & -0.38 & 0.70 \\
+			\hline
+			ADTLANE & arcsinh & -1.57 & 1.00 & -1.57 & 0.12 \\
+			\hline
+			DOUBLE & arcsinh & 0.98 & 1.00 & 0.98 & 0.33 \\
+			\hline
+			MXGRADE & no & 0.41 & 1.00 & 0.41 & 0.68 \\
+			\hline
+			TANGENT & no & 0.30 & 1.00 & 0.30 & 0.77 \\
+			\hline
+			CURVES & no & 0.52 & 1.00 & 0.52 & 0.60 \\
+			\hline
+			DECLANES (Std. Dev.) uniform &  & 0.06 & 0.07 & 0.86 & 0.39 \\
+			\hline
+			SINGLE (Std. Dev.) uniform &  & 0.05 & 0.07 & 0.73 & 0.47 \\
+			\hline
+			ADTLANE (Std. Dev.) normal &  & 0.07 & 0.07 & 0.90 & 0.37 \\
+			\hline
+			 Chol: DOUBLE (Std. Dev. ln_normal) ) &  & 0.09 & 0.07 & 1.29 & 0.20 \\
+			\hline
+			 Chol: MXGRADE (Std. Dev. uniform) ) &  & 0.07 & 0.07 & 1.01 & 0.32 \\
+			\hline
+			 Chol: TANGENT (Std. Dev. triangular) ) &  & 0.09 & 0.07 & 1.22 & 0.22 \\
+			\hline
+			 Chol: CURVES (Std. Dev. uniform) ) &  & 0.07 & 0.07 & 1.01 & 0.32 \\
+			\hline
+			 Chol: MXGRADE (Std. Dev. uniform) . DOUBLE (Std. Dev.   ln_normal ) &  & 0.06 & 0.07 & 0.79 & 0.43 \\
+			\hline
+			 Chol: TANGENT (Std. Dev. triangular) . DOUBLE (Std. Dev.   ln_normal ) &  & 0.06 & 0.07 & 0.88 & 0.38 \\
+			\hline
+			 Chol: TANGENT (Std. Dev. triangular) . MXGRADE (Std. Dev.   uniform ) &  & 0.06 & 0.07 & 0.84 & 0.40 \\
+			\hline
+			 Chol: CURVES (Std. Dev. uniform) . DOUBLE (Std. Dev.   ln_normal ) &  & 0.06 & 0.07 & 0.83 & 0.41 \\
+			\hline
+			 Chol: CURVES (Std. Dev. uniform) . MXGRADE (Std. Dev.   uniform ) &  & 0.08 & 0.07 & 1.15 & 0.25 \\
+			\hline
+			 Chol: CURVES (Std. Dev. uniform) . TANGENT (Std. Dev.   triangular ) &  & 0.06 & 0.07 & 0.89 & 0.38 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

@@ -787,7 +787,7 @@ class SimulatedAnnealing(object):
         self.accept = 0
         self.profiler = []
         self.update_t = self.cooling_linear_m
-        self.get_direcotory()
+        self.get_directory()
         self._crossover_perc = float(kwargs.get('_crossover_perc', 0.2)) or float(kwargs.get('_cr', 0.2))
         self._obj_fun = objective_function
         if objective_function.is_multi:  # TODO Define more specific objectives in the intialiser
@@ -801,7 +801,7 @@ class SimulatedAnnealing(object):
             self.pf = Pareto(self.obj_1, self.obj_2, False)
             self._sa_memory = list()
 
-    def get_direcotory(self):
+    def get_directory(self):
         # checking if the directory demo_folder2 
         # exist or not.
         if not os.path.isdir(self.instance_number):
@@ -1237,6 +1237,16 @@ class HarmonySearch(object):
             Initialize HS with the specified objective function. Note that this objective function must implement ObjectiveFunctionInterface.
         """
         self._obj_fun = objective_function
+        ## NEW CODE, TRYING TO EXCTACT OUT THE PARAMATERS
+        self._hms = kwargs.get('_hms', 20)
+        self._par = kwargs.get(_'par', .30)
+        self.F = kwargs.get('_AI', 2)  # mutation scale
+        self.iter = kwargs.get('_max_iter', 10000)
+        self.cr = kwargs.get('_crossover_perc') or kwargs.get('_cr', 0.2)
+        self.instance_number = str(kwargs.get('instance_number', 1))
+
+
+
         # for printing basics metrics
         self.print_verbose = True
         # harmony_memory stores the best hms harmonies
@@ -1245,7 +1255,7 @@ class HarmonySearch(object):
         self._harmony_history = list()
         # saves the best fitness
         self.instance_number = str(objective_function.instance_number)
-        self.get_direcotory()
+        self.get_directory()
         self._harmony_trace_best = list()
         self._harmony_trace_incumbent = list()
         if self._obj_fun.is_multi:  # TODO Define more specific objectives in the intialiser
@@ -1261,7 +1271,7 @@ class HarmonySearch(object):
 
             self.pf = Pareto(self.obj_1, self.obj_2, False)
 
-    def get_direcotory(self):
+    def get_directory(self):
         # checking if the directory demo_folder2 
         # exist or not.
         if not os.path.isdir(self.instance_number):

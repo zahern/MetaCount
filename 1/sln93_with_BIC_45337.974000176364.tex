@@ -1,0 +1,70 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 45337.97 Log-Likelihood: -22584.62 RMSE_TEST: 21.99}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			LENGTH & arcsinh & -0.11 & 1.00 & -0.11 & 0.92 \\
+			\hline
+			WIDTH & sqrt & -0.39 & 1.00 & -0.39 & 0.70 \\
+			\hline
+			URB & no & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			DOUBLE & log & -0.08 & 1.00 & -0.08 & 0.94 \\
+			\hline
+			GRADEBR & no & -0.14 & 1.00 & -0.14 & 0.89 \\
+			\hline
+			MXGRDIFF & arcsinh & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			MINRAD & arcsinh & -0.38 & 1.00 & -0.38 & 0.71 \\
+			\hline
+			MEDWIDTH & no & -0.23 & 1.00 & -0.23 & 0.82 \\
+			\hline
+			AVESNOW & no & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			MIMEDSH & arcsinh & -0.08 & 1.00 & -0.08 & 0.93 \\
+			\hline
+			SPEED & arcsinh & -0.22 & 1.00 & -0.22 & 0.82 \\
+			\hline
+			FC & no & -0.23 & 1.00 & -0.23 & 0.82 \\
+			\hline
+			TRAIN & log & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			PEAKHR & no & -0.52 & 1.00 & -0.52 & 0.60 \\
+			\hline
+			ACCESS & no & -0.13 & 1.00 & -0.13 & 0.90 \\
+			\hline
+			ADTLANE & arcsinh & -0.45 & 1.00 & -0.45 & 0.65 \\
+			\hline
+			MIMEDSH (Std. Dev.) uniform &  & -0.14 & 0.07 & -1.97 & 0.05. \\
+			\hline
+			SPEED (Std. Dev.) ln_normal &  & -0.10 & 0.07 & -1.35 & 0.18 \\
+			\hline
+			FC (Std. Dev.) ln_normal &  & 0.09 & 0.07 & 1.21 & 0.23 \\
+			\hline
+			TRAIN (Std. Dev.) ln_normal &  & 0.07 & 0.07 & 1.01 & 0.31 \\
+			\hline
+			 Chol: PEAKHR (Std. Dev. triangular) ) &  & 0.10 & 0.07 & 1.32 & 0.19 \\
+			\hline
+			 Chol: ACCESS (Std. Dev. ln_normal) ) &  & 0.07 & 0.07 & 0.98 & 0.33 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. ln_normal) ) &  & 0.07 & 0.07 & 0.96 & 0.34 \\
+			\hline
+			 Chol: ACCESS (Std. Dev. ln_normal) . PEAKHR (Std. Dev.   triangular ) &  & 0.07 & 0.07 & 0.98 & 0.33 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. ln_normal) . PEAKHR (Std. Dev.   triangular ) &  & 0.10 & 0.07 & 1.35 & 0.18 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. ln_normal) . ACCESS (Std. Dev.   ln_normal ) & no & 0.08 & 0.07 & 1.11 & 0.27 \\
+			\hline
+			main: INCLANES: hetro group 0 & sqrt & 0.08 & 1.00 & 0.08 & 0.94 \\
+			\hline
+			SINGLE: hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			main: INCLANES: hetro group 0:triangular:sd  hetro group 0 &  & 0.06 & 1.00 & 0.06 & 0.95 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

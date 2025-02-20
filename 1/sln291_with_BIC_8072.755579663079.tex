@@ -1,0 +1,66 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 8072.76 Log-Likelihood: -3958.52 RMSE_TEST: 93.27}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.61 & 1.00 & -0.61 & 0.54 \\
+			\hline
+			LENGTH & no & 0.11 & 1.00 & 0.11 & 0.91 \\
+			\hline
+			MIMEDSH & arcsinh & -0.71 & 1.00 & -0.71 & 0.48 \\
+			\hline
+			SINGLE & sqrt & -2.28 & 1.00 & -2.28 & 0.02* \\
+			\hline
+			TRAIN & no & -0.61 & 1.00 & -0.61 & 0.54 \\
+			\hline
+			MEDWIDTH & no & 0.95 & 1.00 & 0.95 & 0.34 \\
+			\hline
+			FRICTION & sqrt & 0.10 & 1.00 & 0.10 & 0.92 \\
+			\hline
+			DECLANES & no & -0.66 & 1.00 & -0.66 & 0.51 \\
+			\hline
+			WIDTH & log & -3.03 & 1.00 & -3.03 & 0.00*** \\
+			\hline
+			MXMEDSH & arcsinh & 1.30 & 1.00 & 1.30 & 0.20 \\
+			\hline
+			DOUBLE & arcsinh & 2.53 & 1.00 & 2.53 & 0.01* \\
+			\hline
+			ACCESS & no & -3.54 & 1.00 & -3.54 & 0.00*** \\
+			\hline
+			INTECHAG & no & 0.96 & 1.00 & 0.96 & 0.34 \\
+			\hline
+			AVEPRE & log & 1.06 & 1.00 & 1.06 & 0.29 \\
+			\hline
+			AVESNOW & no & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			URB & no & -1.00 & 1.00 & -1.00 & 0.32 \\
+			\hline
+			MXGRDIFF & arcsinh & 1.54 & 1.00 & 1.54 & 0.13 \\
+			\hline
+			DECLANES (Std. Dev.) uniform &  & 0.09 & 0.07 & 1.24 & 0.21 \\
+			\hline
+			WIDTH (Std. Dev.) tn_normal &  & 0.06 & 0.07 & 0.83 & 0.41 \\
+			\hline
+			MXMEDSH (Std. Dev.) triangular &  & 0.05 & 0.07 & 0.70 & 0.49 \\
+			\hline
+			DOUBLE (Std. Dev.) tn_normal &  & 0.08 & 0.07 & 1.16 & 0.25 \\
+			\hline
+			ACCESS (Std. Dev.) normal &  & 0.07 & 0.07 & 1.02 & 0.31 \\
+			\hline
+			INTECHAG (Std. Dev.) normal &  & 0.09 & 0.07 & 1.24 & 0.22 \\
+			\hline
+			AVEPRE (Std. Dev.) ln_normal &  & 0.09 & 0.07 & 1.23 & 0.22 \\
+			\hline
+			AVESNOW (Std. Dev.) ln_normal &  & 0.09 & 0.07 & 1.27 & 0.20 \\
+			\hline
+			 Chol: URB (Std. Dev. uniform) ) &  & 0.08 & 0.07 & 1.08 & 0.28 \\
+			\hline
+			 Chol: MXGRDIFF (Std. Dev. uniform) ) &  & 0.07 & 0.07 & 1.00 & 0.32 \\
+			\hline
+			 Chol: MXGRDIFF (Std. Dev. uniform) . URB (Std. Dev.   uniform ) &  & 0.10 & 0.07 & 1.33 & 0.19 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

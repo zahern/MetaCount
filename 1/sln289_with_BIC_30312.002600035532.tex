@@ -1,0 +1,70 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 30312.00 Log-Likelihood: -15072.89 RMSE_TEST: 28.02}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			LENGTH & no & -0.14 & 1.00 & -0.14 & 0.89 \\
+			\hline
+			TRAIN & arcsinh & 0.19 & 1.00 & 0.19 & 0.85 \\
+			\hline
+			PEAKHR & arcsinh & 0.43 & 1.00 & 0.43 & 0.67 \\
+			\hline
+			MIGRADE & no & 0.40 & 1.00 & 0.40 & 0.69 \\
+			\hline
+			MINRAD & arcsinh & -0.32 & 1.00 & -0.32 & 0.75 \\
+			\hline
+			MEDWIDTH & no & 3.29 & 1.00 & 3.29 & 0.00*** \\
+			\hline
+			FRICTION & sqrt & 2.16 & 1.00 & 2.16 & 0.03* \\
+			\hline
+			ADTLANE & arcsinh & -2.91 & 1.00 & -2.91 & 0.00*** \\
+			\hline
+			WIDTH & arcsinh & -1.63 & 1.00 & -1.63 & 0.10 \\
+			\hline
+			URB & no & -3.40 & 1.00 & -3.40 & 0.00*** \\
+			\hline
+			SINGLE & no & -1.14 & 1.00 & -1.14 & 0.26 \\
+			\hline
+			MXGRADE & no & -0.19 & 1.00 & -0.19 & 0.85 \\
+			\hline
+			TANGENT & no & -0.08 & 1.00 & -0.08 & 0.94 \\
+			\hline
+			ACCESS & no & -2.54 & 1.00 & -2.54 & 0.01* \\
+			\hline
+			AVEPRE & log & 3.50 & 1.00 & 3.50 & 0.00*** \\
+			\hline
+			AVESNOW & arcsinh & -2.22 & 1.00 & -2.22 & 0.03* \\
+			\hline
+			GRADEBR & no & 0.42 & 1.00 & 0.42 & 0.67 \\
+			\hline
+			SLOPE & no & 1.15 & 1.00 & 1.15 & 0.25 \\
+			\hline
+			WIDTH (Std. Dev.) tn_normal &  & 0.06 & 0.07 & 0.83 & 0.41 \\
+			\hline
+			URB (Std. Dev.) tn_normal &  & 0.10 & 0.07 & 1.33 & 0.19 \\
+			\hline
+			SINGLE (Std. Dev.) tn_normal &  & 0.08 & 0.07 & 1.07 & 0.29 \\
+			\hline
+			MXGRADE (Std. Dev.) uniform &  & 0.07 & 0.07 & 0.93 & 0.36 \\
+			\hline
+			TANGENT (Std. Dev.) uniform &  & 0.07 & 0.07 & 0.98 & 0.33 \\
+			\hline
+			ACCESS (Std. Dev.) triangular &  & 0.08 & 0.07 & 1.04 & 0.30 \\
+			\hline
+			AVEPRE (Std. Dev.) tn_normal &  & 0.10 & 0.07 & 1.38 & 0.17 \\
+			\hline
+			AVESNOW (Std. Dev.) uniform &  & 0.05 & 0.07 & 0.70 & 0.48 \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. tn_normal) ) &  & 0.09 & 0.07 & 1.28 & 0.20 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. uniform) ) &  & 0.10 & 0.07 & 1.37 & 0.17 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. uniform) . GRADEBR (Std. Dev.   tn_normal ) &  & 0.06 & 0.07 & 0.87 & 0.39 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

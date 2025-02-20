@@ -1,0 +1,74 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 111325.18 Log-Likelihood: -55572.72 RMSE_TEST: 31.39}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.02 & 1.00 & -0.02 & 0.99 \\
+			\hline
+			LENGTH & sqrt & -0.03 & 1.00 & -0.03 & 0.97 \\
+			\hline
+			INCLANES & no & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			WIDTH & sqrt & -0.16 & 1.00 & -0.16 & 0.88 \\
+			\hline
+			SPEED & no & -1.00 & 1.00 & -1.00 & 0.32 \\
+			\hline
+			MIGRADE & no & 0.00 & 1.00 & 0.00 & 1.00 \\
+			\hline
+			MXGRADE & no & 0.04 & 1.00 & 0.04 & 0.97 \\
+			\hline
+			MXGRDIFF & no & -0.09 & 1.00 & -0.09 & 0.93 \\
+			\hline
+			CURVES & arcsinh & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			FRICTION & sqrt & -0.17 & 1.00 & -0.17 & 0.87 \\
+			\hline
+			AVEPRE & log & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			DOUBLE & arcsinh & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			PEAKHR & no & -0.16 & 1.00 & -0.16 & 0.87 \\
+			\hline
+			TANGENT & arcsinh & 0.03 & 1.00 & 0.03 & 0.98 \\
+			\hline
+			SLOPE & no & -0.01 & 1.00 & -0.01 & 1.00 \\
+			\hline
+			INTECHAG & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			AVESNOW & arcsinh & -0.02 & 1.00 & -0.02 & 0.98 \\
+			\hline
+			FC & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			TRAIN & arcsinh & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			MINRAD & arcsinh & -0.13 & 1.00 & -0.13 & 0.89 \\
+			\hline
+			DOUBLE (Std. Dev.) triangular &  & 0.08 & 0.07 & 1.05 & 0.29 \\
+			\hline
+			PEAKHR (Std. Dev.) ln_normal &  & 0.09 & 0.07 & 1.27 & 0.21 \\
+			\hline
+			TANGENT (Std. Dev.) ln_normal &  & 0.05 & 0.07 & 0.75 & 0.45 \\
+			\hline
+			SLOPE (Std. Dev.) ln_normal &  & 0.08 & 0.07 & 1.11 & 0.27 \\
+			\hline
+			INTECHAG (Std. Dev.) normal &  & 0.08 & 0.07 & 1.17 & 0.24 \\
+			\hline
+			AVESNOW (Std. Dev.) normal &  & 0.08 & 0.07 & 1.10 & 0.27 \\
+			\hline
+			 Chol: FC (Std. Dev. uniform) ) &  & 0.08 & 0.07 & 1.13 & 0.26 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. ln_normal) ) &  & 0.08 & 0.07 & 1.09 & 0.28 \\
+			\hline
+			 Chol: MINRAD (Std. Dev. triangular) ) &  & 0.06 & 0.07 & 0.87 & 0.38 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. ln_normal) . FC (Std. Dev.   uniform ) &  & 0.09 & 0.07 & 1.27 & 0.20 \\
+			\hline
+			 Chol: MINRAD (Std. Dev. triangular) . FC (Std. Dev.   uniform ) &  & 0.09 & 0.07 & 1.31 & 0.19 \\
+			\hline
+			 Chol: MINRAD (Std. Dev. triangular) . TRAIN (Std. Dev.   ln_normal ) &  & 0.07 & 0.07 & 0.99 & 0.32 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

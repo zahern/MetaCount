@@ -1,0 +1,78 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 1564.64 Log-Likelihood: -686.94 RMSE_TEST: 16.44}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -10.09 & 1.00 & -10.09 & 0.00*** \\
+			\hline
+			LENGTH & log & 1.03 & 1.00 & 1.03 & 0.31 \\
+			\hline
+			WIDTH & arcsinh & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			SINGLE & arcsinh & -0.53 & 1.00 & -0.53 & 0.59 \\
+			\hline
+			PEAKHR & no & -0.26 & 1.00 & -0.26 & 0.79 \\
+			\hline
+			GRADEBR & arcsinh & 0.16 & 1.00 & 0.16 & 0.87 \\
+			\hline
+			MXGRADE & no & 0.04 & 1.00 & 0.04 & 0.97 \\
+			\hline
+			TANGENT & no & 0.02 & 1.00 & 0.02 & 0.99 \\
+			\hline
+			ACCESS & no & -0.16 & 1.00 & -0.16 & 0.88 \\
+			\hline
+			INTECHAG & no & 0.10 & 1.00 & 0.10 & 0.92 \\
+			\hline
+			FC & no & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			MIGRADE & no & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			CURVES & no & -0.02 & 1.00 & -0.02 & 0.99 \\
+			\hline
+			FRICTION & log & 0.16 & 1.00 & 0.16 & 0.87 \\
+			\hline
+			AVEPRE & log & 0.04 & 1.00 & 0.04 & 0.97 \\
+			\hline
+			INCLANES & no & -0.00 & 1.00 & -0.00 & 1.00 \\
+			\hline
+			SPEED & arcsinh & 0.56 & 1.00 & 0.56 & 0.58 \\
+			\hline
+			URB & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			TRAIN & log & 0.16 & 1.00 & 0.16 & 0.87 \\
+			\hline
+			FC (Std. Dev.) uniform &  & 0.06 & 0.07 & 0.80 & 0.42 \\
+			\hline
+			MIGRADE (Std. Dev.) ln_normal &  & 0.08 & 0.07 & 1.15 & 0.25 \\
+			\hline
+			CURVES (Std. Dev.) normal &  & 0.05 & 0.07 & 0.69 & 0.49 \\
+			\hline
+			FRICTION (Std. Dev.) triangular &  & 0.10 & 0.07 & 1.36 & 0.18 \\
+			\hline
+			AVEPRE (Std. Dev.) normal &  & 0.06 & 0.07 & 0.89 & 0.37 \\
+			\hline
+			 Chol: INCLANES (Std. Dev. ln_normal) ) &  & 0.08 & 0.07 & 1.13 & 0.26 \\
+			\hline
+			 Chol: SPEED (Std. Dev. normal) ) &  & 0.08 & 0.07 & 1.16 & 0.25 \\
+			\hline
+			 Chol: URB (Std. Dev. normal) ) &  & 0.07 & 0.07 & 0.96 & 0.34 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. tn_normal) ) &  & 0.10 & 0.07 & 1.34 & 0.18 \\
+			\hline
+			 Chol: SPEED (Std. Dev. normal) . INCLANES (Std. Dev.   ln_normal ) &  & 0.05 & 0.07 & 0.76 & 0.45 \\
+			\hline
+			 Chol: URB (Std. Dev. normal) . INCLANES (Std. Dev.   ln_normal ) &  & 0.07 & 0.07 & 0.95 & 0.34 \\
+			\hline
+			 Chol: URB (Std. Dev. normal) . SPEED (Std. Dev.   normal ) &  & 0.09 & 0.07 & 1.23 & 0.22 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. tn_normal) . INCLANES (Std. Dev.   ln_normal ) &  & 0.08 & 0.07 & 1.15 & 0.25 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. tn_normal) . SPEED (Std. Dev.   normal ) &  & 0.08 & 0.07 & 1.14 & 0.25 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. tn_normal) . URB (Std. Dev.   normal ) &  & 0.09 & 0.07 & 1.20 & 0.23 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

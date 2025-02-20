@@ -1,0 +1,56 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 70244.88 Log-Likelihood: -35058.73 RMSE_TEST: 983.38}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.08 & 1.00 & -0.08 & 0.93 \\
+			\hline
+			LENGTH & arcsinh & 0.00 & 1.00 & 0.00 & 1.00 \\
+			\hline
+			URB & no & -0.13 & 1.00 & -0.13 & 0.90 \\
+			\hline
+			DOUBLE & log & -0.12 & 1.00 & -0.12 & 0.90 \\
+			\hline
+			MIGRADE & no & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			ACCESS & no & -0.16 & 1.00 & -0.16 & 0.87 \\
+			\hline
+			MIMEDSH & no & -0.51 & 1.00 & -0.51 & 0.61 \\
+			\hline
+			GRADEBR & no & 0.34 & 1.00 & 0.34 & 0.73 \\
+			\hline
+			CURVES & arcsinh & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			SLOPE & no & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			INTECHAG & no & 0.02 & 1.00 & 0.02 & 0.98 \\
+			\hline
+			AVESNOW & arcsinh & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			MIMEDSH (Std. Dev.) uniform &  & -0.37 & 0.07 & -5.11 & 0.00*** \\
+			\hline
+			GRADEBR (Std. Dev.) uniform &  & -0.24 & 0.07 & -3.31 & 0.00*** \\
+			\hline
+			CURVES (Std. Dev.) normal &  & -0.91 & 0.07 & -12.63 & 0.00*** \\
+			\hline
+			SLOPE (Std. Dev.) triangular &  & -0.19 & 0.07 & -2.57 & 0.01* \\
+			\hline
+			INTECHAG (Std. Dev.) triangular &  & 0.05 & 0.07 & 0.72 & 0.47 \\
+			\hline
+			AVESNOW (Std. Dev.) triangular & no & 0.08 & 0.07 & 1.17 & 0.24 \\
+			\hline
+			main: FC: hetro group 0 & no & 0.08 & 1.00 & 0.08 & 0.93 \\
+			\hline
+			MEDWIDTH: hetro group 0 & arcsinh & 0.07 & 1.00 & 0.07 & 0.94 \\
+			\hline
+			ADTLANE: hetro group 0 & sqrt & 0.05 & 1.00 & 0.05 & 0.96 \\
+			\hline
+			AVEPRE: hetro group 0 &  & 0.10 & 1.00 & 0.10 & 0.92 \\
+			\hline
+			main: FC: hetro group 0:normal:sd  hetro group 0 &  & 0.07 & 1.00 & 0.07 & 0.94 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

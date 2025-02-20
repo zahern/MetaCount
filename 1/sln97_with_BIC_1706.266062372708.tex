@@ -1,0 +1,70 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 1706.27 Log-Likelihood: -769.02 RMSE_TEST: 49.82}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -8.86 & 1.00 & -8.86 & 0.00*** \\
+			\hline
+			WIDTH & log & -0.21 & 1.00 & -0.21 & 0.84 \\
+			\hline
+			FC & no & -0.13 & 1.00 & -0.13 & 0.90 \\
+			\hline
+			FRICTION & arcsinh & 0.02 & 1.00 & 0.02 & 0.99 \\
+			\hline
+			SLOPE & no & 0.21 & 1.00 & 0.21 & 0.84 \\
+			\hline
+			AVEPRE & arcsinh & 0.01 & 1.00 & 0.01 & 1.00 \\
+			\hline
+			AVESNOW & no & 0.03 & 1.00 & 0.03 & 0.98 \\
+			\hline
+			INCLANES & no & -0.06 & 1.00 & -0.06 & 0.95 \\
+			\hline
+			MIMEDSH & arcsinh & 0.32 & 1.00 & 0.32 & 0.75 \\
+			\hline
+			DOUBLE & arcsinh & 0.35 & 1.00 & 0.35 & 0.73 \\
+			\hline
+			MXGRADE & no & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			MINRAD & arcsinh & 0.00 & 1.00 & 0.00 & 1.00 \\
+			\hline
+			LENGTH & arcsinh & 0.98 & 1.00 & 0.98 & 0.33 \\
+			\hline
+			SINGLE & no & -0.14 & 1.00 & -0.14 & 0.89 \\
+			\hline
+			TANGENT & arcsinh & 0.17 & 1.00 & 0.17 & 0.86 \\
+			\hline
+			INCLANES (Std. Dev.) tn_normal &  & 0.04 & 0.07 & 0.51 & 0.61 \\
+			\hline
+			MIMEDSH (Std. Dev.) tn_normal &  & 0.05 & 0.07 & 0.76 & 0.45 \\
+			\hline
+			DOUBLE (Std. Dev.) tn_normal &  & -0.06 & 0.07 & -0.87 & 0.39 \\
+			\hline
+			MXGRADE (Std. Dev.) triangular &  & 0.07 & 0.07 & 1.01 & 0.31 \\
+			\hline
+			MINRAD (Std. Dev.) tn_normal &  & 0.05 & 0.07 & 0.76 & 0.45 \\
+			\hline
+			 Chol: LENGTH (Std. Dev. ln_normal) ) &  & 0.07 & 0.07 & 0.98 & 0.33 \\
+			\hline
+			 Chol: SINGLE (Std. Dev. uniform) ) &  & 0.08 & 0.07 & 1.11 & 0.27 \\
+			\hline
+			 Chol: TANGENT (Std. Dev. uniform) ) &  & 0.05 & 0.07 & 0.75 & 0.45 \\
+			\hline
+			 Chol: SINGLE (Std. Dev. uniform) . LENGTH (Std. Dev.   ln_normal ) &  & 0.06 & 0.07 & 0.82 & 0.41 \\
+			\hline
+			 Chol: TANGENT (Std. Dev. uniform) . LENGTH (Std. Dev.   ln_normal ) &  & 0.05 & 0.07 & 0.75 & 0.46 \\
+			\hline
+			 Chol: TANGENT (Std. Dev. uniform) . SINGLE (Std. Dev.   uniform ) & arcsinh & 0.09 & 0.07 & 1.28 & 0.20 \\
+			\hline
+			main: GRADEBR: hetro group 0 & arcsinh & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			CURVES: hetro group 0 & no & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			MEDWIDTH: hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			main: GRADEBR: hetro group 0:uniform:sd  hetro group 0 &  & 0.07 & 1.00 & 0.07 & 0.95 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

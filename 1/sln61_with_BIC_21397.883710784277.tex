@@ -1,0 +1,72 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 21397.88 Log-Likelihood: -10611.95 RMSE_TEST: 21.86}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.04 & 1.00 & -0.04 & 0.96 \\
+			\hline
+			LENGTH & log & -0.06 & 1.00 & -0.06 & 0.96 \\
+			\hline
+			DECLANES & no & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			SPEED & log & -0.19 & 1.00 & -0.19 & 0.85 \\
+			\hline
+			URB & no & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			AADT & log & -0.52 & 1.00 & -0.52 & 0.60 \\
+			\hline
+			TRAIN & arcsinh & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			PEAKHR & no & -0.44 & 1.00 & -0.44 & 0.66 \\
+			\hline
+			MXGRADE & no & -0.00 & 1.00 & -0.00 & 1.00 \\
+			\hline
+			MEDWIDTH & no & -0.18 & 1.00 & -0.18 & 0.86 \\
+			\hline
+			FRICTION & arcsinh & -0.17 & 1.00 & -0.17 & 0.87 \\
+			\hline
+			AVEPRE & arcsinh & -0.10 & 1.00 & -0.10 & 0.92 \\
+			\hline
+			FC & no & -0.20 & 1.00 & -0.20 & 0.84 \\
+			\hline
+			SINGLE & sqrt & -0.12 & 1.00 & -0.12 & 0.91 \\
+			\hline
+			GRADEBR & no & -0.13 & 1.00 & -0.13 & 0.90 \\
+			\hline
+			MXGRDIFF & no & -0.14 & 1.00 & -0.14 & 0.89 \\
+			\hline
+			AVESNOW & no & -0.03 & 1.00 & -0.03 & 0.97 \\
+			\hline
+			MXMEDSH & arcsinh & -0.16 & 1.00 & -0.16 & 0.87 \\
+			\hline
+			DOUBLE & log & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			FC (Std. Dev.) triangular &  & -0.03 & 0.07 & -0.35 & 0.73 \\
+			\hline
+			SINGLE (Std. Dev.) triangular &  & -0.33 & 0.07 & -4.62 & 0.00*** \\
+			\hline
+			GRADEBR (Std. Dev.) triangular &  & -0.40 & 0.07 & -5.56 & 0.00*** \\
+			\hline
+			MXGRDIFF (Std. Dev.) uniform &  & 0.10 & 0.07 & 1.33 & 0.19 \\
+			\hline
+			AVESNOW (Std. Dev.) triangular &  & 0.06 & 0.07 & 0.81 & 0.42 \\
+			\hline
+			 Chol: MXMEDSH (Std. Dev. triangular) ) &  & 0.06 & 0.07 & 0.80 & 0.42 \\
+			\hline
+			 Chol: DOUBLE (Std. Dev. tn_normal) ) &  & 0.05 & 0.07 & 0.70 & 0.49 \\
+			\hline
+			 Chol: DOUBLE (Std. Dev. tn_normal) . MXMEDSH (Std. Dev.   triangular ) & arcsinh & 0.08 & 0.07 & 1.13 & 0.26 \\
+			\hline
+			main: TANGENT: hetro group 0 & arcsinh & 0.07 & 1.00 & 0.07 & 0.94 \\
+			\hline
+			MINRAD: hetro group 0 & arcsinh & 0.06 & 1.00 & 0.06 & 0.95 \\
+			\hline
+			ADTLANE: hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			main: TANGENT: hetro group 0:uniform:sd  hetro group 0 &  & 0.08 & 1.00 & 0.08 & 0.94 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

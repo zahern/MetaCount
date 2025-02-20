@@ -1,0 +1,64 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 42051.21 Log-Likelihood: -20949.63 RMSE_TEST: 21.98}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			LENGTH & log & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			MIMEDSH & arcsinh & -0.08 & 1.00 & -0.08 & 0.93 \\
+			\hline
+			SPEED & log & -0.18 & 1.00 & -0.18 & 0.86 \\
+			\hline
+			URB & no & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			FC & no & -0.23 & 1.00 & -0.23 & 0.82 \\
+			\hline
+			AADT & log & -0.55 & 1.00 & -0.55 & 0.58 \\
+			\hline
+			DOUBLE & log & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			TANGENT & no & 0.01 & 1.00 & 0.01 & 1.00 \\
+			\hline
+			MINRAD & arcsinh & -0.42 & 1.00 & -0.42 & 0.68 \\
+			\hline
+			ADTLANE & log & -0.54 & 1.00 & -0.54 & 0.59 \\
+			\hline
+			PEAKHR & no & -0.15 & 1.00 & -0.15 & 0.88 \\
+			\hline
+			AVEPRE & sqrt & -0.14 & 1.00 & -0.14 & 0.89 \\
+			\hline
+			AVESNOW & no & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			TRAIN & arcsinh & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			INTECHAG & no & -0.00 & 1.00 & -0.00 & 1.00 \\
+			\hline
+			PEAKHR (Std. Dev.) normal &  & -0.19 & 0.07 & -2.65 & 0.01* \\
+			\hline
+			AVEPRE (Std. Dev.) normal &  & -0.09 & 0.07 & -1.19 & 0.23 \\
+			\hline
+			AVESNOW (Std. Dev.) triangular &  & -0.19 & 0.07 & -2.67 & 0.01* \\
+			\hline
+			 Chol: TRAIN (Std. Dev. ln_normal) ) &  & 0.01 & 0.07 & 0.09 & 0.92 \\
+			\hline
+			 Chol: INTECHAG (Std. Dev. normal) ) &  & 0.08 & 0.07 & 1.13 & 0.26 \\
+			\hline
+			 Chol: INTECHAG (Std. Dev. normal) . TRAIN (Std. Dev.   ln_normal ) & no & 0.06 & 0.07 & 0.76 & 0.45 \\
+			\hline
+			main: INCLANES: hetro group 0 & sqrt & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			SINGLE: hetro group 0 & no & 0.07 & 1.00 & 0.07 & 0.94 \\
+			\hline
+			GRADEBR: hetro group 0 & no & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			MXGRADE: hetro group 0 &  & 0.09 & 1.00 & 0.09 & 0.93 \\
+			\hline
+			main: INCLANES: hetro group 0:normal:sd  hetro group 0 &  & 0.05 & 1.00 & 0.05 & 0.96 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

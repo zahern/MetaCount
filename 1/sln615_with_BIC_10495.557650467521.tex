@@ -1,0 +1,78 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 10495.56 Log-Likelihood: -5152.15 RMSE_TEST: 240.39}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.15 & 1.00 & -0.15 & 0.88 \\
+			\hline
+			INCLANES & no & -0.67 & 1.00 & -0.67 & 0.50 \\
+			\hline
+			DECLANES & no & -0.58 & 1.00 & -0.58 & 0.57 \\
+			\hline
+			MIMEDSH & arcsinh & -0.64 & 1.00 & -0.64 & 0.52 \\
+			\hline
+			SPEED & log & -0.63 & 1.00 & -0.63 & 0.53 \\
+			\hline
+			URB & no & -0.13 & 1.00 & -0.13 & 0.89 \\
+			\hline
+			TRAIN & no & -0.43 & 1.00 & -0.43 & 0.67 \\
+			\hline
+			PEAKHR & no & -1.35 & 1.00 & -1.35 & 0.18 \\
+			\hline
+			MXGRADE & arcsinh & 0.24 & 1.00 & 0.24 & 0.81 \\
+			\hline
+			MXGRDIFF & arcsinh & 0.79 & 1.00 & 0.79 & 0.43 \\
+			\hline
+			CURVES & arcsinh & 1.26 & 1.00 & 1.26 & 0.21 \\
+			\hline
+			ACCESS & no & -0.41 & 1.00 & -0.41 & 0.68 \\
+			\hline
+			FRICTION & arcsinh & -0.63 & 1.00 & -0.63 & 0.53 \\
+			\hline
+			AVESNOW & arcsinh & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			MXMEDSH & no & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			GRADEBR & arcsinh & 1.81 & 1.00 & 1.81 & 0.07. \\
+			\hline
+			MINRAD & arcsinh & 0.79 & 1.00 & 0.79 & 0.43 \\
+			\hline
+			INTECHAG & no & 1.38 & 1.00 & 1.38 & 0.17 \\
+			\hline
+			SINGLE & arcsinh & -0.39 & 1.00 & -0.39 & 0.70 \\
+			\hline
+			MIGRADE & no & -0.34 & 1.00 & -0.34 & 0.73 \\
+			\hline
+			SLOPE & no & 0.13 & 1.00 & 0.13 & 0.89 \\
+			\hline
+			MXMEDSH (Std. Dev.) triangular &  & -0.97 & 0.07 & -13.48 & 0.00*** \\
+			\hline
+			GRADEBR (Std. Dev.) tn_normal &  & -0.52 & 0.07 & -7.26 & 0.00*** \\
+			\hline
+			MINRAD (Std. Dev.) uniform &  & 0.07 & 0.07 & 0.98 & 0.33 \\
+			\hline
+			INTECHAG (Std. Dev.) triangular &  & 0.07 & 0.07 & 0.97 & 0.33 \\
+			\hline
+			 Chol: SINGLE (Std. Dev. ln_normal) ) &  & 0.07 & 0.07 & 0.91 & 0.36 \\
+			\hline
+			 Chol: MIGRADE (Std. Dev. tn_normal) ) &  & 0.09 & 0.07 & 1.29 & 0.20 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. normal) ) &  & 0.10 & 0.07 & 1.33 & 0.18 \\
+			\hline
+			 Chol: MIGRADE (Std. Dev. tn_normal) . SINGLE (Std. Dev.   ln_normal ) &  & 0.10 & 0.07 & 1.35 & 0.18 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. normal) . SINGLE (Std. Dev.   ln_normal ) &  & 0.08 & 0.07 & 1.06 & 0.29 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. normal) . MIGRADE (Std. Dev.   tn_normal ) & no & 0.10 & 0.07 & 1.38 & 0.17 \\
+			\hline
+			main: FC: hetro group 0 & sqrt & 0.06 & 1.00 & 0.06 & 0.95 \\
+			\hline
+			AVEPRE: hetro group 0 &  & 0.08 & 1.00 & 0.08 & 0.94 \\
+			\hline
+			main: FC: hetro group 0:tn_normal:sd  hetro group 0 &  & 0.08 & 1.00 & 0.08 & 0.94 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

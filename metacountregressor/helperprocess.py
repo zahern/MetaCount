@@ -10,6 +10,20 @@ from win32comext.shell.demos.IActiveDesktop import existing_item
 
 plt.style.use('https://github.com/dhaitz/matplotlib-stylesheets/raw/master/pitayasmoothie-dark.mplstyle')
 
+
+
+
+
+from itertools import product
+
+# Function to create a list of dictionaries from a parameter grid
+def generate_param_combinations(param_grid):
+    keys = param_grid.keys()
+    values = param_grid.values()
+    combinations = [dict(zip(keys, v)) for v in product(*values)]
+    return combinations
+
+
 ##Select the best Features Based on RF
 def select_features(X_train, y_train, n_f=16):
     try:

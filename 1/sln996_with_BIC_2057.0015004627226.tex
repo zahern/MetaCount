@@ -1,0 +1,66 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 2057.00 Log-Likelihood: -950.65 RMSE_TEST: 930.80}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.39 & 1.00 & -0.39 & 0.70 \\
+			\hline
+			INCLANES & no & -3.58 & 1.00 & -3.58 & 0.00*** \\
+			\hline
+			MIMEDSH & no & 0.37 & 1.00 & 0.37 & 0.71 \\
+			\hline
+			SPEED & sqrt & -1.10 & 1.00 & -1.10 & 0.27 \\
+			\hline
+			URB & no & -1.20 & 1.00 & -1.20 & 0.23 \\
+			\hline
+			SINGLE & arcsinh & -2.50 & 1.00 & -2.50 & 0.01* \\
+			\hline
+			GRADEBR & arcsinh & 2.58 & 1.00 & 2.58 & 0.01* \\
+			\hline
+			MINRAD & arcsinh & -0.30 & 1.00 & -0.30 & 0.77 \\
+			\hline
+			AVESNOW & no & 0.02 & 1.00 & 0.02 & 0.99 \\
+			\hline
+			WIDTH & sqrt & 1.69 & 1.00 & 1.69 & 0.09. \\
+			\hline
+			FC & no & -0.37 & 1.00 & -0.37 & 0.71 \\
+			\hline
+			MXGRADE & arcsinh & 0.25 & 1.00 & 0.25 & 0.80 \\
+			\hline
+			CURVES & no & -0.09 & 1.00 & -0.09 & 0.93 \\
+			\hline
+			ADTLANE & sqrt & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			TRAIN & arcsinh & 0.06 & 1.00 & 0.06 & 0.95 \\
+			\hline
+			MIGRADE & no & -0.54 & 1.00 & -0.54 & 0.59 \\
+			\hline
+			TANGENT & no & 0.31 & 1.00 & 0.31 & 0.76 \\
+			\hline
+			WIDTH (Std. Dev.) normal &  & 0.06 & 0.07 & 0.78 & 0.43 \\
+			\hline
+			FC (Std. Dev.) ln_normal &  & 0.07 & 0.07 & 0.91 & 0.36 \\
+			\hline
+			MXGRADE (Std. Dev.) normal &  & 0.06 & 0.07 & 0.87 & 0.38 \\
+			\hline
+			CURVES (Std. Dev.) triangular &  & 0.05 & 0.07 & 0.74 & 0.46 \\
+			\hline
+			ADTLANE (Std. Dev.) ln_normal &  & 0.08 & 0.07 & 1.14 & 0.26 \\
+			\hline
+			 Chol: TRAIN (Std. Dev. normal) ) &  & 0.08 & 0.07 & 1.14 & 0.26 \\
+			\hline
+			 Chol: MIGRADE (Std. Dev. normal) ) &  & 0.06 & 0.07 & 0.90 & 0.37 \\
+			\hline
+			 Chol: TANGENT (Std. Dev. triangular) ) &  & 0.09 & 0.07 & 1.26 & 0.21 \\
+			\hline
+			 Chol: MIGRADE (Std. Dev. normal) . TRAIN (Std. Dev.   normal ) &  & 0.09 & 0.07 & 1.29 & 0.20 \\
+			\hline
+			 Chol: TANGENT (Std. Dev. triangular) . TRAIN (Std. Dev.   normal ) &  & 0.08 & 0.07 & 1.04 & 0.30 \\
+			\hline
+			 Chol: TANGENT (Std. Dev. triangular) . MIGRADE (Std. Dev.   normal ) &  & 0.10 & 0.07 & 1.33 & 0.19 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

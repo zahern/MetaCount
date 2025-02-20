@@ -1,0 +1,78 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 23011.59 Log-Likelihood: -11410.92 RMSE_TEST: 22.75}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.07 & 1.00 & -0.07 & 0.95 \\
+			\hline
+			DECLANES & no & -0.72 & 1.00 & -0.72 & 0.47 \\
+			\hline
+			WIDTH & arcsinh & -0.63 & 1.00 & -0.63 & 0.53 \\
+			\hline
+			SPEED & sqrt & -0.43 & 1.00 & -0.43 & 0.67 \\
+			\hline
+			SINGLE & arcsinh & -0.18 & 1.00 & -0.18 & 0.85 \\
+			\hline
+			DOUBLE & log & 0.31 & 1.00 & 0.31 & 0.76 \\
+			\hline
+			GRADEBR & arcsinh & 2.46 & 1.00 & 2.46 & 0.01* \\
+			\hline
+			MXGRADE & arcsinh & 0.24 & 1.00 & 0.24 & 0.81 \\
+			\hline
+			CURVES & arcsinh & 0.24 & 1.00 & 0.24 & 0.81 \\
+			\hline
+			ADTLANE & arcsinh & -1.22 & 1.00 & -1.22 & 0.22 \\
+			\hline
+			INTECHAG & no & 1.73 & 1.00 & 1.73 & 0.08. \\
+			\hline
+			FC & no & -0.30 & 1.00 & -0.30 & 0.77 \\
+			\hline
+			TRAIN & arcsinh & 0.46 & 1.00 & 0.46 & 0.65 \\
+			\hline
+			MIGRADE & no & -0.15 & 1.00 & -0.15 & 0.88 \\
+			\hline
+			FRICTION & arcsinh & -0.21 & 1.00 & -0.21 & 0.84 \\
+			\hline
+			SLOPE & no & 0.85 & 1.00 & 0.85 & 0.40 \\
+			\hline
+			AVEPRE & sqrt & -0.02 & 1.00 & -0.02 & 0.98 \\
+			\hline
+			AVESNOW & arcsinh & -0.52 & 1.00 & -0.52 & 0.60 \\
+			\hline
+			INCLANES & no & -0.96 & 1.00 & -0.96 & 0.34 \\
+			\hline
+			MIMEDSH & arcsinh & -0.56 & 1.00 & -0.56 & 0.58 \\
+			\hline
+			MXGRDIFF & no & 1.07 & 1.00 & 1.07 & 0.29 \\
+			\hline
+			FC (Std. Dev.) triangular &  & 0.10 & 0.07 & 1.36 & 0.18 \\
+			\hline
+			TRAIN (Std. Dev.) normal &  & 0.07 & 0.07 & 0.99 & 0.33 \\
+			\hline
+			MIGRADE (Std. Dev.) tn_normal &  & 0.07 & 0.07 & 0.96 & 0.34 \\
+			\hline
+			FRICTION (Std. Dev.) tn_normal &  & 0.07 & 0.07 & 1.02 & 0.31 \\
+			\hline
+			SLOPE (Std. Dev.) uniform &  & 0.06 & 0.07 & 0.89 & 0.37 \\
+			\hline
+			AVEPRE (Std. Dev.) triangular &  & 0.08 & 0.07 & 1.13 & 0.26 \\
+			\hline
+			AVESNOW (Std. Dev.) triangular &  & 0.06 & 0.07 & 0.84 & 0.40 \\
+			\hline
+			 Chol: INCLANES (Std. Dev. normal) ) &  & 0.09 & 0.07 & 1.19 & 0.24 \\
+			\hline
+			 Chol: MIMEDSH (Std. Dev. tn_normal) ) &  & 0.10 & 0.07 & 1.37 & 0.17 \\
+			\hline
+			 Chol: MXGRDIFF (Std. Dev. uniform) ) &  & 0.07 & 0.07 & 0.99 & 0.33 \\
+			\hline
+			 Chol: MIMEDSH (Std. Dev. tn_normal) . INCLANES (Std. Dev.   normal ) &  & 0.07 & 0.07 & 0.99 & 0.32 \\
+			\hline
+			 Chol: MXGRDIFF (Std. Dev. uniform) . INCLANES (Std. Dev.   normal ) &  & 0.09 & 0.07 & 1.21 & 0.23 \\
+			\hline
+			 Chol: MXGRDIFF (Std. Dev. uniform) . MIMEDSH (Std. Dev.   tn_normal ) &  & 0.08 & 0.07 & 1.15 & 0.25 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

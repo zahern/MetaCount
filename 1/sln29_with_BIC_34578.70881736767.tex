@@ -1,0 +1,66 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 34578.71 Log-Likelihood: -17210.75 RMSE_TEST: 17.48}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.21 & 1.00 & -0.21 & 0.84 \\
+			\hline
+			SPEED & arcsinh & -1.01 & 1.00 & -1.01 & 0.31 \\
+			\hline
+			SINGLE & sqrt & -0.54 & 1.00 & -0.54 & 0.59 \\
+			\hline
+			DOUBLE & no & 0.18 & 1.00 & 0.18 & 0.85 \\
+			\hline
+			TRAIN & arcsinh & 0.24 & 1.00 & 0.24 & 0.81 \\
+			\hline
+			PEAKHR & arcsinh & -0.47 & 1.00 & -0.47 & 0.64 \\
+			\hline
+			MIGRADE & no & -0.38 & 1.00 & -0.38 & 0.71 \\
+			\hline
+			MINRAD & arcsinh & 2.23 & 1.00 & 2.23 & 0.03* \\
+			\hline
+			ACCESS & no & -0.42 & 1.00 & -0.42 & 0.67 \\
+			\hline
+			AVEPRE & sqrt & -1.43 & 1.00 & -1.43 & 0.15 \\
+			\hline
+			AVESNOW & arcsinh & 0.35 & 1.00 & 0.35 & 0.73 \\
+			\hline
+			INCLANES & no & -1.16 & 1.00 & -1.16 & 0.25 \\
+			\hline
+			MXMEDSH & no & 0.80 & 1.00 & 0.80 & 0.43 \\
+			\hline
+			FC & no & -0.31 & 1.00 & -0.31 & 0.76 \\
+			\hline
+			ADTLANE & arcsinh & -2.82 & 1.00 & -2.82 & 0.01* \\
+			\hline
+			WIDTH & arcsinh & -1.20 & 1.00 & -1.20 & 0.23 \\
+			\hline
+			CURVES & arcsinh & 3.76 & 1.00 & 3.76 & 0.00*** \\
+			\hline
+			SLOPE & no & 0.95 & 1.00 & 0.95 & 0.34 \\
+			\hline
+			INCLANES (Std. Dev.) normal &  & 0.10 & 0.07 & 1.37 & 0.17 \\
+			\hline
+			MXMEDSH (Std. Dev.) normal &  & 0.07 & 0.07 & 0.96 & 0.34 \\
+			\hline
+			FC (Std. Dev.) normal &  & 0.09 & 0.07 & 1.29 & 0.20 \\
+			\hline
+			ADTLANE (Std. Dev.) triangular &  & 0.08 & 0.07 & 1.16 & 0.25 \\
+			\hline
+			 Chol: WIDTH (Std. Dev. triangular) ) &  & 0.06 & 0.07 & 0.86 & 0.39 \\
+			\hline
+			 Chol: CURVES (Std. Dev. uniform) ) &  & 0.07 & 0.07 & 1.04 & 0.30 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. triangular) ) &  & 0.09 & 0.07 & 1.26 & 0.21 \\
+			\hline
+			 Chol: CURVES (Std. Dev. uniform) . WIDTH (Std. Dev.   triangular ) &  & 0.06 & 0.07 & 0.79 & 0.43 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. triangular) . WIDTH (Std. Dev.   triangular ) &  & 0.08 & 0.07 & 1.11 & 0.27 \\
+			\hline
+			 Chol: SLOPE (Std. Dev. triangular) . CURVES (Std. Dev.   uniform ) &  & 0.09 & 0.07 & 1.20 & 0.23 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

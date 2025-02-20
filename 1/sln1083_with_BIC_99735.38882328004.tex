@@ -1,0 +1,64 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 99735.39 Log-Likelihood: -49791.97 RMSE_TEST: 24.98}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -0.01 & 1.00 & -0.01 & 0.99 \\
+			\hline
+			INCLANES & no & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			DECLANES & no & 0.02 & 1.00 & 0.02 & 0.98 \\
+			\hline
+			URB & no & -0.02 & 1.00 & -0.02 & 0.99 \\
+			\hline
+			AADT & log & -0.15 & 1.00 & -0.15 & 0.88 \\
+			\hline
+			SINGLE & arcsinh & -0.00 & 1.00 & -0.00 & 1.00 \\
+			\hline
+			MXGRDIFF & no & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			AVESNOW & arcsinh & -0.04 & 1.00 & -0.04 & 0.97 \\
+			\hline
+			LENGTH & log & -0.05 & 1.00 & -0.05 & 0.96 \\
+			\hline
+			MXMEDSH & arcsinh & 0.01 & 1.00 & 0.01 & 0.99 \\
+			\hline
+			TRAIN & arcsinh & -0.03 & 1.00 & -0.03 & 0.98 \\
+			\hline
+			GRADEBR & arcsinh & -0.03 & 1.00 & -0.03 & 0.97 \\
+			\hline
+			MINRAD & arcsinh & -0.07 & 1.00 & -0.07 & 0.94 \\
+			\hline
+			MIMEDSH & arcsinh & 0.00 & 1.00 & 0.00 & 1.00 \\
+			\hline
+			PEAKHR & no & -0.12 & 1.00 & -0.12 & 0.90 \\
+			\hline
+			ADTLANE & sqrt & -1.01 & 1.00 & -1.01 & 0.31 \\
+			\hline
+			LENGTH (Std. Dev.) triangular &  & 0.07 & 0.07 & 1.04 & 0.30 \\
+			\hline
+			MXMEDSH (Std. Dev.) tn_normal &  & 0.07 & 0.07 & 0.92 & 0.36 \\
+			\hline
+			TRAIN (Std. Dev.) uniform &  & 0.05 & 0.07 & 0.75 & 0.45 \\
+			\hline
+			GRADEBR (Std. Dev.) triangular &  & 0.10 & 0.07 & 1.32 & 0.19 \\
+			\hline
+			MINRAD (Std. Dev.) uniform &  & 0.08 & 0.07 & 1.09 & 0.28 \\
+			\hline
+			 Chol: MIMEDSH (Std. Dev. ln_normal) ) &  & 0.09 & 0.07 & 1.18 & 0.24 \\
+			\hline
+			 Chol: PEAKHR (Std. Dev. uniform) ) &  & 0.07 & 0.07 & 1.01 & 0.31 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. tn_normal) ) &  & 0.08 & 0.07 & 1.12 & 0.26 \\
+			\hline
+			 Chol: PEAKHR (Std. Dev. uniform) . MIMEDSH (Std. Dev.   ln_normal ) &  & 0.08 & 0.07 & 1.13 & 0.26 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. tn_normal) . MIMEDSH (Std. Dev.   ln_normal ) &  & 0.07 & 0.07 & 0.98 & 0.33 \\
+			\hline
+			 Chol: ADTLANE (Std. Dev. tn_normal) . PEAKHR (Std. Dev.   uniform ) &  & 0.08 & 0.07 & 1.10 & 0.27 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}
