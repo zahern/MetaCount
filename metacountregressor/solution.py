@@ -32,7 +32,7 @@ from sklearn.metrics import mean_squared_error as MSPE
 from statsmodels.tools.numdiff import approx_fprime, approx_hess
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from texttable import Texttable
-
+import time
 try:
     from ._device_cust import device as dev
     from .pareto_file import Pareto, Solution
@@ -204,12 +204,17 @@ class ObjectiveFunction(object):
         if 'instance_number' in kwargs:
             self.instance_number = str(kwargs['instance_number'])
         else:
+            
+            print('no name set, setting name as 0')
             self.instance_number = str(0)  # set an arbitrary instance number
 
         if not os.path.exists(self.instance_number):
-            os.makedirs(self.instance_number)
+            if kwargs.get('make_directory', True):
+                print('Making a Directory, if you want to stop from storing the files to this directory set argumet: make_directory:False')
+                os.makedirs(self.instance_number)
 
         if not hasattr(self, '_obj_1'):
+            print('_obj_1 required, define as bic, aic, ll')
             raise Exception
 
         self.pvalue_penalty = float(kwargs.get('pvalue_penalty', 0.5))
@@ -238,6 +243,9 @@ class ObjectiveFunction(object):
             self.test_percentage = float(kwargs.get('test_percentage', 0))
             self.val_percentage = float(kwargs.get('val_percentage', 0))
             if self.test_percentage == 0:
+                print('test percentage is 0, please enter arg test_percentage as decimal, eg 0.8')
+                print('continuing single objective')
+                time.sleep(2)
                 self.is_multi = False
 
             if 'panels' in kwargs and not (kwargs.get('panels') == None):
@@ -348,6 +356,7 @@ class ObjectiveFunction(object):
             
 
         else:
+            print('No Panels. Grouped Random Paramaters Will not be estimated')
             self.G = None
             self._Gnum = 1
             self._max_group_all_means = 0
@@ -413,6 +422,7 @@ class ObjectiveFunction(object):
             print('Setup Complete...')
         else:
             print('No Panels Supplied')
+            print('Setup Complete...')
             self._characteristics_names = list(self._x_data.columns)
         # define the variables
         # self._transformations = ["no", "sqrt", "log", "exp", "fact", "arcsinh", 2, 3]

@@ -1,12 +1,11 @@
 from os.path import exists
-
 import numpy as np
 import pandas as pd
 import csv
 import matplotlib.pyplot as plt
 from scipy import stats as st
 from sklearn.preprocessing import StandardScaler
-from win32comext.shell.demos.IActiveDesktop import existing_item
+
 
 plt.style.use('https://github.com/dhaitz/matplotlib-stylesheets/raw/master/pitayasmoothie-dark.mplstyle')
 
