@@ -390,7 +390,7 @@ def PCA_code(X, n_components=5):
 
 
 def interactions(df, keep=None, drop_this_perc=0.6, interact = False):
-
+    full_columns = df.columns
     if interact:
         interactions_list = []
         for i, var_i in enumerate(df.columns):
@@ -419,11 +419,11 @@ def interactions(df, keep=None, drop_this_perc=0.6, interact = False):
     # Remove `keep` columns from the correlation matrix
     if keep is not None:
         missing_columns = [col for col in keep if col not in df.columns]
-        
+     
         if missing_columns:
             print(f"The following columns are not in the DataFrame and will be ignored: {missing_columns}")
             keep = [col for col in keep if col not in df.columns]
-        df_corr = df.drop(columns=keep, errors='ignore')  # Exclude `keep` columns
+        df_corr = df.drop(columns=keep, errors='ignore', inplace=False)  # Exclude `keep` columns
     else:
         df_corr = df
 
@@ -438,7 +438,7 @@ def interactions(df, keep=None, drop_this_perc=0.6, interact = False):
 
     # Ensure `keep` columns are not dropped
     if keep is not None:
-        to_drop = [column for column in to_drop if column not in keep]
+        to_drop = [column for column in to_drop if column not in full_columns]
 
     # Drop the identified features
     df.drop(to_drop, axis=1, inplace=True)
