@@ -419,8 +419,10 @@ def interactions(df, keep=None, drop_this_perc=0.6, interact = False):
     # Remove `keep` columns from the correlation matrix
     if keep is not None:
         missing_columns = [col for col in keep if col not in df.columns]
+        
         if missing_columns:
             print(f"The following columns are not in the DataFrame and will be ignored: {missing_columns}")
+            keep = [col for col in keep if col not in df.columns]
         df_corr = df.drop(columns=keep, errors='ignore')  # Exclude `keep` columns
     else:
         df_corr = df
