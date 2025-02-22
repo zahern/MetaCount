@@ -1248,7 +1248,7 @@ class HarmonySearch(object):
 
 
         # for printing basics metrics
-        self.print_verbose = True
+        self.print_verbose = kwargs.get('verbose', False)
         # harmony_memory stores the best hms harmonies
         self._harmony_memory = list()
         # harmony_history stores all hms harmonies every nth improvisations (i.e., one 'generation')

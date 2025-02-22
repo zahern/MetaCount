@@ -136,10 +136,10 @@ class ObjectiveFunction(object):
         self.constant_value = 0
         self.negative_binomial_value = 1
 
-        self.verbose_safe = True
+        self.verbose_safe = kwargs.get('verbose', 0)
         self.please_print = kwargs.get('please_print', 0)
         self.group_halton = None
-        self.grad_yes = True
+        self.grad_yes = kwargs.get('grad_est', False)
         self.hess_yes = False
         self.group_halton_test = None
         self.panels = None
@@ -177,13 +177,14 @@ class ObjectiveFunction(object):
         self.method_ll = 'Nelder-Mead-BFGS'
 
         self.method_ll = 'L-BFGS-B'  # alternatives 'BFGS_2', 'BFGS
-        self.method_ll = 'BFGS_2'
+        self.method_ll = kwargs.get('method', 'Nealder-Mead-BFGS')
+        
         #self.method_ll = 'Nelder-Mead-BFGS'
         self.Keep_Fit = 2
         self.MP = 0
         # Nelder-Mead-BFGS
 
-        self._max_characteristics = 26
+        self._max_characteristics = self.get('_max_vars', 26)
 
         self.beta_dict = dict
 
@@ -4858,7 +4859,7 @@ class ObjectiveFunction(object):
             proba.append(dev.to_cpu(proba_))
 
             lik = np.stack(proba).sum(axis=0) / R  # (N, )
-            lik = np.clip(lik, min_comp_val, 1000)
+            lik = np.clip(lik, min_comp_val, max_comp_val)
             # lik = np.nan_to_num(lik, )
             loglik = np.log(lik)
             llf_main = loglik
@@ -5188,7 +5189,7 @@ class ObjectiveFunction(object):
                 H = self.numerical_hessian(lambda x: self._loglik_gradient(x, *argbs), result.x, eps=1e-7 * self.n_obs)
                 result['Hessian'] = H
                 result['hess_inv'] = np.linalg.pinv(H)
-                print('to do, only if hessian is fhfhfhf')
+                
                 standard_errors = np.sqrt(np.diag(np.linalg.pinv(H)))
                 return result
                 # return minimize(loglik_fn, x, args=args, jac=args[6], hess=args[7], method='BFGS', options= {'gtol':1e-7*self.N}*self.Ndraws)
