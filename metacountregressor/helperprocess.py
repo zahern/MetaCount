@@ -302,11 +302,12 @@ def transform_dataframe(df, config):
     for column, settings in config.items():
         if settings['type'] == 'bin':
             # Apply binning
-            binned = pd.cut(
-                df[column],
+            pd.cut(
+                binned = df[column],
                 bins=settings['bins'],
                 labels=settings['labels'],
                 right=False,
+                duplicates='drop'
 
             )
             # One-hot encode the binned column
