@@ -302,7 +302,7 @@ def transform_dataframe(df, config):
     for column, settings in config.items():
         if settings['type'] == 'bin':
             # Apply binning
-            pd.cut(
+            binned = pd.cut(
                 binned = df[column],
                 bins=settings['bins'],
                 labels=settings['labels'],
