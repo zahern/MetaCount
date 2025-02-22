@@ -302,16 +302,14 @@ def transform_dataframe(df, config):
     for column, settings in config.items():
         if settings['type'] == 'bin':
             # Apply binning
-            binned = pd.cut(
-                binned = df[column],
-                bins=settings['bins'],
+            binned_d = pd.cut(
+                df[column],
+                bins=sorted(set(settings['bins'])),  # Remove duplicate bins
                 labels=settings['labels'],
-                right=False,
-                duplicates='drop'
-
+                right=False  # Adjust based on your requirements
             )
             # One-hot encode the binned column
-            binned_dummies = pd.get_dummies(binned, prefix=settings['prefix'])
+            binned_dummies = pd.get_dummies(binned_d, prefix=settings['prefix'])
             output_df = pd.concat([output_df, binned_dummies], axis=1)
 
         elif settings['type'] == 'one-hot':
