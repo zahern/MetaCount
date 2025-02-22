@@ -302,11 +302,22 @@ def transform_dataframe(df, config):
     for column, settings in config.items():
         if settings['type'] == 'bin':
             # Apply binning
+            # Get unique bins (remove duplicates)
+            unique_bins = sorted(set(settings['bins']))
+
+            # Adjust labels if necessary
+            if len(unique_bins) - 1 != len(settings['labels']):
+                print(f"Adjusting labels to match bins: {len(unique_bins) - 1} bins detected.")
+                labels = [f'Bin {i+1}' for i in range(len(unique_bins) - 1)]
+            else:
+                labels = settings['labels']
+
+            # Perform the binning
             binned_d = pd.cut(
                 df[column],
-                bins=sorted(set(settings['bins'])),  # Remove duplicate bins
-                labels=settings['labels'],
-                right=False  # Adjust based on your requirements
+                bins=unique_bins,  # Deduplicated bins
+                labels=labels,     # Adjusted or original labels
+                right=False        # Adjust based on whether to include the right edge
             )
             # One-hot encode the binned column
             binned_dummies = pd.get_dummies(binned_d, prefix=settings['prefix'])
