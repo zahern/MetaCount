@@ -177,7 +177,7 @@ class ObjectiveFunction(object):
         self.method_ll = 'Nelder-Mead-BFGS'
 
         self.method_ll = 'L-BFGS-B'  # alternatives 'BFGS_2', 'BFGS
-        self.method_ll = kwargs.get('method', 'Nealder-Mead-BFGS')
+        self.method_ll = kwargs.get('method', 'BFGS_2')
         
         #self.method_ll = 'Nelder-Mead-BFGS'
         self.Keep_Fit = 2
