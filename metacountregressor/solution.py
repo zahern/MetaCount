@@ -184,7 +184,7 @@ class ObjectiveFunction(object):
         self.MP = 0
         # Nelder-Mead-BFGS
 
-        self._max_characteristics = self.get('_max_vars', 26)
+        self._max_characteristics = kwargs.get('_max_vars', 26)
 
         self.beta_dict = dict
 
