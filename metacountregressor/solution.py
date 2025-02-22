@@ -829,15 +829,18 @@ class ObjectiveFunction(object):
     def rename_distro(self, distro):
         # Mapping dictionary
         mapping = {
-            'Normal': 'normal',
-            'Triangular': 'triangular',
-            'Uniform': 'uniform',
-            'Log-Normal': 'ln_normal',
-            'Trunc-Normal': 'tn_normal'
+            'normal': ['normal', 'n', 'Normal'],
+            'triangular': ['triangular', 't', 'Triangular'],
+            'uniform': ['uniform', 'u', 'Uniform'],
+            'ln_normal': ['ln_normal', 'ln_n', 'Ln_Normal'],
+            'tn_normal': ['tn_normal', 'tn_n', 'trunc_normal']
         }
 
         # Use list comprehension with the mapping
-        new_distro = [mapping.get(i, i) for i in distro]
+        reversed_mapping = {value: key for key, values in mapping.items() for value in values}
+
+        # Use the reversed mapping to find the corresponding key
+        new_distro = [reversed_mapping.get(i, i) for i in distro]
         return  new_distro
 
     def define_distributions_analyst(self, extra = None):
