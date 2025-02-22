@@ -1239,7 +1239,7 @@ class HarmonySearch(object):
         self._obj_fun = objective_function
         ## NEW CODE, TRYING TO EXCTACT OUT THE PARAMATERS
         self._hms = kwargs.get('_hms', 20)
-        self._par = kwargs.get(_'par', .30)
+        self._par = kwargs.get('_par', .30)
         self.F = kwargs.get('_AI', 2)  # mutation scale
         self.iter = kwargs.get('_max_iter', 10000)
         self.cr = kwargs.get('_crossover_perc') or kwargs.get('_cr', 0.2)
