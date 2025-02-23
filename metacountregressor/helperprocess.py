@@ -255,8 +255,8 @@ def set_up_analyst_constraints(data_characteristic, model_terms,  variable_decis
         #row['distributions'] = details['distributions']
         #row['transformations'] = details['transformations']
         # Add distributions and transformations as comma-separated strings
-        row['distributions'] = ", ".join(details['distributions'])
-        row['transformations'] = ", ".join(details['transformations'])
+        row['distributions'] = str(details['distributions'])
+        row['transformations'] = str(details['transformations'])
 
         rows.append(row)
 
