@@ -212,7 +212,7 @@ def set_up_analyst_constraints(data_characteristic, model_terms,  variable_decis
     # how to make name_data_characteristics - non_none_terms
 
     result = [item for item in name_data_characteristics if item not in non_none_terms]
-    distu = ['Normal', 'Uniform', 'Triangular']
+    distu = ['normal', 'uniform', 'triangular']
     tra = ['no', 'sqrt', 'arcsinh']
     if model_terms.get('grouped') is None:
         print('cant have grouped rpm, removing level 4 from every item')
@@ -252,8 +252,11 @@ def set_up_analyst_constraints(data_characteristic, model_terms,  variable_decis
                 row[f'Level {level}'] = level in details['levels']
 
         # Add distributions and transformations directly
-        row['distributions'] = details['distributions']
-        row['transformations'] = details['transformations']
+        #row['distributions'] = details['distributions']
+        #row['transformations'] = details['transformations']
+        # Add distributions and transformations as comma-separated strings
+        row['distributions'] = ", ".join(details['distributions'])
+        row['transformations'] = ", ".join(details['transformations'])
 
         rows.append(row)
 
