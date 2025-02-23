@@ -181,6 +181,9 @@ def main(args, **kwargs):
         args = {'algorithm': 'hs', 'test_percentage': 0.15, 'test_complexity': 6, 'instance_number': 1,
                 'val_percentage': 0.15, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 6}
         # Fit the model with metacountregressor
+        # Step 5: Transform the dataset based on the configuration
+        data_new = helperprocess.transform_dataframe(dataset, config)
+        
         obj_fun = ObjectiveFunction(X, y, **args)
         # replace with other metaheuristics if desired
         results = harmony_search(obj_fun)
@@ -381,7 +384,7 @@ def main(args, **kwargs):
         #data_info['data']['Group'][0]
         #data_info['data']['Panel'][0]
         args['decisions'] = data_info['analyst']
-
+        print('check the args of the decions')
         if type(data_info['data']['Grouped'][0]) == str and len(data_info['data']['Grouped'][0]) >1:
             args['group'] = data_info['data']['Grouped'][0]
             args['ID'] = data_info['data']['Grouped'][0]

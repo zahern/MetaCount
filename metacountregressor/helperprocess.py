@@ -223,8 +223,8 @@ def set_up_analyst_constraints(data_characteristic, model_terms,  variable_decis
     variable_decisions = {
         name: {
             'levels': list(range(6)),
-            'distributions': distu,
-            'transformations': tra
+            'Distributions': distu,
+            'Transformations': tra
         }
         for name in result
     }
