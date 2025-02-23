@@ -463,7 +463,7 @@ class ObjectiveFunction(object):
 
 
             model_types = [[0, 1]]  # add 2 for Generalized Poisson
-            model_types = [[0]]
+            #model_types = [[0]]
             #TODO change back and fix NB
         model_t_dict = {'Poisson':0,
                         "NB":1}

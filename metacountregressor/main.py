@@ -174,16 +174,25 @@ def main(args, **kwargs):
         X = df
         y = df['FREQ']  # Frequency of crashes
         X['Offset'] = np.log(df['AADT'])  # Explicitley define how to offset the data, no offset otherwise
+        df['Offset'] = np.log(df['AADT'])
         # Drop Y, selected offset term and  ID as there are no panels
         X = df.drop(columns=['FREQ', 'ID', 'AADT'])
-
+        # Step 0: Process Data
+        model_terms = {
+            'Y': 'FREQ',  # Replace 'FREQ' with the name of your dependent variable
+            'group': None,  # Replace 'group_column' with the name of your grouping column (or None if not used)
+            'panels': None,  # Replace 'panel_column' with the name of your panel column (or None if not used)
+            'Offset': 'Offset'  # Replace None with the name of your offset column if using one
+        }
+        a_des, df = helperprocess.set_up_analyst_constraints(df, model_terms)
         # some example argument, these are defualt so the following line is just for claritity
         args = {'algorithm': 'hs', 'test_percentage': 0.15, 'test_complexity': 6, 'instance_number': 1,
-                'val_percentage': 0.15, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 6}
+                'val_percentage': 0.15, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 6, 'desicions':a_des}
         # Fit the model with metacountregressor
         # Step 5: Transform the dataset based on the configuration
-        data_new = helperprocess.transform_dataframe(dataset, config)
-        
+        #data_new = helperprocess.transform_dataframe(dataset, config)
+        y = df[['Y']]
+        X = df.drop(columns=['Y'])
         obj_fun = ObjectiveFunction(X, y, **args)
         # replace with other metaheuristics if desired
         results = harmony_search(obj_fun)
@@ -507,7 +516,7 @@ if __name__ == '__main__':
                                      formatter_class=argparse.RawDescriptionHelpFormatter, conflict_handler='resolve')
     
     
-    BATCH_JOB = True
+    BATCH_JOB = False
 
     if BATCH_JOB:
         parser.add_argument('-dataset_file', default='data/Ex-16-3.csv', help='supply the path to the dataset')
