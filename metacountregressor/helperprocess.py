@@ -252,11 +252,10 @@ def set_up_analyst_constraints(data_characteristic, model_terms,  variable_decis
                 row[f'Level {level}'] = level in details['levels']
 
         # Add distributions and transformations directly
-        #row['distributions'] = details['distributions']
-        #row['transformations'] = details['transformations']
+
         # Add distributions and transformations as comma-separated strings
-        row['distributions'] = str(details['distributions'])
-        row['transformations'] = str(details['transformations'])
+        row['Distributions'] = str(details['Distributions'])
+        row['Transformations'] = str(details['Transformations'])
 
         rows.append(row)
 
