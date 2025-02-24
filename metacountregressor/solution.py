@@ -6402,7 +6402,7 @@ class ObjectiveFunction(object):
             self.log_lik = log_lik
             if self.significant == 0:
 
-                print(self.full_model, 'full model is')
+
                 if not self.test_flag:
                     alpha, alpha_rdm, alpha_cor_rdm = self.modify(
                         self.fixed_fit, self.rdm_fit, self.rdm_cor_fit)

@@ -82,7 +82,7 @@ def setup_main(**kwargs):
         'Model': [[0], [1]],
         'transformations': ['no'],
         'method_ll': 'BFGS_2',
-        '_max_time': 10,
+        '_max_time': 1000,
         'decisions': None,
         'model_terms': model_terms
     }
