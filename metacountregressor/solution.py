@@ -187,7 +187,13 @@ class ObjectiveFunction(object):
         self._max_characteristics = kwargs.get('_max_vars', 26)
 
         self.beta_dict = dict
+        if 'model_terms' in kwargs:
+            print('change')
+            if kwargs.get('model_terms').get('group') is not None:
+                kwargs['group'] = kwargs.get('model_terms').get('group')
 
+            if kwargs.get('model_terms').get('panels') is not None:
+                kwargs['panels'] = kwargs.get('model_terms').get('panels')
         acceptable_keys_list = ['_par', '_max_imp', '_hmcr', 'steps',
                                 'algorithm', '_random_seed', '_max_time',
                                 'forcedvariables', '_obj_1', '_obj_2', '_par',

@@ -59,7 +59,7 @@ def setup_main(**kwargs):
     data_new = helperprocess.transform_dataframe(dataset, config)
 
     instance = f"arg_combo{kwargs.get('alg')}, {kwargs.get('line')}"
-
+    print(model_terms.get('group'))
     # Step 7: Define solution arguments
     arguments = {
         'algorithm': 'hs',
