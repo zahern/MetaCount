@@ -73,7 +73,8 @@ def setup_main(**kwargs):
         'transformations': ['no'],
         'method_ll': 'BFGS_2',
         '_max_time': 10,
-        'decisions': a_des
+        'decisions': a_des,
+        'model_terms': model_terms
     }
     y = data_new[['Y']]
     X = data_new.drop(columns=['Y'])
