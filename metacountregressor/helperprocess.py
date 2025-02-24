@@ -214,7 +214,7 @@ def set_up_analyst_constraints(data_characteristic, model_terms,  variable_decis
     result = [item for item in name_data_characteristics if item not in non_none_terms]
     distu = ['normal', 'uniform', 'triangular']
     tra = ['no', 'sqrt', 'arcsinh']
-    if model_terms.get('grouped') is None:
+    if model_terms.get('group') is None:
         print('cant have grouped rpm, removing level 4 from every item')
         MAKE_ALL_4_FALSE = True
     else:
