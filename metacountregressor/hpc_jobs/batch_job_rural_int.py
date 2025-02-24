@@ -46,7 +46,7 @@ def setup_main(**kwargs):
         },
         'Y': {'type': 'none'},    # Predictor we don't want to change
         'group': {'type': 'none'},
-        'Offset': {'type': 'none'},
+        #'Offset': {'type': 'none'},
         'panels': {'type': 'none'}
 
     }

@@ -351,6 +351,7 @@ class ObjectiveFunction(object):
             K = X.shape[1]
             self.columns_names = X.columns
             X = X.values.reshape(self.N_test, self.P_test, K)
+            X = X.astype('float')
             self.group_halton_test = self.group_halton_test.reshape(self.N_test, self.P_test)[:, 0]
             Y = Y.values.reshape(self.N_test, self.P_test, 1)
             Y = Y.astype('float')
@@ -396,7 +397,9 @@ class ObjectiveFunction(object):
                 K = X.shape[1]
                 self.columns_names = X.columns
                 X = X.values.reshape(self.N_test, self.P_test, K)
+                X = X.astype('float')
                 Y = Y.values.reshape(self.N_test, self.P_test, 1)
+                Y = Y.astype('float')
                 self._x_data_test = X.copy()
                 self.y_data_test = Y.copy()
     
