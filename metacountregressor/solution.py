@@ -327,9 +327,11 @@ class ObjectiveFunction(object):
             K = Xnew.shape[1]
             self._characteristics_names = list(Xnew.columns)
             XX = Xnew.values.reshape(self.N, self.P, K).copy()
+            XX = XX.astype('float')
             self.group_dummies = self.group_dummies.values.reshape(self.N, self.P, -1)
             self.group_halton = self.group_halton.reshape(self.N, self.P)[:, 0]
             YY = Ynew.values.reshape(self.N, self.P, 1).copy()
+            YY = YY.astype('float')
             self._x_data = XX.copy()
             self._y_data = YY.copy()
             X, Y, panel, group = self._arrange_long_format(df_test, y_test, self.ids_test, self.panels_test, group_test)
@@ -381,7 +383,9 @@ class ObjectiveFunction(object):
             K = Xnew.shape[1]
             self._characteristics_names = list(Xnew.columns)
             XX = Xnew.values.reshape(self.N, self.P, K).copy()
+            XX = XX.astype('float')
             YY = Ynew.values.reshape(self.N, self.P, 1).copy()
+            YY = YY.astype('float')
             self._x_data = XX.copy()
             self._y_data = YY.copy()
         
@@ -3876,7 +3880,7 @@ class ObjectiveFunction(object):
 
         else:
             # eVd = self.my_lindley(np.exp(np.clip(eta, None, EXP_UPPER_LIMIT)), 1.29)
-
+            eta = eta.astype('float')
             eVd = np.exp(np.clip(eta, None, EXP_UPPER_LIMIT))
         return eVd
 
