@@ -531,6 +531,7 @@ class ObjectiveFunction(object):
                 if self.is_multi:
                     self._offsets_test = self._x_data_test[:, :, val_od]
                     self._x_data_test = self.remove_offset(self._x_data_test, val_od)
+                print(self._offsets)
             else:
                 self.initialize_empty_offsets()
 

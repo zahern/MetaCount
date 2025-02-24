@@ -95,6 +95,7 @@ def findCorrelation(corr, cutoff=0.9, exact=None):    """
     findCorrelation(R1, cutoff=0.6, exact=True)   # ['x1', 'x5', 'x4']
     """
 
+
 def _findCorrelation_fast(corr, avg, cutoff):
 
     combsAboveCutoff = corr.where(lambda x: (np.tril(x) == 0) & (x > cutoff)).stack().index
@@ -434,7 +435,7 @@ def interactions(df, keep=None, drop_this_perc=0.6, interact = False):
      
         if missing_columns:
             print(f"The following columns are not in the DataFrame and will be ignored: {missing_columns}")
-            keep = [col for col in keep if col not in df.columns]
+            keep = [col for col in keep if col not in missing_columns]
         df_corr = df.drop(columns=keep, errors='ignore', inplace=False)  # Exclude `keep` columns
     else:
         df_corr = df

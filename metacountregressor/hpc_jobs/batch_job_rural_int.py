@@ -14,7 +14,7 @@ from metacountregressor import helperprocess
 ''' PLEASE CHANGE THE MAIN CORE OF THE DATA HERE'''
 def setup_main(**kwargs):
     # Step 1: Read data
-    df = pd.read_csv("./rural_int.csv")
+    df = pd.read_csv("rural_int.csv")
     #drop irrelevant factors in our data we never want to consider
     df.drop(columns=['year', 'orig_ID',
                                     'jurisdiction', 'town', 'maint_region', 'weather_station', 'dummy_winter_2', 'month', 'inj.fat', 'PDO', 'zonal_ID', 'ln_AADT', 'ln_seg'], inplace=True)  # was dropped postcode
@@ -29,13 +29,13 @@ def setup_main(**kwargs):
         'Y': 'crashes',         # Dependent variable
         'group': 'county',       # Grouping column (if any)
         'panels': 'element_ID',      # Panel column (if any)
-        'Offset': 'segment_length'       # Offset column (if any)
+        'Offset': None       # Offset column (if any)
     }
     a_des, df = helperprocess.set_up_analyst_constraints(df, model_terms)
-
+    print(df.head())
     # Step 3: Drop highly correlated features and keep required terms
     df = helperprocess.interactions(df, keep=['Y', 'group', 'panels', 'Offset', 'FAADT'])
-
+    print(df.head())
     # Step 4: Define configuration dictionary
     config = {
         'FAADT': {
@@ -46,7 +46,9 @@ def setup_main(**kwargs):
         },
         'Y': {'type': 'none'},    # Predictor we don't want to change
         'group': {'type': 'none'},
-        'Offset': {'type': 'none'}
+        'Offset': {'type': 'none'},
+        'panels': {'type': 'none'}
+
     }
     
     # Step 5: Infer types for remaining columns and update the configuration
@@ -57,10 +59,18 @@ def setup_main(**kwargs):
 
     # Step 6: Transform the dataset based on the configuration
     data_new = helperprocess.transform_dataframe(dataset, config)
+    print(data_new.head())
 
     instance = f"arg_combo{kwargs.get('alg')}, {kwargs.get('line')}"
     print(model_terms.get('group'))
     # Step 7: Define solution arguments
+    model_terms = {
+        'Y': 'Y',         # Dependent variable
+        'group': 'group',       # Grouping column (if any)
+        'panels': 'panels',      # Panel column (if any)
+        'Offset': None       # Offset column (if any)
+    }
+    
     arguments = {
         'algorithm': 'hs',
         'is_multi': 1,
@@ -69,11 +79,11 @@ def setup_main(**kwargs):
         'test_complexity': 6,
         'instance_number': instance, 
         'distribution': ['normal', 'ln_normal', 'triangular', 'uniform'],
-        'Model': [[0, 1]],
+        'Model': [[0], [1]],
         'transformations': ['no'],
         'method_ll': 'BFGS_2',
         '_max_time': 10,
-        'decisions': a_des,
+        'decisions': None,
         'model_terms': model_terms
     }
     y = data_new[['Y']]
