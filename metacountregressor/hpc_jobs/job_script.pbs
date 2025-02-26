@@ -1,0 +1,54 @@
+#!/bin/bash
+#PBS -N metaheuristic_batch_job
+#PBS -l nodes=1:ppn=4
+#PBS -l walltime=04:00:00
+#PBS -l mem=16gb
+#PBS -j oe
+#PBS -o output.log
+
+module load python/3.8.0
+cd $PBS_O_WORKDIR
+
+ALGORITHM="hs"  # Options: "hs", "de", "sa"
+
+# Compute valid range for the selected algorithm
+VALID_RANGE=$(python -c "
+from metacountregressor import helperprocess
+
+param_grids = {
+    'hs': {
+        '_hms': [10, 20, 30],
+        '_max_imp': [1000],
+        '_hmcr': [0.3, 0.5, 0.7],
+        '_mpai': [1, 2, 3],
+    },
+    'de': {
+        '_AI': [1, 2, 3],
+        '_crossover_perc': [0.2, 0.3, 0.4, 0.5, 0.6],
+        '_max_iter': [1000],
+        '_pop_size': [10, 25, 50],
+    },
+    'sa': {
+        'alpha': [0.9, 0.95, 0.99],
+        'STEPS_PER_TEMP': [5, 10, 20, 30],
+        'INTL_ACPT': [0.3, 0.5, 0.7],
+        '_crossover_perc': [0.2, 0.3, 0.4],
+        'MAX_ITERATIONS': [1000],
+        '_num_intl_slns': [10, 25, 50],
+    }
+}
+
+algorithm = '$ALGORITHM'
+if algorithm not in param_grids:
+    raise ValueError(f'Unknown algorithm: {algorithm}')
+
+param_grid = param_grids[algorithm]
+combinations = helperprocess.generate_param_combinations(param_grid)
+print(len(combinations))
+")
+
+# Run the script for each valid line number
+for LINE_NUMBER in $(seq 0 $((VALID_RANGE - 1))); do
+    echo "Running $ALGORITHM with line $LINE_NUMBER..."
+    python main_script.py --alg $ALGORITHM --line $LINE_NUMBER
+done

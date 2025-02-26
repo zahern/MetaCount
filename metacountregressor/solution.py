@@ -1075,13 +1075,15 @@ class ObjectiveFunction(object):
                                    [''] * (len(names) - len(self.transform_id_names))
             self.coeff_names = names
 
+        '''
         if betas is not None:
             try:
                 if len(betas) != len(names):
-                    print('no draws is', no_draws)
+                    print('standard_model', no_draws)
 
             except Exception as e:
                 print(e)
+        '''
 
 
 

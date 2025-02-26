@@ -1,0 +1,74 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 1436.19 Log-Likelihood: -629.72 RMSE_TEST: 14.13}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -5.52 & 49.30 & -0.11 & 0.91 \\
+			\hline
+			SPEED & log & -1.13 & 11.35 & -0.10 & 0.92 \\
+			\hline
+			SINGLE & arcsinh & -0.30 & 2.70 & -0.11 & 0.91 \\
+			\hline
+			DOUBLE & sqrt & -0.07 & 1.78 & -0.04 & 0.97 \\
+			\hline
+			GRADEBR & arcsinh & 0.08 & 1.07 & 0.08 & 0.94 \\
+			\hline
+			ADTLANE & sqrt & -0.02 & 0.11 & -0.18 & 0.86 \\
+			\hline
+			INCLANES & no & -0.44 & 1.80 & -0.24 & 0.81 \\
+			\hline
+			AADT & log & 0.36 & 4.41 & 0.08 & 0.94 \\
+			\hline
+			MIGRADE & no & -0.03 & 0.74 & -0.05 & 0.96 \\
+			\hline
+			CURVES & arcsinh & -0.22 & 1.11 & -0.20 & 0.84 \\
+			\hline
+			MEDWIDTH & no & 0.05 & 0.52 & 0.10 & 0.92 \\
+			\hline
+			INTECHAG & no & 0.23 & 0.88 & 0.26 & 0.79 \\
+			\hline
+			AVEPRE & log & 0.25 & 1.65 & 0.15 & 0.88 \\
+			\hline
+			LENGTH & arcsinh & 1.05 & 1.55 & 0.68 & 0.50 \\
+			\hline
+			FC & no & -0.01 & 0.69 & -0.02 & 0.99 \\
+			\hline
+			AVESNOW & no & 0.01 & 0.25 & 0.05 & 0.96 \\
+			\hline
+			INCLANES (Std. Dev.) uniform &  & 0.35 & 0.04 & 8.34 & 0.00*** \\
+			\hline
+			AADT (Std. Dev.) triangular &  & 0.08 & 0.01 & 6.83 & 0.00*** \\
+			\hline
+			MIGRADE (Std. Dev.) triangular &  & 0.00 & 0.33 & 0.00 & 1.00 \\
+			\hline
+			CURVES (Std. Dev.) tn_normal &  & 0.02 & 0.03 & 0.72 & 0.48 \\
+			\hline
+			MEDWIDTH (Std. Dev.) normal &  & -0.01 & 0.01 & -0.81 & 0.42 \\
+			\hline
+			INTECHAG (Std. Dev.) tn_normal &  & 0.07 & 0.03 & 2.44 & 0.02* \\
+			\hline
+			AVEPRE (Std. Dev.) triangular &  & 0.14 & 0.10 & 1.49 & 0.14 \\
+			\hline
+			 Chol: LENGTH (Std. Dev. tn_normal) ) &  & -0.08 & 0.06 & -1.39 & 0.17 \\
+			\hline
+			 Chol: FC (Std. Dev. uniform) ) &  & 0.02 & 0.02 & 0.80 & 0.42 \\
+			\hline
+			 Chol: AVESNOW (Std. Dev. tn_normal) ) &  & 0.01 & 0.02 & 0.33 & 0.74 \\
+			\hline
+			 Chol: FC (Std. Dev. uniform) . LENGTH (Std. Dev.   tn_normal ) &  & 0.07 & 0.02 & 2.87 & 0.00*** \\
+			\hline
+			 Chol: AVESNOW (Std. Dev. tn_normal) . LENGTH (Std. Dev.   tn_normal ) &  & -0.00 & 0.02 & -0.14 & 0.89 \\
+			\hline
+			 Chol: AVESNOW (Std. Dev. tn_normal) . FC (Std. Dev.   uniform ) & no & -0.02 & 0.04 & -0.70 & 0.48 \\
+			\hline
+			main: MXGRADE: hetro group 0 & no & 0.06 & 0.25 & 0.24 & 0.81 \\
+			\hline
+			SLOPE: hetro group 0 &  & 0.24 & 0.70 & 0.34 & 0.73 \\
+			\hline
+			main: MXGRADE: hetro group 0:uniform:sd  hetro group 0 &  & -0.11 & 0.41 & -0.28 & 0.78 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

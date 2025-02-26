@@ -402,6 +402,7 @@ class DifferentialEvolution(object):
             self._obj_fun._obj_1 = 'bic'
 
         self._pop_size = kwargs.get('_pop_size', 20)
+        print('Population size is', self._pop_size)
         if not isinstance(self._pop_size, int):
             raise ValueError("_pop_size must be an integer")
         elif self._pop_size <= 3:
@@ -618,7 +619,7 @@ class DifferentialEvolution(object):
                                                                                      1)
 
                     if len(self._pareto_population) == 1:
-                        print('the size of the population is only 1')
+                        print('Pareto Population Size is only 1')
                     if self.pf.check_dominance([obj_trial[self.pf.obj_key_1], obj_trial[self.pf.obj_key_2]],
                                                [self._population[j][self.pf.obj_key_1], self._population[j][
                                                    self.pf.obj_key_2]]):  # if solution dominates existing #FIXME some error here true but not entering
@@ -1004,7 +1005,7 @@ class SimulatedAnnealing(object):
                     elif num_of_changeablePARMs == 0:
                         rdm_i = random.choice(range(len(prmVect)))
                         if self._obj_fun.get_num_discrete_values(rdm_i) <= 1:
-                            print('hold gimct')
+                            print('retry')
 
                     while self._obj_fun.get_num_discrete_values(rdm_i) <= 1:
                         rdm_i = random.randint(0, self._obj_fun.get_num_parameters() - 1)
@@ -1046,7 +1047,7 @@ class SimulatedAnnealing(object):
                             get_rdm_j = random.randint(0, self._obj_fun.get_num_discrete_values(rdm_i) - 1)
                             if (self._obj_fun.get_num_discrete_values(
                                     rdm_i) - 1) < 1:  # TODO: remove this is just a test
-                                print('fucking fix this sln algorithm')
+                               
                                 break
                             new_nbr_i = self._obj_fun.get_value(rdm_i, get_rdm_j)
                             neighbour[rdm_i] = new_nbr_i

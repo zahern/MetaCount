@@ -62,6 +62,10 @@ setuptools.setup(
         'numpy>=1.13.1',
         'scipy>=1.0.0',
         'requests',
-        'latextable'
+        'latextable',
+        'pandas',
+        'scikit_learn>=1.4.1.post1',
+        'statsmodels',
+        'psustil'
     ]
 )
