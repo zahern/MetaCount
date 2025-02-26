@@ -1,4 +1,10 @@
-import codecs
+import os
+
+# Get the directory of the current script
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Construct the full path to the README.md file
+readme_path = os.path.join(current_dir, 'README.md')
 #import requests
 import setuptools
 
@@ -16,7 +22,7 @@ def get_package_version(package_name):
         return None
 '''
 # Read the README.md file for the long description
-with open('README.md', 'r', encoding='utf-8') as fh:
+with open(readme_path, 'r', encoding='utf-8') as fh:
     long_description = fh.read()
 '''
 package_name = 'metacountregressor'
