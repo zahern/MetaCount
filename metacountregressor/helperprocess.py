@@ -345,8 +345,11 @@ def transform_dataframe(df, config):
 
         elif settings['type'] == 'none':
             # Leave the column unchanged
-            output_df = pd.concat([output_df, df[[column]]], axis=1)
+            if column in df.columns:
 
+                output_df = pd.concat([output_df, df[[column]]], axis=1)
+            else: 
+                print(f'config variable {column} is not in the data. Ignoring ...')
     return output_df
 
 # Helper function to guess column type and update `config`
