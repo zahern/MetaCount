@@ -72,6 +72,6 @@ setuptools.setup(
         'pandas',
         'scikit_learn>=1.4.1.post1',
         'statsmodels',
-        'psustil'
+        'psutil'
     ]
 )
