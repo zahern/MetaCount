@@ -1,5 +1,5 @@
 import codecs
-import requests
+#import requests
 import setuptools
 
 '''
