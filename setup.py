@@ -48,13 +48,13 @@ with open('version.txt', 'w') as f:
 setuptools.setup(
     name='metacountregressor',
     version=new_version,
-    description='Extensions for a Python package for estimation of count models.',
+    description='Extensive Testing for Estimation of Data Count Models',
     long_description=long_description,
     long_description_content_type='text/markdown',  # Specify the content type as Markdown
     url='https://github.com/zahern/CountDataEstimation',
     author='Zeke Ahern',
     author_email='z.ahern@qut.edu.au',
-    license='QUT',
+    license='MIT',
     packages=['metacountregressor'],
     zip_safe=False,
     python_requires='>=3.10',
