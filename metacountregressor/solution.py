@@ -256,10 +256,11 @@ class ObjectiveFunction(object):
                 self.is_multi = False
 
             if 'panels' in kwargs and not (kwargs.get('panels') == None):
-                self.group_names = np.asarray(x_data[kwargs['group']].astype('category').cat._parent.dtype.categories)
+                if kwargs.get('group') is not None:
+                    self.group_names = np.asarray(x_data[kwargs['group']].astype('category').cat._parent.dtype.categories)
 
-                x_data[kwargs['group']] = x_data[kwargs['group']].astype(
-                    'category').cat.codes
+                    x_data[kwargs['group']] = x_data[kwargs['group']].astype(
+                        'category').cat.codes
                 self.complexity_level = 6
                 # create test dataset
 
@@ -309,10 +310,13 @@ class ObjectiveFunction(object):
                 df_train[kwargs['panels']]) if kwargs['panels'] is not None else None
             self.ids_test = np.asarray(
                 df_test[kwargs['panels']]) if kwargs['panels'] is not None else None
-            groupll = np.asarray(df_train[kwargs['group']].astype(
-                'category').cat.codes)
-            group_test = np.asarray(df_test[kwargs['group']].astype(
-                'category').cat.codes)
+            if kwargs.get('group') is not None:
+                groupll = np.asarray(df_train[kwargs['group']].astype(
+                    'category').cat.codes)
+                group_test = np.asarray(df_test[kwargs['group']].astype(
+                    'category').cat.codes)
+            else:
+                groupll = None
             X, Y, panel, group = self._arrange_long_format(
                 df_train, y_train, self.ids, self.ids, groupll)
             self.group_halton = group.copy()
@@ -501,7 +505,7 @@ class ObjectiveFunction(object):
         self._max_hurdle = 4
 
         #Manually fit from analyst specification
-        manual_fit = kwargs.get('Manual_Fit')
+        manual_fit = kwargs.get('Manual_Fit', None)
         if manual_fit is not None:
             print('fitting manual')
             self.process_manual_fit(manual_fit)
@@ -538,7 +542,7 @@ class ObjectiveFunction(object):
                 if self.is_multi:
                     self._offsets_test = self._x_data_test[:, :, val_od]
                     self._x_data_test = self.remove_offset(self._x_data_test, val_od)
-                print(self._offsets)
+                #print(self._offsets)
             else:
                 self.initialize_empty_offsets()
 
@@ -2361,7 +2365,7 @@ class ObjectiveFunction(object):
             sorted(my_dict, key=lambda x: x[0]['pval_percentage'])
 
     def get_fitness(self, vector, multi=False, verbose=False, max_routine=3):
-        obj_1 = 10.0 ** 5
+        obj_1 = 10.0 ** 4
         obj_best = None
         sub_slns = list()
 
@@ -2453,7 +2457,7 @@ class ObjectiveFunction(object):
 
 
             if not self.is_quanitifiable_num(obj_1[self._obj_1]):
-                obj_1[self._obj_1] = 10 ** 9
+                obj_1[self._obj_1] = 10 ** 5
             else:
                 if obj_1[self._obj_1] <= 0:
                     obj_1[self._obj_1] = 10 ** 9
@@ -3561,8 +3565,10 @@ class ObjectiveFunction(object):
         # Compute: betas = mean + sd*draws
         if len(br_sd) != draws.shape[1]:
             #get the same size as the mean
-            betas_random = self.Br.copy()
-
+            #if hasattr(self.Br):
+            #    betas_random = self.Br.copy()
+            #else:
+            betas_random = br_mean[None, :, None] + draws * br_sd[None, :, None]
             '''
             c = self.get_num_params()[3:5]
             

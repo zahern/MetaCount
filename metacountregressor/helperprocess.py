@@ -271,7 +271,17 @@ def guess_low_medium_high(column_name, series):
     # Compute the tertiles (33rd and 66th percentiles)
     #print('did it make it...')
     #mode_value = st.mode(series)  # Get the most frequent value
-    #print('good')
+    #i dont think this works cayse its not a seriers any other way
+    is_binary = series.isin([0, 1]).all()
+    if is_binary:
+        return {
+            'type': 'binary',
+            'bins': [0,1],
+            'labels': ['Off', 'On'],
+            'prefix': f'{column_name}'
+
+        }
+
    # series = pd.to_numeric(series, errors='coerce').fillna(mode_value)
     low_threshold = np.quantile(series, 0.33)
     high_threshold = np.quantile(series,0.66)
