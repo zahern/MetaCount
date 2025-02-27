@@ -42,7 +42,7 @@ version_parts = current_version.split('.')
 major, minor, patch = map(int, version_parts)
 
 # Increment the patch version
-patch -= 2
+patch += 1
 
 # Construct the new version string
 new_version = f"{major}.{minor}.{patch}"
