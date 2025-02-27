@@ -4778,12 +4778,12 @@ class ObjectiveFunction(object):
 
 
             Bf_new, Br_new, Br_std_new, Br_rema = self.extract_parameters(betas, Kf, Kr, Kchol_a, Kr_b_a)
-            if Bf_new != Bf:
+            if np.any(Bf_new != Bf):
                 print('check this')
 
             Vdf = dev.np.einsum('njk,k -> nj', Xdf, Bf, dtype=np.float64)  # (N, P)
             br = betas[Kf:Kf + Kr]
-            if br != Br_new:
+            if np.any(br != Br_new):
                 print('why')
 
 
@@ -4804,7 +4804,7 @@ class ObjectiveFunction(object):
 
 
             brstd = betas[Kf + Kr:Kf + Kr + Kr_b + Kchol]
-            if brstd != Br_std_new:
+            if np.any(brstd != Br_std_new):
                 print('okay')
             # initialises size matrix
             proba = []  # Temp batching storage
