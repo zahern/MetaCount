@@ -159,7 +159,7 @@ class ObjectiveFunction(object):
         self.full_model = None
         self.GP_parameter = 0
         self.is_multi = kwargs.get('is_multi', False)
-        self.complexity_level = kwargs('complexity_level', 6)
+        self.complexity_level = kwargs.get('complexity_level', 6)
         self._max_iterations_improvement = 10000
         self.generated_sln = set()
         self.ave_mae = 0
