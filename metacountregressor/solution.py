@@ -159,7 +159,7 @@ class ObjectiveFunction(object):
         self.full_model = None
         self.GP_parameter = 0
         self.is_multi = kwargs.get('is_multi', False)
-        self.complexity_level = 6
+        self.complexity_level = self.get('complexity_level', 6)
         self._max_iterations_improvement = 10000
         self.generated_sln = set()
         self.ave_mae = 0
@@ -1716,6 +1716,11 @@ class ObjectiveFunction(object):
                         vector[get_rdm_i] -= 1
                         only_ints_vals[get_rdm_i] -= 1
 
+                    elif vector[get_rdm_i] == 1:
+                        vector[get_rdm_i] -= 1
+                        only_ints_vals[get_rdm_i] -= 1
+
+
                     if vector.count(5) == 1:
                         idx = vector.index(5)
                         vector[idx] = 0
@@ -2373,14 +2378,14 @@ class ObjectiveFunction(object):
             vector)  # just added to grab the fixed fit TODO: Clean up
         dispersion = model_nature.get('dispersion')
         self.define_selfs_fixed_rdm_cor(model_nature)
-        print('before', vector)
+
         try:
             self.repair(vector)
         except Exception as e:
             print('problem repairing here')
             print(vector)
             print(e)
-        print('after', vector)
+
         layout = vector.copy()
         trial_run = 0
         max_trial = 0
@@ -4777,14 +4782,12 @@ class ObjectiveFunction(object):
                 Bf = betas[0:Kf]  # Fixed betas
 
 
-            Bf_new, Br_new, Br_std_new, Br_rema = self.extract_parameters(betas, Kf, Kr, Kchol_a, Kr_b_a)
-            if np.any(Bf_new != Bf):
-                print('check this')
+           # Bf_new, Br_new, Br_std_new, Br_rema = self.extract_parameters(betas, Kf, Kr, Kchol_a, Kr_b_a)
+
 
             Vdf = dev.np.einsum('njk,k -> nj', Xdf, Bf, dtype=np.float64)  # (N, P)
             br = betas[Kf:Kf + Kr]
-            if np.any(br != Br_new):
-                print('why')
+
 
 
             #i have an array of betas, Kf represents the first kf of the betas array
@@ -4804,8 +4807,7 @@ class ObjectiveFunction(object):
 
 
             brstd = betas[Kf + Kr:Kf + Kr + Kr_b + Kchol]
-            if np.any(brstd != Br_std_new):
-                print('okay')
+
             # initialises size matrix
             proba = []  # Temp batching storage
 
@@ -4820,7 +4822,7 @@ class ObjectiveFunction(object):
                     # Br = self._transform_rand_betas(br, np.abs(
                     #     brstd), draws_)  # Get random coefficients, old method
                     #TODO
-                    print('tril the draws')
+
                     Br = self._transform_rand_betas(br,
                                                     brstd, draws_)  # Get random coefficients
                     self.naming_for_printing(betas, dispersion=dispersion, model_nature=model_nature)
@@ -6276,8 +6278,9 @@ class ObjectiveFunction(object):
                             transform, distribution, None, dispersion=dispersion)
 
     def get_named_indices(self, names):
-        indices = [i for i, name in enumerate(self._characteristics_names) if name in names]
-
+        # Change substrings issue
+        indices = [i for i, name in enumerate(self._characteristics_names) if name == names]
+        indices = [i for i, name in enumerate(self._characteristics_names) if name in names and isinstance(name, str)]
         return indices
 
     """
