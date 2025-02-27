@@ -3035,6 +3035,39 @@ class ObjectiveFunction(object):
         # print('log_lik poisson', log_lik)
         return -log_lik
 
+    def extract_parameters(self, betas, Kf, Kr, Kchol_a, Krb_a):
+        """
+        Extracts parameters from the `betas` array based on the given sizes.
+
+        Parameters:
+            betas (numpy.ndarray): The array of betas.
+            Kf (int): Size of Bf (first Kf elements of betas).
+            Kr (int): Size of Br.
+            Kchol_a (int): Part of the size for brstd.
+            Krb_a (int): Part of the size for brstd.
+
+        Returns:
+            tuple: A tuple containing:
+                - Bf (numpy.ndarray): The first Kf elements of betas.
+                - Br (numpy.ndarray): The next Kr elements of betas after Bf.
+                - brstd (numpy.ndarray): The next Kchol_a + Krb_a elements of betas after Br.
+                - remaining_betas (numpy.ndarray): Any remaining elements in betas after brstd.
+        """
+        # Step 1: Extract Bf
+        Bf = betas[:Kf]  # First Kf elements
+
+        # Step 2: Extract Br
+        Br = betas[Kf:Kf + Kr]  # Next Kr elements after Bf
+
+        # Step 3: Extract brstd
+        brstd_size = Kchol_a + Krb_a  # Total size of brstd
+        brstd = betas[Kf + Kr:Kf + Kr + brstd_size]  # Next brstd_size elements after Br
+
+        # Step 4: Extract remaining betas
+        remaining_betas = betas[Kf + Kr + brstd_size:]  # Remaining elements in betas
+
+        return Bf, Br, brstd, remaining_betas
+
     def convert_nbinom_params(self, mu, theta):
         """
             Convert mean/dispersion parameterization of a negative binomial to the ones scipy supports
@@ -4724,10 +4757,10 @@ class ObjectiveFunction(object):
                 n_coeff = self.get_param_num(dispersion)
                 Kf_a, Kr_a, Kr_c, Kr_b_a, Kchol_a, Kh = self.get_num_params()
                 if Kchol_a != Kchol:
-                    print('hold')
+                    print('hold qhy')
 
                 if Kr_b != Kr_b_a:
-                    print('hold')
+                    print('hold qhy')
 
 
 
@@ -4743,13 +4776,35 @@ class ObjectiveFunction(object):
                 Bf = betas[0:Kf]  # Fixed betas
 
 
-
-
+            Bf_new, Br_new, Br_std_new, Br_rema = self.extract_parameters(betas, Kf, Kr, Kchol_a, Kr_b_a)
+            if Bf_new != Bf:
+                print('check this')
 
             Vdf = dev.np.einsum('njk,k -> nj', Xdf, Bf, dtype=np.float64)  # (N, P)
             br = betas[Kf:Kf + Kr]
+            if br != Br_new:
+                print('why')
+
+
+            #i have an array of betas, Kf represents the first kf of the betas array
+            # now return Bf where size of bf = kf
+
+            # size of br needs to be Kr
+            #Kr
+            #now extract from betas, after all the Bf
+            # cakk
+
+            #the next array is brstd
+
+            # size of brstd needs to be
+            # Kchol_a + Krb_a
+            #its grabbing from the
+
+
 
             brstd = betas[Kf + Kr:Kf + Kr + Kr_b + Kchol]
+            if brstd != Br_std_new:
+                print('okay')
             # initialises size matrix
             proba = []  # Temp batching storage
 
@@ -4763,6 +4818,8 @@ class ObjectiveFunction(object):
                 if len(self.none_handler(self.rdm_cor_fit)) == 0:
                     # Br = self._transform_rand_betas(br, np.abs(
                     #     brstd), draws_)  # Get random coefficients, old method
+                    #TODO
+                    print('tril the draws')
                     Br = self._transform_rand_betas(br,
                                                     brstd, draws_)  # Get random coefficients
                     self.naming_for_printing(betas, dispersion=dispersion, model_nature=model_nature)
