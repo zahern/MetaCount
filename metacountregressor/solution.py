@@ -3603,7 +3603,8 @@ class ObjectiveFunction(object):
             #if hasattr(self.Br):
             #    betas_random = self.Br.copy()
             #else:
-            betas_random = br_mean[None, :, None] + draws * br_sd[None, :, None]
+            idx = self.get_X_draw_tril()
+            betas_random = br_mean[None, :, None] + draws[:,idx, :] * br_sd[None, :, None]
             '''
             c = self.get_num_params()[3:5]
             
@@ -6552,10 +6553,7 @@ class ObjectiveFunction(object):
             else:
                 rv_indices.append(rv_count_all - 1)
 
-        # for s.d.: gr_w = (Obs prob. minus predicted probability) * obs. var * random draw
-        draws_tril_idx = np.array([corr_indices[j]
-                                   for i in range(len(self.none_handler(self.rdm_cor_fit)))
-                                   for j in range(i + 1)])  # varnames pos.
+
         X_tril_idx = np.array([corr_indices[i]
                                for i in range(len(self.none_handler(self.rdm_cor_fit)))
                                for j in range(i + 1)])
@@ -6564,11 +6562,54 @@ class ObjectiveFunction(object):
         range_var = [x for x in
                      range(len(self.none_handler(var_uncor)))]
         range_var = sorted(range_var)
-        draws_tril_idx = np.array(np.concatenate((range_var, draws_tril_idx)))
+
         X_tril_idx = np.array(np.concatenate((range_var, X_tril_idx)))
-        draws_tril_idx = draws_tril_idx.astype(int)
+
         X_tril_idx = X_tril_idx.astype(int)
         return  X_tril_idx
+
+    def get_X_draw_tril(self):
+        '''For correlations find the repeating terms'''
+        varnames = self.none_join([self.rdm_grouped_fit, self.rdm_fit, self.rdm_cor_fit])
+        rv_count_all = 0
+        chol_count = 0
+        rv_count = 0
+        corr_indices = []
+        rv_indices = []
+        for ii, var in enumerate(varnames):  # TODO: BUGFIXf
+            if var in self.none_handler(self.rdm_cor_fit):
+                is_correlated = True
+            else:
+                is_correlated = False
+
+            rv_count_all += 1
+            if is_correlated:
+                chol_count += 1
+            else:
+                rv_count += 1
+
+            if var in self.none_handler(self.rdm_cor_fit):
+
+                corr_indices.append(rv_count_all - 1)  # TODO: what does tis do
+
+            else:
+                rv_indices.append(rv_count_all - 1)
+
+        # for s.d.: gr_w = (Obs prob. minus predicted probability) * obs. var * random draw
+        draws_tril_idx = np.array([corr_indices[j]
+                                   for i in range(len(self.none_handler(self.rdm_cor_fit)))
+                                   for j in range(i + 1)])  # varnames pos.
+
+        # Find the s.d. for random variables that are not correlated
+        var_uncor = self.none_join([self.rdm_grouped_fit, self.rdm_fit])
+        range_var = [x for x in
+                     range(len(self.none_handler(var_uncor)))]
+        range_var = sorted(range_var)
+        draws_tril_idx = np.array(np.concatenate((range_var, draws_tril_idx)))
+
+        draws_tril_idx = draws_tril_idx.astype(int)
+
+        return draws_tril_idx
 
 
 
