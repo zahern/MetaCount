@@ -2373,12 +2373,14 @@ class ObjectiveFunction(object):
             vector)  # just added to grab the fixed fit TODO: Clean up
         dispersion = model_nature.get('dispersion')
         self.define_selfs_fixed_rdm_cor(model_nature)
+        print('before', vector)
         try:
             self.repair(vector)
         except Exception as e:
-            print('prolem repairing here')
+            print('problem repairing here')
             print(vector)
             print(e)
+        print('after', vector)
         layout = vector.copy()
         trial_run = 0
         max_trial = 0
@@ -2460,7 +2462,7 @@ class ObjectiveFunction(object):
                 obj_1[self._obj_1] = 10 ** 5
             else:
                 if obj_1[self._obj_1] <= 0:
-                    obj_1[self._obj_1] = 10 ** 9
+                    obj_1[self._obj_1] = 10 ** 5
 
         if multi:
 
@@ -2491,10 +2493,10 @@ class ObjectiveFunction(object):
 
         self.reset_sln()
         if not self.is_quanitifiable_num(obj_1[self._obj_1]):
-            obj_1[self._obj_1] = 10 ** 9
+            obj_1[self._obj_1] = 10 ** 5
         else:
             if obj_1[self._obj_1] == 0:
-                obj_1[self._obj_1] = 10 ** 9
+                obj_1[self._obj_1] = 10 **5
         if verbose:
             print('The best solution iteratively is of objective value:', obj_1)
 
@@ -5850,6 +5852,11 @@ class ObjectiveFunction(object):
 
                     if self.no_extra_param:
                         dispersion_poisson = 0
+                        print('b :', len(b))
+                        print(self.get_param_num())
+                        baby = self.get_param_num()
+                        if len(b) != baby:
+                            print('modify')
                         betas_est = self._minimize(self._loglik_gradient, b, args=(
                             X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion_poisson, 0, False, 0,
                             self.rdm_cor_fit, None, None, draws_grouped, XG, mod),

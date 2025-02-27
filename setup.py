@@ -42,7 +42,7 @@ version_parts = current_version.split('.')
 major, minor, patch = map(int, version_parts)
 
 # Increment the patch version
-patch += 1
+patch += 2
 
 # Construct the new version string
 new_version = f"{major}.{minor}.{patch}"
@@ -53,7 +53,7 @@ with open('version.txt', 'w') as f:
 
 setuptools.setup(
     name='metacountregressor',
-    version=current_version,
+    version=new_version,
     description='Extensive Testing for Estimation of Data Count Models',
     long_description=long_description,
     long_description_content_type='text/markdown',  # Specify the content type as Markdown
