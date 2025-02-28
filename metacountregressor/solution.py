@@ -5912,8 +5912,7 @@ class ObjectiveFunction(object):
 
                     if self.no_extra_param:
                         dispersion_poisson = 0
-                        print('b :', len(b))
-                        print(self.get_param_num())
+                        
                         baby = self.get_param_num()
                         if len(b) != baby:
                             print('modify')
