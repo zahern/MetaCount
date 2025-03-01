@@ -150,7 +150,7 @@ class ObjectiveFunction(object):
         self.rdm_fit = None
         self.rdm_cor_fit = None
         self.dist_fit = None
-
+        self.rounding_point = kwargs.get('decimals_in_coeff', 2)
         self.MAE = None
         self.best_obj_1 = 1000000.0
         self._obj_1 = kwargs.get('_obj_1', 'bic') 
@@ -160,18 +160,18 @@ class ObjectiveFunction(object):
         self.GP_parameter = 0
         self.is_multi = kwargs.get('is_multi', False)
         self.complexity_level = kwargs.get('complexity_level', 6)
-        self._max_iterations_improvement = 10000
+        self._max_iterations_improvement = kwargs.get("WIC",10000)
         self.generated_sln = set()
         self.ave_mae = 0
         # defalt paramaters for hs #TODO unpack into harmony search class
         self.algorithm = 'hs'  # 'sa' 'de' also avialable
         self._hms = 20
-        self._max_time = 60 * 60 * 24
-        self._hmcr = .5
+        self._max_time = kwargs.get('_max_time',.60 * 60 * 24)
+        self._hmcr = kwargs.get('_hmcr',.5)
         self._par = 0.3 #dont think this gets useted
         self._mpai = 1
         self._max_imp = 100000
-        self._WIC = 1000  # Number of Iterations without Multiobjective Improvement #tod chuck into solution
+        self._WIC =  kwargs.get("WIC",10000) # Number of Iterations without Multiobjective Improvement #tod chuck into solution
         self._panels = None
         self.is_multi = True
         self.method_ll = 'Nelder-Mead-BFGS'
@@ -1146,7 +1146,8 @@ class ObjectiveFunction(object):
                     print(np.exp(self.coeff_[-1]))
                     #self.coeff_[-1] = np.exp(self.coeff_[-1])  # min possible value for negbinom
 
-            self.coeff_ = [self.round_with_padding(x, 2) for x in self.coeff_]
+
+            self.coeff_ = [self.round_with_padding(x, self.rounding_point) for x in self.coeff_]
 
             self.stderr = [self.round_with_padding(x, 2) for x in self.stderr]
             self.zvalues = [self.round_with_padding(

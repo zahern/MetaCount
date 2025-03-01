@@ -275,6 +275,13 @@ def harmony_search(objective_function, initial_harmonies=None, hyperparameters=N
     Returns:
         _type_: results for the harmony search algorithm in single or multi objective
     """
+    #set up objective function hyper
+    if kwargs.get('_hms') is not None:
+        objective_function._hms = kwargs.get('_hms')
+    if kwargs.get('_hmcr') is not None:
+        objective_function._hmcr = kwargs.get('_hmcr')
+
+
     man = None
     if 'Manual_Fit' in kwargs:
         if kwargs['Manual_Fit'] is not None:

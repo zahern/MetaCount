@@ -415,7 +415,7 @@ def PCA_code(X, n_components=5):
     return principalComponents
 
 
-def interactions(df, keep=None, drop_this_perc=0.6, interact = False):
+def interactions(df, keep=None, drop_this_perc=0.5, interact = False):
     full_columns = df.columns
     if interact:
         interactions_list = []
