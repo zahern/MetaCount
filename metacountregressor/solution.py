@@ -1946,11 +1946,11 @@ class ObjectiveFunction(object):
 
         else:
             slice_this_amount = self.num_dispersion_params(dispersion)
-            slice_this_amount = 1 #TODO handle this
+            slice_this_amount = 0 #TODO handle this
             if pvalues[-1] > sig_value:
                 vio_counts += 1
             subpvalues = pvalues[:-slice_this_amount].copy()
-
+            
         if Kh > 1:
             if subpvalues[-1] < sig_value:
                 subpvalues[-Kh] = 0
@@ -6437,10 +6437,13 @@ class ObjectiveFunction(object):
                 if not is_delete and is_halton:
                     if obj_1[self._obj_1] <= self.best_obj_1:
                         self.pvalue_sig_value = .1
-
-                    st, self.pvalue_exceed = self.get_pvalue_info_alt(
-                        pvalues, self.coeff_names, self.pvalue_sig_value, dispersion, is_halton, 0, 1)
-
+                    try:
+                        st, self.pvalue_exceed = self.get_pvalue_info_alt(
+                            pvalues, self.coeff_names, self.pvalue_sig_value, dispersion, is_halton, 0, 1)
+                    except Exception as pval_exe:
+                        print(pval_exe)
+                        self.pvalue_exceed = sum(
+                        a > self.pvalue_sig_value for a in pvalues)
                 else:
                     self.pvalue_exceed = sum(
                         a > self.pvalue_sig_value for a in pvalues)

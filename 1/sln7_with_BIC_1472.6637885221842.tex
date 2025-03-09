@@ -1,0 +1,78 @@
+\begin{table}
+	\caption{p model found through the hs algorithm. bic: 1472.66 Log-Likelihood: -642.45 RMSE_TEST: 16.43}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -3.43 & 13.36 & -0.26 & 0.80 \\
+			\hline
+			MXMEDSH & no & 0.07 & 0.26 & 0.27 & 0.79 \\
+			\hline
+			URB & no & 0.06 & 1.49 & 0.04 & 0.97 \\
+			\hline
+			TRAIN & no & 0.08 & 0.60 & 0.13 & 0.90 \\
+			\hline
+			PEAKHR & arcsinh & 0.44 & 2.76 & 0.16 & 0.87 \\
+			\hline
+			MXGRADE & arcsinh & 0.07 & 0.31 & 0.22 & 0.83 \\
+			\hline
+			TANGENT & arcsinh & 0.11 & 1.02 & 0.10 & 0.92 \\
+			\hline
+			ACCESS & no & -0.31 & 2.27 & -0.14 & 0.89 \\
+			\hline
+			FRICTION & sqrt & -0.18 & 1.95 & -0.09 & 0.93 \\
+			\hline
+			INTECHAG & no & 0.31 & 0.86 & 0.36 & 0.72 \\
+			\hline
+			WIDTH & log & -0.62 & 4.87 & -0.13 & 0.90 \\
+			\hline
+			MXGRDIFF & arcsinh & 0.11 & 1.11 & 0.10 & 0.92 \\
+			\hline
+			CURVES & arcsinh & 0.29 & 1.13 & 0.26 & 0.80 \\
+			\hline
+			MINRAD & arcsinh & 0.01 & 0.33 & 0.02 & 0.99 \\
+			\hline
+			ADTLANE & log & 1.47 & 12.18 & 0.12 & 0.90 \\
+			\hline
+			DECLANES & no & 0.42 & 3.65 & 0.11 & 0.91 \\
+			\hline
+			FC & no & -0.00 & 0.56 & -0.01 & 0.99 \\
+			\hline
+			AADT & log & -1.72 & 11.76 & -0.15 & 0.88 \\
+			\hline
+			GRADEBR & arcsinh & 0.46 & 1.04 & 0.44 & 0.66 \\
+			\hline
+			WIDTH (Std. Dev.) uniform &  & -0.09 & 0.03 & -2.84 & 0.00*** \\
+			\hline
+			MXGRDIFF (Std. Dev.) triangular &  & -0.13 & 0.08 & -1.63 & 0.10 \\
+			\hline
+			CURVES (Std. Dev.) normal &  & -0.05 & 0.03 & -1.47 & 0.14 \\
+			\hline
+			MINRAD (Std. Dev.) triangular &  & -0.03 & 0.02 & -1.17 & 0.24 \\
+			\hline
+			ADTLANE (Std. Dev.) tn_normal &  & -0.00 & 0.01 & -0.07 & 0.95 \\
+			\hline
+			 Chol: DECLANES (Std. Dev. ln_normal) ) &  & 0.36 & 0.20 & 1.77 & 0.08. \\
+			\hline
+			 Chol: FC (Std. Dev. ln_normal) ) &  & 0.04 & 0.03 & 1.60 & 0.11 \\
+			\hline
+			 Chol: AADT (Std. Dev. ln_normal) ) &  & 0.03 & 0.01 & 2.76 & 0.01* \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. ln_normal) ) &  & -0.05 & 0.04 & -1.29 & 0.20 \\
+			\hline
+			 Chol: FC (Std. Dev. ln_normal) . DECLANES (Std. Dev.   ln_normal ) &  & -0.07 & 0.05 & -1.41 & 0.16 \\
+			\hline
+			 Chol: AADT (Std. Dev. ln_normal) . DECLANES (Std. Dev.   ln_normal ) &  & 0.05 & 0.03 & 1.54 & 0.12 \\
+			\hline
+			 Chol: AADT (Std. Dev. ln_normal) . FC (Std. Dev.   ln_normal ) &  & -0.31 & 0.09 & -3.52 & 0.00*** \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. ln_normal) . DECLANES (Std. Dev.   ln_normal ) &  & 0.00 & 0.01 & 0.09 & 0.93 \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. ln_normal) . FC (Std. Dev.   ln_normal ) &  & -0.06 & 0.07 & -0.80 & 0.43 \\
+			\hline
+			 Chol: GRADEBR (Std. Dev. ln_normal) . AADT (Std. Dev.   ln_normal ) &  & -0.10 & 0.06 & -1.66 & 0.10 \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}
