@@ -501,7 +501,7 @@ class ObjectiveFunction(object):
         # model specs
         self.endog = None
         # solution parameters
-        self._min_characteristics = 1
+        self._min_characteristics = kwargs.get('_min_vars', 3)
         self._max_hurdle = 4
 
         #Manually fit from analyst specification
@@ -1408,16 +1408,47 @@ class ObjectiveFunction(object):
 
         return transform_set
 
+ 
     def poisson_mean_get_dispersion(self, betas, X, y):
+        '''
         eVy = self._loglik_gradient(betas, X, y, None, X, None, None, False, False, dispersion=0,
                                     return_EV=True,
                                     zi_list=None, draws_grouped=None, Xgroup=None)
         
-        ab = ((y - eVy)**2 - eVy)/eVy
-        bb = eVy -1
-        disp = sm.OLS(ab.ravel(), bb.ravel()).fit()
-        gamma = disp.params[0]
+        print('trying thi instead')
+        
+        '''
+        
+        '''       
+        nb_model = sm.GLM(y_long, x_long, family=sm.families.NegativeBinomial()).fit()
+        gamma = nb_model.scale
+
+        '''
+        #poisson way
+        try:
+            num_panels, num_obs, num_features = X.shape  # Dimensions of x
+            x_long = X.reshape(-1, num_features)         # Reshape to (num_panels * num_obs, num_features)
+            y_long = y.reshape(-1) 
+            poisson_model = sm.GLM(y_long, x_long, family=sm.families.Poisson()).fit()
+
+            # Get residual deviance and degrees of freedom
+            residual_deviance = poisson_model.deviance
+            degrees_of_freedom = poisson_model.df_resid
+
+        # Calculate dispersion
+            dispersion = residual_deviance / degrees_of_freedom
+        except:
+            dispersion =1 
+
+        #ab = np.abs(((y - eVy)**2 - eVy)/eVy)
+        
+        #bb = eVy -1
+        #disp = sm.OLS(ab.ravel(), bb.ravel()).fit()
+        #gamma = disp.params[0]
         #print(f'dispersion is {gamma}')
+        gamma = np.min(dispersion,1)
+        if gamma < 0.05:
+            gamma = 0.05
         return gamma
 
     def validation(self, betas, y, X, Xr=None, dispersion=0, rdm_cor_fit=None, zi_list=None, exog_infl=None,
