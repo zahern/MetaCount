@@ -188,7 +188,7 @@ class ObjectiveFunction(object):
 
         self.beta_dict = dict
         if 'model_terms' in kwargs:
-            print('change')
+            
             if kwargs.get('model_terms').get('group') is not None:
                 kwargs['group'] = kwargs.get('model_terms').get('group')
 
