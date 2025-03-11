@@ -1,62 +1,41 @@
 import os
+import setuptools
 
 # Get the directory of the current script
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Construct the full path to the README.md file
 readme_path = os.path.join(current_dir, 'README.md')
-#import requests
-import setuptools
 
-'''
-def get_package_version(package_name):
-    """
-    Fetch the latest version of a package from PyPI.
-    """
-    url = f"https://pypi.org/pypi/{package_name}/json"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        return data['info']['version']
-    else:
-        return None
-'''
+# Check if README.md exists
+if not os.path.exists(readme_path):
+    raise FileNotFoundError("README.md file is missing. Please ensure it exists in the project root.")
+
 # Read the README.md file for the long description
 with open(readme_path, 'r', encoding='utf-8') as fh:
     long_description = fh.read()
-'''
-package_name = 'metacountregressor'
-current_version = get_package_version(package_name)
-if current_version:
-    print(f"The current version of {package_name} is {current_version}")
-else:
-'''
+
+# Read the current version from version.txt
 with open('version.txt', 'r') as f:
-        # current_version = get_version from pupi
-	current_version = f.read().strip()
-
-
-
-# Split the current version into its components
-version_parts = current_version.split('.')
-major, minor, patch = map(int, version_parts)
+    current_version = f.read().strip()
 
 # Increment the patch version
+version_parts = current_version.split('.')
+major, minor, patch = map(int, version_parts)
 patch += 1
-
-# Construct the new version string
 new_version = f"{major}.{minor}.{patch}"
 
-# Write the new version number back to the file
+# Write the new version back to version.txt
 with open('version.txt', 'w') as f:
     f.write(new_version)
 
+# Setup configuration
 setuptools.setup(
     name='metacountregressor',
     version=new_version,
     description='Extensive Testing for Estimation of Data Count Models',
     long_description=long_description,
-    long_description_content_type='text/markdown',  # Specify the content type as Markdown
+    long_description_content_type='text/markdown',  # Specify Markdown content
     url='https://github.com/zahern/CountDataEstimation',
     author='Zeke Ahern',
     author_email='z.ahern@qut.edu.au',
