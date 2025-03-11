@@ -49,7 +49,7 @@ setuptools.setup(
         'requests',
         'latextable',
         'pandas',
-        'scikit_learn',
+        'scikit-learn>=1.3.1',
         'statsmodels',
         'psutil'
     ]
