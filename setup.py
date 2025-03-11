@@ -63,7 +63,7 @@ setuptools.setup(
     license='MIT',
     packages=['metacountregressor'],
     zip_safe=False,
-    python_requires='>=3.10',
+    python_requires='>=3.7',
     install_requires=[
         'numpy>=1.13.1',
         'scipy>=1.0.0',
