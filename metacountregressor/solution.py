@@ -1446,7 +1446,7 @@ class ObjectiveFunction(object):
         #disp = sm.OLS(ab.ravel(), bb.ravel()).fit()
         #gamma = disp.params[0]
         #print(f'dispersion is {gamma}')
-        gamma = np.min((dispersion,1))
+        gamma = np.min([dispersion,1])
         if gamma < 0.05:
             gamma = 0.05
         return gamma
@@ -5699,7 +5699,10 @@ class ObjectiveFunction(object):
                                               method=method2, tol=1e-5, options={'gtol': tol['gtol']},
                                               bounds=bounds)
                     if dispersion:
-                        nb_parma = self.poisson_mean_get_dispersion(initial_beta.x, XX, y)
+                        try:
+                            nb_parma = self.poisson_mean_get_dispersion(initial_beta.x, XX, y)
+                        except: 
+                            nb_parma = 0.5
                     
 
 
