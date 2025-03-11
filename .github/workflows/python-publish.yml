@@ -38,7 +38,7 @@ jobs:
       # Build the package
       - name: Build the package
         run: |
-          python -m build --no-deps
+          python -m build --skip-dependency-check
 
       # Upload the package to PyPI
       - name: Upload to PyPI
