@@ -2,9 +2,9 @@ name: Publish package to PyPI and TestPyPI
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
   workflow_dispatch:
 
 jobs:
@@ -20,10 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.10.16
+          # Use a broader version or even a matrix strategy (see below)
+          python-version: "3.10"
 
       - name: Install dependencies
         run: |
