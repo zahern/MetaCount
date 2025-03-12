@@ -117,7 +117,7 @@ def logger(iteration, incumbent1, best1=None, alt_method=True, name=None, multi=
             try:
                 incumbent.pop('pvalues')
             except Exception as e:
-                print(e)
+                print(e, 'cant pop')
 
             incumbent = pd.DataFrame(incumbent, index=[0])
             incumbent = incumbent.add_prefix('incumbent_')
@@ -376,7 +376,7 @@ class Metaheuristic(object):
                         fitness = 10 ** 9
             except Exception as e:
                 fitness = 10 ** 9
-                print(e)
+                print(e, 'fitness eror meta')
                 # print('solution struct', initial_slns[i])
             print('the final fitness is', fitness)
             if self.pf.get_objective_is_multi():
@@ -503,7 +503,7 @@ class DifferentialEvolution(object):
                     new_index = current_index + self.F * (
                             self._obj_fun.get_index(i, struct_b[i]) - self._obj_fun.get_index(i, struct_c[i]))
                 except Exception as e:
-                    print(e)
+                    print(e, 'index errpr [rpb;es jere]')
                     print(struct_b)
                     print(struct_c)
                     new_index = 0
@@ -855,7 +855,7 @@ class SimulatedAnnealing(object):
                     fit_ob_2 = fitness.get(self.obj_2)
                     self.pf.evaluate_frontier_against_new_sln(fitness)
                 except Exception as e:
-                    print(e)
+                    print(e, 'sa error part')
 
 
 
@@ -1012,7 +1012,7 @@ class SimulatedAnnealing(object):
                     elif num_of_changeablePARMs == 0:
                         rdm_i = random.choice(range(len(prmVect)))
                         if self._obj_fun.get_num_discrete_values(rdm_i) <= 1:
-                            print('retry')
+                            print('retry, not a enough choices')
 
                     while self._obj_fun.get_num_discrete_values(rdm_i) <= 1:
                         rdm_i = random.randint(0, self._obj_fun.get_num_parameters() - 1)
@@ -1123,7 +1123,7 @@ class SimulatedAnnealing(object):
                         fitness = 10 ** 9
             except Exception as e:
                 fitness = 10 ** 9
-                print(e)
+                print(e, 'sa here co')
                 # print('solution struct', initial_slns[i])
             print('the final fitness is', fitness)
             if self.pf.get_objective_is_multi():
@@ -1175,7 +1175,8 @@ class SimulatedAnnealing(object):
                         fitness.get(self._obj_fun._obj_1))  # TODO handle specific swithhing of objectives.
                     fitness_list_2.append(fitness.get(self._obj_fun._obj_2))
                 except Exception as e:
-                    print(e)
+                    print(e, 
+                          'fitness list eror')
 
                     # Temp1
             Temp1 = (-st.stdev(fitness_list)) / np.log(1 - acceptance_prob)
@@ -1398,7 +1399,7 @@ class HarmonySearch(object):
                         logger(num_imp, fitness, self._harmony_memory, True, self.get_instance_name(),
                                1)  # for consistency
                     except Exception as e:
-                        print(e)
+                        print(e, 'logger run hs')
                     # logger(num_imp, fitness, self._pareto_harmony_memory, True, self.instance_number +'/log_for_pareto_harmony_memory.csv', 1)
 
 
@@ -1670,7 +1671,7 @@ class HarmonySearch(object):
                     try:
                         new_index = current_index + random.randint(1, self._obj_fun.get_mpai()) * random.choice([-1, 1])
                     except Exception as e:
-                        print(e)
+                        print(e, 'index error, this is probs it')
                         new_index = current_index
                     if new_index not in range(0, len(self._obj_fun._discrete_values[i])):
                         new_index = self._obj_fun.modulo_or_divisor(new_index,

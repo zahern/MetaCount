@@ -1351,7 +1351,7 @@ class ObjectiveFunction(object):
                 self.save_to_file(latextable.draw_latex(
                     table, caption=caption), file_name)
         except Exception as e:
-            print(e)
+            print(e, 'here, summary table')
 
     def save_to_file(self, content, filename):
         with open(filename, 'w') as file:
@@ -1967,125 +1967,111 @@ class ObjectiveFunction(object):
     def get_pvalue_info_alt(self, pvalues, names, sig_value=0.05, dispersion=0, is_halton=1, delete=0,
                             return_violated_terms=0):
 
-        num_params = len(pvalues)
-        Kf, Kr, Kc, Kr_b, Kchol, Kh = self.get_num_params()
+        try:
+            num_params = len(pvalues)
+            Kf, Kr, Kc, Kr_b, Kchol, Kh = self.get_num_params()
 
-        vio_counts = 0
-        pvalues = np.array([float(string) for string in pvalues])
-        if dispersion == 0:
-            subpvalues = pvalues.copy()
+            vio_counts = 0
+            pvalues = np.array([float(string) for string in pvalues])
+            if dispersion == 0:
+                subpvalues = pvalues.copy()
+            else:
+                slice_this_amount = self.num_dispersion_params(dispersion)
+                slice_this_amount = 0  # TODO handle this
+                if pvalues[-1] > sig_value:
+                    vio_counts += 1
+                subpvalues = pvalues[:-slice_this_amount].copy()
 
-        else:
-            slice_this_amount = self.num_dispersion_params(dispersion)
-            slice_this_amount = 0 #TODO handle this
-            if pvalues[-1] > sig_value:
-                vio_counts += 1
-            subpvalues = pvalues[:-slice_this_amount].copy()
-            
-        if Kh > 1:
-            if subpvalues[-1] < sig_value:
-                subpvalues[-Kh] = 0
+            if Kh > 1:
+                if subpvalues[-1] < sig_value:
+                    subpvalues[-Kh] = 0
 
-        subpvalues = np.array([float(string) for string in subpvalues])
+            subpvalues = np.array([float(string) for string in subpvalues])
 
-        if Kr_b + Kchol > 0:
-            sum_k = Kf + Kr + Kc
-            for i in range(Kf, sum_k):
-                subpvalues[i] = 0
+            if Kr_b + Kchol > 0:
+                sum_k = Kf + Kr + Kc
+                for i in range(Kf, sum_k):
+                    subpvalues[i] = 0
 
-            sum_k += Kr_b
-            lower_triangular = subpvalues[sum_k:sum_k + Kchol]
+                sum_k += Kr_b
+                lower_triangular = subpvalues[sum_k:sum_k + Kchol]
 
+                # initialize matrix with zeros
+                matrix_alt = [[0] * Kc for _ in range(Kc)]
+                index = 0
 
-            # initialize matrix with zeros
-            matrix_alt = [[0] * Kc for _ in range(Kc)]
-            index = 0
+                for i in range(Kc):
+                    for j in range(i + 1):
+                        # fill in lower triangular entries
+                        matrix_alt[i][j] = lower_triangular[index]
+                        # fill in upper triangular entries
+                        matrix_alt[j][i] = lower_triangular[index]
+                        index += 1
 
-            for i in range(Kc):
-                for j in range(i + 1):
-                    # fill in lower triangular entries
-                    matrix_alt[i][j] = lower_triangular[index]
-                    # fill in upper triangular entries
-                    matrix_alt[j][i] = lower_triangular[index]
-                    index += 1
+                if len(matrix_alt) > 0:
+                    matrix_alt = np.array(matrix_alt)
+                    # block out potential random parameters
+                    matrix_diag = np.diag(matrix_alt).copy()
 
-            if len(matrix_alt) > 0:
-                matrix_alt = np.array(matrix_alt)
-                # block out potential random parameters
-                matrix_diag = np.diag(matrix_alt).copy()
+                    np.fill_diagonal(matrix_alt, sig_value)
 
-                np.fill_diagonal(matrix_alt, sig_value)
+                    # set_matrix_alt to 0 for significant correlated terms
+                    rows_to_zero = np.any(matrix_alt < sig_value, axis=1)
+                    matrix_alt[rows_to_zero, :] = 0
 
-                # set_matrix_alt to 0 for signficant correlated tersm
-                # Find the rows where any element is less than the threshold
-                rows_to_zero = np.any(matrix_alt < sig_value, axis=1)
+                    if np.max(matrix_alt) < sig_value:
+                        for j in range(sum_k, sum_k + Kchol):
+                            subpvalues[j] = 0
+                    else:
+                        # revert the matrix
+                        np.fill_diagonal(matrix_alt, matrix_diag)
 
-                # Set the corresponding rows to zero
-                matrix_alt[rows_to_zero, :] = 0
+                        # convert 2d matrix into a lower triangular matrix flattened
+                        result = []
+                        n_rows, n_cols = np.shape(matrix_alt)
+                        for i in range(n_rows):
+                            for j in range(n_cols):
+                                if j <= i:
+                                    result.append(matrix_alt[i][j])
 
-                if np.max(matrix_alt) < sig_value:
-                    for j in range(sum_k, sum_k + Kchol):
-                        subpvalues[j] = 0
-                else:
+                        ii = 0
+                        for j in range(sum_k, sum_k + Kchol):
+                            subpvalues[j] = result[ii]
+                            ii += 1
 
-                    # revert the matrix
-                    np.fill_diagonal(matrix_alt, matrix_diag)
+            vio_counts += len([i for i in subpvalues if i > sig_value])
 
-                    # convert 2d matrix, into a lower triangular marix flattened
-                    result = []
-                    n_rows, n_cols = np.shape(matrix_alt)
-                    for i in range(n_rows):
-                        for j in range(n_cols):
-                            if j <= i:
-                                result.append(matrix_alt[i][j])
+            saving_at_least = random.randint(1, 6)
+            max_delete_pre = max(len(self.none_handler(self.fixed_fit) +
+                                    self.none_handler(self.rdm_fit) +
+                                    self.none_handler(self.rdm_cor_fit)) - saving_at_least, 0)
+            max_delete = min(max_delete_pre, saving_at_least)
+            indexes = sorted(range(len(subpvalues)),
+                            key=lambda i: subpvalues[i], reverse=True)
+            indexes = indexes[:max_delete]
 
-                    ii = 0
-                    for j in range(sum_k, sum_k + Kchol):
-                        # print(names[i])
-
-                        subpvalues[j] = result[ii]
-                        ii += 1
-
-        vio_counts += len([i for i in subpvalues if i > sig_value])
-
-        saving_at_least = random.randint(1, 6)
-        max_delete_pre = np.max((len(self.none_handler(self.fixed_fit) + self.none_handler(
-            self.rdm_fit) + self.none_handler(self.rdm_cor_fit)) - saving_at_least, 0))
-        max_delete = np.min((max_delete_pre, saving_at_least))
-        indexes = sorted(range(len(subpvalues)),
-                         key=lambda i: subpvalues[i], reverse=True)
-        indexes = indexes[:max_delete]
-
-        if np.max(subpvalues) > sig_value:
-            if num_params <= self._min_characteristics:
-                self.significant = 2
-                if return_violated_terms:
+            if np.max(subpvalues) > sig_value:
+                if num_params <= self._min_characteristics:
+                    self.significant = 2
                     return False, vio_counts
-                else:
-                    return False, vio_counts  # added for testing
 
-            if delete:
-                # if self.get_type_and_safe(max_index):
-                delete_idx = [i for i in range(
-                    len(subpvalues)) if subpvalues[i] > sig_value]
-                if len(delete_idx) > len(indexes):
-                    delete_idx = indexes
+                if delete:
+                    delete_idx = [i for i in range(len(subpvalues)) if subpvalues[i] > sig_value]
+                    if len(delete_idx) > len(indexes):
+                        delete_idx = indexes
 
-                self.get_block_to_delete(delete_idx, dispersion)
-
-                # self.get_value_to_delete(max_index, dispersion)
-                if return_violated_terms:
+                    self.get_block_to_delete(delete_idx, dispersion)
                     return True, vio_counts
-                else:
-                    return True, vio_counts  # added for testing
 
-        else:
-            self.significant = 1
-
-        if return_violated_terms:
+            else:
+                self.significant = 1
             return False, vio_counts
-        else:
-            return False, vio_counts  # added for testing
+
+        except IndexError as e:
+            print(f"IndexError encountered: {e}")
+            # Return st and vio_counts when IndexError occurs
+            st = False  # or any default value for st
+            return st, vio_counts
 
     def get_coeff_names(self, is_halton, rdm_params, rdm_distr, fixed_params=None, dispersion=0):
         combine_tr = [i + ' (Std. Dev.) ' + rdm_distr[j]
@@ -2435,14 +2421,18 @@ class ObjectiveFunction(object):
         sub_slns.append([obj_1.copy()])
 
         obj_best = obj_1.copy()
-        if any(sub_string in obj_1['simple'] for sub_string in ["rp", "c", "zi"]):
-            trial_run, vio_counts = self.get_pvalue_info_alt(
-                self.pvalues, self.coeff_names, self.pvalue_sig_value, dispersion, 1, trial_run)  # i added
+        '''old code turning off'''
+        
 
         trial_run = 0
+        if trial_run:
+            if any(sub_string in obj_1['simple'] for sub_string in ["rp", "c", "zi"]):
+                trial_run, vio_counts = self.get_pvalue_info_alt(
+                    self.pvalues, self.coeff_names, self.pvalue_sig_value, dispersion, 1, trial_run)  # i added
+
 
         # trial_run = self.get_pvalue_info_alt(self.pvalues, self.coeff_names, sig_value = 0.05, dispersion = dispersion ,is_halton = obj_1['simple'], delete = 1)
-        if trial_run:
+        while trial_run:
 
             if obj_1['num_parm'] - obj_1['pval_exceed'] > 5:
                 self.repair(vector, obj_1['num_parm'] - 5)
@@ -5036,7 +5026,7 @@ class ObjectiveFunction(object):
                     #return output
         except Exception as e:
             traceback.print_exc()
-            print(e)
+            print(e, 'where loglik')
 
     def minimize_function(self, loglike):
         r'Takes the logliklihood function and tranforms it to a more handed minimization function'
