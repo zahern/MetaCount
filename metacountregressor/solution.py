@@ -164,13 +164,13 @@ class ObjectiveFunction(object):
         self.generated_sln = set()
         self.ave_mae = 0
         # defalt paramaters for hs #TODO unpack into harmony search class
-        self.algorithm = 'hs'  # 'sa' 'de' also avialable
+        self.algorithm = kwargs.get('algorithm', 'hs')  # 'sa' 'de' also avialable
         self._hms = 20
-        self._max_time = kwargs.get('_max_time',.60 * 60 * 24)
-        self._hmcr = kwargs.get('_hmcr',.5)
+        self._max_time = kwargs.get('_max_time', 0.8* 60 * 60 * 24)
+        self._hmcr = kwargs.get('_hmcr', .5)
         self._par = 0.3 #dont think this gets useted
         self._mpai = 1
-        self._max_imp = 100000
+        self._max_imp = kwargs.get('_max_imp', 90000000)
         self._WIC =  kwargs.get("WIC",10000) # Number of Iterations without Multiobjective Improvement #tod chuck into solution
         self._panels = None
         self.is_multi = True
@@ -184,7 +184,7 @@ class ObjectiveFunction(object):
         self.MP = 0
         # Nelder-Mead-BFGS
 
-        self._max_characteristics = kwargs.get('_max_vars', 26)
+        self._max_characteristics = kwargs.get('_max_vars', 30)
 
         self.beta_dict = dict
         if 'model_terms' in kwargs:
