@@ -1,0 +1,30 @@
+\begin{table}
+	\caption{nb model found through the hs algorithm. bic: 272716.24 Log-Likelihood: -136331.01 RMSE_TEST: 10000000.00}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -2.63 & 0.97 & -2.70 & 0.01* \\
+			\hline
+			X2 house age & arcsinh & -0.09 & 1.56 & -0.06 & 0.96 \\
+			\hline
+			X3 distance to the nearest MRT station & sqrt & -0.02 & 0.56 & -0.04 & 0.97 \\
+			\hline
+			X5 latitude & arcsinh & 123.96 & 0.99 & 50.00 & 0.00*** \\
+			\hline
+			X6 longitude & no & -3.66 & 0.20 & -18.56 & 0.00*** \\
+			\hline
+			X4 number of convenience stores & no & 0.01 & 2.73 & 0.00 & 1.00 \\
+			\hline
+			X1 transaction date & log & -4.14 & 0.99 & -4.17 & 0.00*** \\
+			\hline
+			X4 number of convenience stores (Std. Dev.) triangular &  & 0.00 & 0.09 & 0.03 & 0.98 \\
+			\hline
+			 Chol: X1 transaction date (Std. Dev. ln_normal) ) &  & 0.27 & 0.00 & 50.00 & 0.00*** \\
+			\hline
+			nb &  & 1.00 & 0.00 & 50.00 & 0.00*** \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

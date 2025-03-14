@@ -481,7 +481,14 @@ class ObjectiveFunction(object):
 
             model_types = [[0, 1]]  # add 2 for Generalized Poisson
             #model_types = [[0]]
-            #TODO change back and fix NB
+        
+        if kwargs.get('linear_model', None) is not None:
+            model_types = [[0]]
+            self.grad_yes = False
+            
+            print(f'Linear Model Selected: turning off gradient calculation')
+
+
         model_t_dict = {'Poisson':0,
                         "NB":1}
         # Retrieve the keys (model names) corresponding to the values in model_types
@@ -4624,7 +4631,7 @@ class ObjectiveFunction(object):
                     betas, dispersion) 
                 
 
-                eVd = self.eXB_calc(Bf, Xd, offset, main_disper, kwargs.get('linear_model'))
+                eVd = self.eXB_calc(Bf, Xd, offset, main_disper, self.linear_regression)
 
                 if return_EV is True:
                     return eVd
@@ -4637,7 +4644,7 @@ class ObjectiveFunction(object):
 
                     betas[-1] = main_disper
 
-                if kwargs.get('linear_model'):
+                if self.linear_regression:
                     # LINEAR MODEL PROCESS
                     mse = np.mean((y - eVd) ** 2)
                     return mse
@@ -4873,10 +4880,10 @@ class ObjectiveFunction(object):
                 betas_hetro_sd = None
 
             Vdr = dev.cust_einsum("njk,nkr -> njr", Xdr, Br)  # (N,P,R)
-            if kwargs.get('linear_model'):
+            if self:
                 ### LINEAR MODEL WAY #######
                 eVd = np.clip(
-                Vdf[:, :, None] + Vdr + Vdh + dev.np.array(offset), None, EXP_UPPER_LIMIT)
+                Vdf[:, :, None] + Vdr + Vdh + dev.np.array(offset), None, None)
                 mse = np.mean((y - eVd) ** 2)
                 return mse
 
