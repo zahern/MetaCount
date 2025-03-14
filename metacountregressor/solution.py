@@ -121,7 +121,7 @@ class ObjectiveFunction(object):
     """
 
     def __init__(self, x_data, y_data, **kwargs):
-
+        self.linear_regression = kwargs.get('linear_model', False)
         self.reg_penalty = 0
         self.power_up_ll = False
         self.nb_parma = 1
@@ -789,11 +789,7 @@ class ObjectiveFunction(object):
         data_names = list(set(b + a))
 
         print(data_names)
-        # from bs4 import BeautifulSoup
-        # explainer = shap.TreeExplainer(rf)
-        # shap_values = explainer.shap_values(self._x_data)
-        # shap.initjs()
-        # dis = shap.force_plot(explainer.expected_value, shap_values[0,:], self._x_data.iloc[0,:], matplotlib = True)
+    
 
         return data_names
 
@@ -813,18 +809,18 @@ class ObjectiveFunction(object):
     def get_dispersion_paramaters(self, betas, dispersion):
 
         if dispersion == 0:
-            return None, None
+            return None
         elif dispersion == 2 or dispersion == 1:
             if self.no_extra_param:
-                return self.nb_parma, None
-            return betas[-1], None
+                return self.nb_parma
+            return betas[-1]
 
         elif dispersion == 3:
-            return None, betas[-1]
+            return betas[-1]
         elif dispersion == 4:
-            return betas[-1], betas[-2]
+            return betas[-1]
         elif dispersion == 'poisson_lognormal':
-            return betas[-1], None
+            return betas[-1]
 
     def reset_pvalue_conditions(self):
         self.initial_sig = .5  # pass the test of a single model
@@ -1410,20 +1406,7 @@ class ObjectiveFunction(object):
 
  
     def poisson_mean_get_dispersion(self, betas, X, y):
-        '''
-        eVy = self._loglik_gradient(betas, X, y, None, X, None, None, False, False, dispersion=0,
-                                    return_EV=True,
-                                    zi_list=None, draws_grouped=None, Xgroup=None)
         
-        print('trying thi instead')
-        
-        '''
-        
-        '''       
-        nb_model = sm.GLM(y_long, x_long, family=sm.families.NegativeBinomial()).fit()
-        gamma = nb_model.scale
-
-        '''
         #poisson way
         try:
             num_panels, num_obs, num_features = X.shape  # Dimensions of x
@@ -1547,9 +1530,7 @@ class ObjectiveFunction(object):
             y = np.tile(y, self.Ndraws).ravel()
             eVy = eVy.ravel()
 
-        # y_avg = np.mean(y, axis = (1,2))
-        # eVy_avg = np.mean(eVy, axis = (1,2))
-        # mspe1 = np.nan_to_num(MSPE(np.squeeze(y_avg), np.squeeze(eVy_avg)), nan=100000, posinf=100000)
+       
         eVy = np.nan_to_num(eVy, nan=100000, posinf=100000)
         eVy = np.clip(eVy, None, 1000)
         mae = np.nan_to_num(MAE(np.squeeze(y), np.squeeze(eVy)), nan=100000, posinf=100000)
@@ -3921,9 +3902,9 @@ class ObjectiveFunction(object):
 
         return penalty, b_gam
 
-    def eXB_calc(self, params_main, Xd, offset, dispersion, b_gam=None):
+    def eXB_calc(self, params_main, Xd, offset, dispersion, linear = False):
 
-        # print('this was 0')
+        
         if dispersion:
             eta=  np.dot(Xd, params_main)[:, :, None] + np.array(offset[:, :, :])
 
@@ -3933,20 +3914,10 @@ class ObjectiveFunction(object):
             eta = np.dot(Xd, params_main)[:, :, None] + np.array(offset[:, :, :])
         eta = np.array(eta)
 
-        # eta  = np.float64(eta)
-        # eta = np.dot(Xd, params_main)+offset[:,:,0]
-        # eta2 = np.dot(Xd, params_main)[:,:,None]+np.array(offset[:,:,:])
 
-        if dispersion == 5:
-            get_lindley = b_gam
-            if b_gam == 0:
-                get_lindley = 0.01
-            eps_i = self.my_lindley(Xd, get_lindley)
-            eVd = eps_i * np.exp(np.clip(eta, 0, EXP_UPPER_LIMIT)).ravel()
-            # Vd = self.my_lindley(np.exp(np.clip(eta, 0, EXP_UPPER_LIMIT)), get_lindley)
-
-            # eVd = np.exp(np.clip(eta, 0, EXP_UPPER_LIMIT))
-            # eVd = self.my_lindley(np.exp(np.clip(eta, None, EXP_UPPER_LIMIT)), 1) #todo grab param
+        if linear:
+            eta = eta.astype('float')
+            return eta
 
 
         else:
@@ -4079,7 +4050,7 @@ class ObjectiveFunction(object):
         # proba_r = self._nonlog_nbin_lindley(y, eVd, fa, ba)
 
         elif dispersion == 'poisson_lognormal':
-            sig, vl = self.get_dispersion_paramaters(betas, dispersion)
+            sig = self.get_dispersion_paramaters(betas, dispersion)
             store = list()
             for i in range(len(y)):
                 store.append(self.poisson_lognormal_pmf(
@@ -4127,7 +4098,7 @@ class ObjectiveFunction(object):
 
         # if alpha < 0:
         #     alpha = np.abs(alpha)
-        sig, omeg = self.get_dispersion_paramaters(betas, dispersion)
+        sig = self.get_dispersion_paramaters(betas, dispersion)
 
         if model_nature is not None:
             if 'XH' in model_nature:
@@ -4152,15 +4123,7 @@ class ObjectiveFunction(object):
             gr_f, gr_u, gr_s = np.zeros((N, Kf)), np.zeros(
                 (N, Kr + Kc)), np.zeros((N, Kchol + Kr_b))
 
-        if dispersion == 3:
-
-            q = omeg / (1 + omeg)
-            d_beta = (y + 1) / (eVd + y + 1) - q / (1 - q)
-
-            gr_e = d_beta * (proba_n[:, None, :]).sum(axis=2)
-            for i in len(y):
-                if y[i] == 0:
-                    gr_e[i] = 0
+        
 
         if self.is_dispersion(dispersion) and not self.no_extra_param:
             gr_d = np.zeros((N, 1))
@@ -4329,9 +4292,8 @@ class ObjectiveFunction(object):
         # print('check this')
         if dispersion == 0:
             grad_n = self._concat_gradients((gr_f, gr_u, gr_s, gr_h, gr_hs)) / Rlik  # (N,K)
-        elif dispersion == 3:
-            grad_n = self._concat_gradients(
-                (gr_f, gr_u, gr_s, gr_e)) / Rlik  # (N,K)
+        
+
         else:
             if self.no_extra_param:
                 grad_n = self._concat_gradients(
@@ -4426,17 +4388,9 @@ class ObjectiveFunction(object):
 
             return der, grad_n
 
-        elif dispersion == 4:
-            b_gam, l_gam = self.get_dispersion_paramaters(betas, dispersion)
-            ravel_me = self.my_lindley(y, l_gam)
-            der = self.nbl_score(y, Xd, betas, b_gam, l_gam)
-            print('00lol')
-            # der = -self.NB_score_lindley(betas, y, eVd, Xd, 0, obs_specific)
-            # if both:
-            # grad_n =  -self.NB_score_lindley(betas, y, eVd, Xd, 0, True)
-            # return der, grad_n
+        
         elif dispersion == 'poisson_lognormal':
-            sig, s = self.get_dispersion_paramaters(betas, dispersion)
+            sig= self.get_dispersion_paramaters(betas, dispersion)
             der, grad_n = self.poisson_lognormal_glm_score(betas, y, Xd, sig)
             return der, grad_n
 
@@ -4666,30 +4620,31 @@ class ObjectiveFunction(object):
                 betas = np.array(betas)
                 Bf = betas[0:Kf]  # Fixed betas
 
-                main_disper, lindley_disp = self.get_dispersion_paramaters(
-                    betas, dispersion) #todo fix this up
-                if lindley_disp is not None:
-                    if lindley_disp <= 0:
-                        penalty += 1
-                        penalty += - lindley_disp
-                        lindley_disp = 0
+                main_disper = self.get_dispersion_paramaters(
+                    betas, dispersion) 
+                
 
-                eVd = self.eXB_calc(Bf, Xd, offset, main_disper, lindley_disp)
+                eVd = self.eXB_calc(Bf, Xd, offset, main_disper, kwargs.get('linear_model'))
 
                 if return_EV is True:
                     return eVd
 
-                # eVd = dev.np.exp(np.clip(Vdf[:, :, None] + Vdr, None, EXP_UPPER_LIMIT) )
-
-                # self.lam = eVd
+                
 
                 if self.is_dispersion(dispersion):
                     penalty, main_disper = self._penalty_dispersion(dispersion, main_disper, eVd, y, penalty,
                                                                     model_nature)
 
                     betas[-1] = main_disper
+
+                if kwargs.get('linear_model'):
+                    # LINEAR MODEL PROCESS
+                    mse = np.mean((y - eVd) ** 2)
+                    return mse
+
+                ### GLM PROCESS ########
                 llf_main = self.loglik_obs(
-                    y, eVd, dispersion, main_disper, lindley_disp, betas)
+                    y, eVd, dispersion, main_disper, None, betas)
 
                 llf_main = np.clip(llf_main, log_lik_min, log_lik_max)
 
@@ -4725,7 +4680,9 @@ class ObjectiveFunction(object):
                 else:
 
                     return (-loglik + penalty)*self.minimize_scaler
-            # Else, we have draws
+            ### ELSE WE HAVE DRAW DO THE DRAWS CODE ####   
+                ## ELSE DRAWS ####
+            #############################################
             self.n_obs = len(y) * self.Ndraws #todo is this problematic
             penalty += self._penalty_betas(
                 betas, dispersion, penalty, float(len(y) / 10.0))
@@ -4916,7 +4873,14 @@ class ObjectiveFunction(object):
                 betas_hetro_sd = None
 
             Vdr = dev.cust_einsum("njk,nkr -> njr", Xdr, Br)  # (N,P,R)
+            if kwargs.get('linear_model'):
+                ### LINEAR MODEL WAY #######
+                eVd = np.clip(
+                Vdf[:, :, None] + Vdr + Vdh + dev.np.array(offset), None, EXP_UPPER_LIMIT)
+                mse = np.mean((y - eVd) ** 2)
+                return mse
 
+            ##### GLM WAY #####
             eVd = dev.np.exp(np.clip(
                 Vdf[:, :, None] + Vdr + Vdh + dev.np.array(offset), None, EXP_UPPER_LIMIT))
             if dispersion == 3:
@@ -5034,7 +4998,7 @@ class ObjectiveFunction(object):
     def print_chol_mat(self, betas):
         print(self.chol_mat)
         self.get_br_and_bstd(betas)
-        print(1)
+        
 
 
     def regularise_l2(self, betas, backwards = False):
@@ -5574,6 +5538,8 @@ class ObjectiveFunction(object):
         """
         Fits a poisson regression given data and outcomes if dispersion is not declared
         if declared, fits a NB (dispersion = 1) regression or GP (disperions = 2)
+        
+        #TODO lineraregression
         Inputs:
         X - array.  Design matrix
         y - array.  Observed outcomes
