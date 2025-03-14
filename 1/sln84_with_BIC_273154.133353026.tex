@@ -1,0 +1,24 @@
+\begin{table}
+	\caption{nb model found through the hs algorithm. bic: 273154.13 Log-Likelihood: -136558.49 MAE: 10000000.00}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -40.90 & 1.01 & -40.56 & 0.00*** \\
+			\hline
+			X1 transaction date & sqrt & 9.57 & 0.20 & 47.32 & 0.00*** \\
+			\hline
+			X3 distance to the nearest MRT station & sqrt & -0.02 & 0.23 & -0.08 & 0.94 \\
+			\hline
+			X4 number of convenience stores & arcsinh & 0.02 & 1.96 & 0.01 & 0.99 \\
+			\hline
+			X5 latitude & arcsinh & 194.48 & 1.00 & 50.00 & 0.00*** \\
+			\hline
+			X6 longitude & arcsinh & -208.48 & 0.00 & -50.00 & 0.00*** \\
+			\hline
+			nb &  & 1.00 & 0.00 & 50.00 & 0.00*** \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

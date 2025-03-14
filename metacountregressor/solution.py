@@ -482,7 +482,7 @@ class ObjectiveFunction(object):
             model_types = [[0, 1]]  # add 2 for Generalized Poisson
             #model_types = [[0]]
         
-        if kwargs.get('linear_model', None) is not None:
+        if self:
             model_types = [[0]]
             self.grad_yes = False
             

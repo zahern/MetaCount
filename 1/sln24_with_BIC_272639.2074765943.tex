@@ -1,0 +1,24 @@
+\begin{table}
+	\caption{nb model found through the hs algorithm. bic: 272639.21 Log-Likelihood: -136301.53 RMSE_TEST: 10000000.00}
+	\begin{center}
+		\begin{tabular}{|l|l|c|c|c|l|}
+			\hline
+			Effect & $\tau$ & Coeff & Std. Err & z-values & Prob |z|>Z \\
+			\hline
+			const & no & -123.50 & 3.63 & -34.03 & 0.00*** \\
+			\hline
+			X3 distance to the nearest MRT station & log & -0.14 & 8.05 & -0.02 & 0.99 \\
+			\hline
+			 Chol: X3 distance to the nearest MRT station (Std. Dev. uniform) ) &  & -0.59 & 0.12 & -4.90 & 0.00*** \\
+			\hline
+			main: X4 number of convenience stores: hetro group 0 & no & -0.02 & 2.62 & -0.01 & 0.99 \\
+			\hline
+			X5 latitude: hetro group 0 & arcsinh & 32.84 & 13.80 & 2.38 & 0.02* \\
+			\hline
+			main: X4 number of convenience stores: hetro group 0:triangular:sd  hetro group 0 &  & 0.70 & 0.00 & 50.00 & 0.00*** \\
+			\hline
+			nb &  & 1.00 & 0.00 & 50.00 & 0.00*** \\
+			\hline
+		\end{tabular}
+	\end{center}
+\end{table}

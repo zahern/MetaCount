@@ -5,8 +5,8 @@ import csv
 import matplotlib.pyplot as plt
 from scipy import stats as st
 from sklearn.preprocessing import StandardScaler
-
-
+import os
+import shutil
 plt.style.use('https://github.com/dhaitz/matplotlib-stylesheets/raw/master/pitayasmoothie-dark.mplstyle')
 
 
@@ -21,6 +21,30 @@ def generate_param_combinations(param_grid):
     values = param_grid.values()
     combinations = [dict(zip(keys, v)) for v in product(*values)]
     return combinations
+
+def delete_all_folders(directory_path):
+    try:
+        # Check if the directory exists
+        if not os.path.exists(directory_path):
+            print(f"The directory '{directory_path}' does not exist.")
+            return
+
+        # Iterate through items in the directory
+        for item in os.listdir(directory_path):
+            item_path = os.path.join(directory_path, item)
+            
+            # Check if the item is a folder
+            if os.path.isdir(item_path):
+                # Use shutil.rmtree to delete the folder and its contents
+                shutil.rmtree(item_path)
+                print(f"Deleted folder: {item_path}")
+            else:
+                print(f"Skipped non-folder item: {item_path}")
+                
+        print("All folders deleted successfully.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
 
 
 ##Select the best Features Based on RF
