@@ -215,11 +215,14 @@ class ObjectiveFunction(object):
             print('no name set, setting name as 0')
             self.instance_number = str(0)  # set an arbitrary instance number
 
-        if not os.path.exists(self.instance_number):
-            if kwargs.get('make_directory', True):
-                print('Making a Directory, if you want to stop from storing the files to this directory set argumet: make_directory:False')
-                os.makedirs(self.instance_number)
-
+        if kwargs.get('save_directory', True):
+            self.save_state = True
+            if not os.path.exists(self.instance_number):
+                if kwargs.get('make_directory', True):
+                    print('Making a Directory, if you want to stop from storing the files to this directory set argumet: make_directory:False')
+                    os.makedirs(self.instance_number)
+        else:
+            self.save_state = False
         if not hasattr(self, '_obj_1'):
             print('_obj_1 required, define as bic, aic, ll')
             raise Exception
@@ -1228,8 +1231,9 @@ class ObjectiveFunction(object):
 
                 if save_state:
                     # print(file_name)
-                    self.save_to_file(latextable.draw_latex(
-                        table, caption=caption, caption_above=True), file_name)
+                    if self.save_state:
+                        self.save_to_file(latextable.draw_latex(
+                            table, caption=caption, caption_above=True), file_name)
 
 
 
