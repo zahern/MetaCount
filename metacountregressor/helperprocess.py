@@ -45,6 +45,43 @@ def delete_all_folders(directory_path):
     except Exception as e:
         print(f"An error occurred: {e}")
 
+def delete_all_contents(directory_path):
+    try:
+        # Check if the directory exists
+        if not os.path.exists(directory_path):
+            print(f"The directory '{directory_path}' does not exist.")
+            return
+
+        # Iterate through items in the directory
+        for item in os.listdir(directory_path):
+            item_path = os.path.join(directory_path, item)
+            
+            # If the item is a directory, delete it
+            if os.path.isdir(item_path):
+                shutil.rmtree(item_path)  # Recursively delete the folder
+                print(f"Deleted folder: {item_path}")
+            else:
+                # If the item is a file, delete it
+                os.remove(item_path)
+                print(f"Deleted file: {item_path}")
+                
+        print("All contents deleted successfully.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+def delete_folder_and_contents(directory_path):
+    try:
+        # Check if the directory exists
+        if not os.path.exists(directory_path):
+            print(f"The directory '{directory_path}' does not exist.")
+            return
+
+        # Delete the entire folder and its contents
+        shutil.rmtree(directory_path)
+        print(f"Deleted folder and all its contents: {directory_path}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
 
 
 ##Select the best Features Based on RF

@@ -1,0 +1,1262 @@
+
+
+
+
+regress;  
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = ;
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =  12184.8 
+
+
+#same  results that for R, we keep
+
+
+###1 random
+##normal
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  11714.4 
+
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = Weekend(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StrtTmHr(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = TmTClrwy(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = TrnvrAdj(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnElzS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnAlcS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  12120.5 
+
+##triangular
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  11782.3  
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = Weekend(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StrtTmHr(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = TmTClrwy(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = TrnvrAdj(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnElzS(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnAlcS(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  12125.9 
+
+##uniform
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  11885.7  
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = Weekend(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StrtTmHr(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = TmTClrwy(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = TrnvrAdj(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnElzS(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnAlcS(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  12132.2 
+
+### 2 random
+##normal
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), Weekend(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), StrtTmHr(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    11715.5 
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), TmTClrwy(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), TrnvrAdj(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnElzS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  11653.9 
+
+##triangular
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), Weekend(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), StrtTmHr(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  11715.5 
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), TmTClrwy(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), TrnvrAdj(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnElzS(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  11661.5 
+
+##uniform
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), Weekend(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), StrtTmHr(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  11715.4 
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), TmTClrwy(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), TrnvrAdj(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnElzS(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#significant
+#Bayes IC    =  11666.8
+
+### 3 random
+##normal
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), Weekend(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), StrtTmHr(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#snon ignificant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), TmTClrwy(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), TrnvrAdj(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), LctnElzS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+
+##triangular
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), Weekend(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), StrtTmHr(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#snon ignificant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), TmTClrwy(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), TrnvrAdj(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), LctnElzS(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+##uniform
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), Weekend(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), StrtTmHr(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#snon ignificant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), TmTClrwy(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), TrnvrAdj(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), LctnElzS(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#non significant
+
+
+
+
+#################
+#################Best model by BIC
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+
+#Bayes IC    =  11653.9 
+################
+################
+
+
+### we add unpaid to be able to see the effect of unpaid
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS, NtPd; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =  10542.9 
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS, NtPd; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), NtPd(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS, NtPd; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), NtPd(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS, NtPd; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n), NtPd(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+
+#not significant
+
+
+###########################
+##########################BEST MODEL WITH UNPAID
+regress;
+Lhs=AmountDi;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, TmTClrwy,  TrnvrAdj, LctnElzS, LctnAlcS, NtPd; 
+RPM;
+fcn = StayDrtn(n), LctnAlcS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =  10542.9 
+########################
+########################
+
+
+
+####We test the model with unpaid
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+Output =IC$
+Bayes IC    =   2508.6
+#same as in R
+
+###1random parameter
+##normal
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+Bayes IC    =   2384.
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = Weekend(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2516.2
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StrtTmHr(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2516.4
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = AmountA(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2369.6
+
+#we remove LctnElzS variable that does not become significant anymore
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2362.3
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = TrnvrAdj(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnElzS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnAlcS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+
+##triangular
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+Bayes IC    =   2385.3
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = Weekend(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2516.1
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StrtTmHr(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2516.4
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = AmountA(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2370.5
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2363.5
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = TrnvrAdj(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnElzS(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnAlcS(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+##uniform
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StayDrtn(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = Weekend(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2516.1
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = StrtTmHr(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+Bayes IC    =   2516.4
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = AmountA(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2382.9
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = TrnvrAdj(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnElzS(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2516.3
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnElzS, LctnAlcS; 
+RPM;
+fcn = LctnAlcS(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#not significant
+
+###2 random parameter
+##normal
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), StayDrtn(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2383.3
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2356.0
+
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), StrtTmHr(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2364.1
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), TrnvrAdj(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2367.7
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), LctnAlcS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2367.3
+
+##triangular
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), StayDrtn(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2384.7
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2355.4
+
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), StrtTmHr(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2363.3
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), TrnvrAdj(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2367.6
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), LctnAlcS(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2367.2
+
+##uniform
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), StayDrtn(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =     2368.1
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =     2353.0
+
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), StrtTmHr(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2362.5
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), TrnvrAdj(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2367.5 
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), LctnAlcS(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2367.1
+
+
+###3 random parameters
+##normal
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), StayDrtn(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2369.6
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), StrtTmHr(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2353.8
+
+
+
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), TrnvrAdj(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2359.9
+
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), LctnAlcS(n);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2359.1
+
+
+##triangular
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), StayDrtn(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2368.7
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), StrtTmHr(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2354.1
+
+
+
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), TrnvrAdj(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2359.9
+
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), LctnAlcS(t);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2359.1
+
+
+##uniform
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), StayDrtn(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2368.2
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), StrtTmHr(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2353.3
+
+
+
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), TrnvrAdj(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2359.9
+
+
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u), LctnAlcS(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2359.3
+
+################
+################Best BIC NtPd logit model
+LOGIT;  
+Lhs=NtPd;
+Rhs= One, StayDrtn, Weekend, StrtTmHr, AmountA, TrnvrAdj, LctnAlcS; 
+RPM;
+fcn = AmountA(n), Weekend(u);
+Halton; Draws = 100;
+Maxit=25;
+Output =IC$
+#Bayes IC    =   2353.0
+###############
+###############

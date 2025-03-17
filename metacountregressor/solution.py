@@ -121,6 +121,7 @@ class ObjectiveFunction(object):
     """
 
     def __init__(self, x_data, y_data, **kwargs):
+        self.gbl_best = 1000000.0
         self.linear_regression = kwargs.get('linear_model', False)
         self.reg_penalty = 0
         self.power_up_ll = False
@@ -446,10 +447,9 @@ class ObjectiveFunction(object):
             print('Setup Complete...')
             self._characteristics_names = list(self._x_data.columns)
         # define the variables
-        # self._transformations = ["no", "sqrt", "log", "exp", "fact", "arcsinh", 2, 3]
-        self._transformations = ["no", "sqrt", "log", "arcsinh"]
-        self._transformations = kwargs.get('_transformation', ["no", "sqrt", "log", 'arcsinh'])
-        self._transformations = kwargs.get('_transformation', ["no", "log", "sqrt", "arcsinh"])
+       
+       
+        self._transformations = kwargs.get('_transformations', ["no", "log", "sqrt", "arcsinh"])
         # self._distribution = ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal', 'lindley']
 
         self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal'])
@@ -1085,15 +1085,7 @@ class ObjectiveFunction(object):
                                    [''] * (len(names) - len(self.transform_id_names))
             self.coeff_names = names
 
-        '''
-        if betas is not None:
-            try:
-                if len(betas) != len(names):
-                    print('standard_model', no_draws)
-
-            except Exception as e:
-                print(e)
-        '''
+       
 
 
 
@@ -2379,6 +2371,12 @@ class ObjectiveFunction(object):
         else:
             sorted(my_dict, key=lambda x: x[0]['pval_percentage'])
 
+    def update_gbl_best(self, obj_1):
+        '''Method to update the global best solution. Also sets the significant attribute to 1 if the global best is updated'''
+        if self.gbl_best > obj_1[self._obj_1]:
+            self.gbl_best = obj_1[self._obj_1]
+            self.significant = 1
+
     def get_fitness(self, vector, multi=False, verbose=False, max_routine=3):
         obj_1 = 10.0 ** 4
         obj_best = None
@@ -2405,7 +2403,7 @@ class ObjectiveFunction(object):
 
         a = {}
         obj_1, model_mod = self.makeRegression(model_nature, layout=layout, **a)
-
+        self.update_gbl_best(obj_1)
         if self.pvalues is None:
             self.reset_sln()
             return obj_1
@@ -4585,8 +4583,14 @@ class ObjectiveFunction(object):
 
         brstd = br_std
 
-
-
+    def _loglik_prefit(self, betas, Xd, y, draws=None, Xf=None, Xr=None, batch_size=None, return_gradient=False,
+                         return_gradient_n=False, dispersion=0, test_set=0, return_EV=False, verbose=0, corr_list=None,
+                         zi_list=None, exog_infl=None, draws_grouped=None, Xgroup=None, model_nature=None, kwarg=None,
+                         **kwargs):
+        """Fixed and random parameters are handled separately to speed up the estimation and the results are concatenated.
+        pass
+        """
+        pass
     def _loglik_gradient(self, betas, Xd, y, draws=None, Xf=None, Xr=None, batch_size=None, return_gradient=False,
                          return_gradient_n=False, dispersion=0, test_set=0, return_EV=False, verbose=0, corr_list=None,
                          zi_list=None, exog_infl=None, draws_grouped=None, Xgroup=None, model_nature=None, kwarg=None,
@@ -5453,6 +5457,23 @@ class ObjectiveFunction(object):
         # self.grad_n = optim_res['grad_n']
         # self.total_fun_eval = optim_res['nfev']2
 
+    def handle_covariance(self, covariance):
+        """
+        Safely handle covariance matrix, converting it to a dense NumPy array if needed.
+
+        Parameters:
+            covariance: The covariance matrix, which may be a `LbfgsInvHessProduct`.
+
+        Returns:
+            A dense NumPy array of the covariance matrix.
+        """
+        # Check if the covariance is an `LbfgsInvHessProduct`
+        if hasattr(covariance, "todense"):
+            # Convert to a dense NumPy array
+            covariance = covariance.todense()
+        return covariance
+
+
     def _post_fit_ll_aic_bic(self, optim_res, verbose=1, robust=False, simple_fit=True, is_dispersion=0):
         # sample_size = len(self._x_data) - len(optim_res['x']) -1
         sample_size = len(self._x_data)
@@ -5467,6 +5488,7 @@ class ObjectiveFunction(object):
                 if robust else optim_res['hess_inv']
         else:
             covariance = np.diag(np.ones(len(optim_res.x)))
+        covariance = self.handle_covariance(covariance)
         covariance = np.clip(covariance, 0, None)
         stderr = np.sqrt(np.diag(covariance))
         # stderr =  [if np.abs(optim_res['x'][i]) >.1 else min(np.abs(optim_res['x'][i]/1.5), stderr[i]) for i in range(len(optim_res['x']))]
@@ -5542,10 +5564,9 @@ class ObjectiveFunction(object):
             self.none_handler(self.rdm_cor_fit) + \
             self.get_dispersion_name(dispersion)
         return a
-
-    def fitRegression(self, mod,
+    
+    def fitRegression_prefit(self, mod,
                       dispersion=0, maxiter=2000, batch_size=None, num_hess=False, **kwargs):
-
         """
         Fits a poisson regression given data and outcomes if dispersion is not declared
         if declared, fits a NB (dispersion = 1) regression or GP (disperions = 2)
@@ -5581,7 +5602,613 @@ class ObjectiveFunction(object):
             zvalues = None
             if mod.get('Xr') is not None or mod.get('XG') is not None or mod.get('XH') is not None:
                 calc_gradient = True
+                calc_gradient = False if self.linear_regression else True
+                n, p, k = mod.get('X').shape
+                _r, pr, kr = mod.get('Xr').shape
+                kh = mod.get('XH').shape[2]
 
+                if 'XG' in mod:
+                    _g, pg, kg = mod.get('XG').shape
+                else:
+                    _g, pg, kg = 0, 0, 0
+
+                dispersion_param_num = self.is_dispersion(dispersion)
+                if self.no_extra_param:
+                    dispersion_param_num =0
+
+                #paramNum = self.get_param_num(dispersion)
+                self.no_random_paramaters = 0
+                if 'XG' in mod:
+                    XX = np.concatenate((mod.get('X'), mod.get('XG'), mod.get('Xr'), mod.get('XH')), axis=2)
+                elif 'XH' in mod:
+                    XX = np.concatenate((mod.get('X'), mod.get('Xr'), mod.get('XH')), axis=2)
+                else:
+                    XX = np.concatenate((mod.get('X'), mod.get('Xr')), axis=2)
+
+                if self.is_multi:
+                    if mod.get('X_test') is not None and mod.get('Xr_test') is not None:
+                        if 'XH' in mod:
+                            XX_test = np.concatenate((mod.get('X_test'), mod.get('Xr_test'), mod.get('XH_test')),
+                                                     axis=2)
+                        else:
+                            XX_test = np.concatenate((mod.get('X_test'), mod.get('Xr_test')), axis=2)
+
+
+
+                    else:
+
+                        XX = mod.get('Xr')
+                        if mod.get('Xr_test') is not None:
+                            XX_test = mod.get('Xr_test')
+
+                bb = np.random.uniform(
+                    -0.05, 0.05, size=k + kr + kg + kh + dispersion_param_num)
+
+                if method == 'L-BFGS-B':
+                    if dispersion == 0:
+                        bounds = []
+                        for i in bb:
+                            bounds = bounds + [(i - 30, i + 30)]
+
+                        # bound = [(-100,100) ]*len(b)
+
+                    elif dispersion == 1:  # TODO test bounds was NOne
+                        bounds = []
+                        for i in bb[:-1]:
+                            bounds = bounds + [(i - 30, i + 30)]
+                        bounds = bounds + [(-1, 5)]
+
+                    elif dispersion == 2:
+                        bounds = []
+                        for i in bb[:-1]:
+                            bounds = bounds + [(i - 5, i + 5)]
+                        bounds = bounds + [(0.1, .99)]
+
+                    else:
+                        bounds = None
+                else:
+                    bb[0] = self.constant_value
+                    if dispersion == 1:
+                        if not self.no_extra_param:
+                            bb[-1] = self.negative_binomial_value
+                    bounds = None
+
+
+
+                # intial_beta = minimize(self._loglik_gradient, bb, args =(XX, y, None, None, None, None, calc_gradient, hess_est, dispersion, 0, False, 0, None, sub_zi, exog_infl, None, None, mod), method = 'nelder-mead', options={'gtol': 1e-7*len(XX)})
+                hess_est = False if method2 in ['L-BFGS-B', 'BFGS_2', 'Nelder-Mead-BFGS'] else True
+                
+                if self.no_extra_param:
+                    dispersion_poisson = 0
+                    initial_beta = self._minimize(self._loglik_gradient, bb,
+                                              args=(XX, y, None, None, None, None, calc_gradient, hess_est,
+                                                    dispersion_poisson, 0, False, 0, None, None, None, None, None,
+                                                    mod),
+                                              method=method2, tol=1e-5, options={'gtol': tol['gtol']},
+                                              bounds=bounds)
+                    if dispersion:
+                        try:
+                            nb_parma = self.poisson_mean_get_dispersion(initial_beta.x, XX, y)
+                        except: 
+                            nb_parma = 0.5
+                    
+                if method2 == 'L-BFGS-B':
+                    if hasattr(initial_beta.hess_inv, 'todense'):
+                        initial_beta['hess_inv'] = initial_beta.hess_inv.todense() if hasattr(initial_beta.hess_inv,
+                                                                                              'todense') else np.array(
+                            [initial_beta.hess_inv(np.eye(len(bb))[i]) for i in range(len(bb))])
+
+                bb = initial_beta['x'].copy()
+
+                if initial_beta is not None and np.isnan(initial_beta['fun']):
+                    initial_beta = self._minimize(self._loglik_gradient, bb,
+                                                  args=(XX, y, None, None, None, None, True, True, dispersion,
+                                                        0, False, 0, None, None, None, None, None, mod),
+                                                  method=method2, tol=tol['ftol'], options={'gtol': tol['gtol']})
+
+                if initial_beta is not None and not np.isnan(initial_beta['fun']):
+                    self._no_random_paramaters = 1
+                    if initial_beta['success'] != 0:
+                        self.convergance = 0
+                    else:
+                        self.convergance = 1
+                print('TODO NEED TO RETURN THE THINGS I CARE ABOUT')
+            else:
+                
+                is_halton = 0
+
+                print('Solution was not finite, error. Continue')
+                sol.add_objective()
+                return sol, None, None, None, None, None, None, 0
+        except Exception as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+
+    def fitRegression_in_chunks(self, mod,dispersion=0, maxiter=2000, batch_size=None, num_hess=False, **kwargs):
+        """
+        Fits a poisson regression given data and outcomes if dispersion is not declared
+        if declared, fits a NB (dispersion = 1) regression or GP (disperions = 2)
+        
+        #TODO lineraregression
+        Inputs:
+        X - array.  Design matrix
+        y - array.  Observed outcomes
+        Outputs:
+        betas_est - array.  Coefficients which maximize the negative log-liklihood.
+        """
+        # Set defualt method
+        #TODO, the inital fit worked but it throws
+        tol = {'ftol': 1e-8, 'gtol': 1e-6}
+        
+        sol = Solution()
+        
+        initial_betas = self.fitRegression_prefit(mod, dispersion, maxiter, batch_size, num_hess, **kwargs)
+        
+
+      
+        
+    def _build_design_matrix(self, mod):
+        """
+        Build the design matrix `XX` by combining `X`, `Xr`, `XG`, and `XH`.
+
+        Parameters:
+            mod: Dictionary containing data and parameters.
+
+        Returns:
+            Combined design matrix `XX`.
+        """
+        X, Xr, XG, XH = mod.get('X'), mod.get('Xr'), mod.get('XG'), mod.get('XH')
+        if XG is not None:
+            return np.concatenate((X, XG, Xr, XH), axis=2)
+        elif XH is not None:
+            return np.concatenate((X, Xr, XH), axis=2)
+        else:
+            return np.concatenate((X, Xr), axis=2)
+        
+   
+    def _update_attributes(self, optimization_result, mod):
+        """
+        Update instance attributes like `self.significant` and `self.draws`.
+
+        Parameters:
+            optimization_result: The result of the optimization process.
+            mod: The model dictionary containing data and parameters.
+        """
+        # Update `self.significant` based on p-values or other criteria
+        if optimization_result is not None:
+            significant_threshold = 0.05  # Example threshold for significance
+            self.significant = all(
+                p < significant_threshold for p in mod.get("pvalues", [])
+            )
+        else:
+            self.significant = False  # Mark as not significant if optimization failed
+
+        # Update `self.draws` based on `mod` or other factors
+        if "Xr" in mod:
+            Xr = mod.get("Xr")
+            draws = Xr.shape[0] if Xr is not None else 0  # Example: Number of rows in Xr
+            self.draws = draws
+        else:
+            self.draws = 0
+    
+    def _run_optimization(self, XX, y, dispersion, initial_params, bounds, tol, mod):
+        """
+        Run the optimization process with draws logic and update the Solution object.
+
+        Parameters:
+            XX: Design matrix.
+            y: Observed outcomes.
+            dispersion: Dispersion parameter (0=Poisson, 1=NB, 2=GP).
+            initial_params: Initial parameter array.
+            bounds: List of bounds for each parameter.
+            tol: Tolerance for the optimization process (dictionary with ftol and gtol).
+            mod: Dictionary containing additional data.
+
+        Returns:
+            Solution object with updated objectives.
+        """
+        # Extract relevant data
+        X, Xr, XG = mod.get('X'), mod.get('Xr'), mod.get('XG')
+        distribution = mod.get('dist_fit')
+
+        # Prepare draws
+        draws = self._prepare_draws(Xr, distribution)
+        draws_grouped = self._prepare_grouped_draws(XG, mod) if XG is not None else None
+
+        # Optimization method and options
+        method = self.method_ll
+        print('updataing methods')
+        method = 'Nelder-Mead-BFGS'
+        options = {'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 2000}
+
+        # Run optimization
+        optimization_result = self._minimize(
+            self._loglik_gradient,
+            initial_params,
+            args=(
+                X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion, 0, False, 0,
+                self.rdm_cor_fit, None, None, draws_grouped, XG, mod
+            ),
+            method=method,
+            bounds=bounds,
+            tol=tol.get('ftol', 1e-8),  # Use 'ftol' as the default tolerance
+            options=options
+        )
+        return optimization_result
+
+   
+    def _initialize_params_and_bounds(self, XX, dispersion):
+        """Initialize parameters and set bounds for optimization."""
+        num_params = XX.shape[2]  # Number of features
+        initial_params = np.random.uniform(-0.05, 0.05, size=num_params)
+
+        # Define bounds for optimization
+        if dispersion == 0:
+            bounds = [(-30, 30) for _ in initial_params]
+        elif dispersion == 1:
+            bounds = [(-30, 30) for _ in initial_params[:-1]] + [(-1, 5)]
+        elif dispersion == 2:
+            bounds = [(-5, 5) for _ in initial_params[:-1]] + [(0.1, 0.99)]
+        else:
+            bounds = None
+
+        return initial_params, bounds
+    
+
+    def _prepare_data(self, mod):
+        """Prepare data matrices (XX, XX_test) and outcomes (y, y_test)."""
+        y = mod.get('y')
+        y_test = mod.get('y_test')
+
+        # Combine main data matrices
+        XX = self._combine_data_matrices(mod)
+        
+        # Combine test data matrices
+        if mod.get('X_test') is not None and mod.get('Xr_test') is not None:
+            if 'XH' in mod:
+                XX_test = np.concatenate(
+                    (mod.get('X_test'), mod.get('Xr_test'), mod.get('XH_test')), axis=2
+                )
+            else:
+                XX_test = np.concatenate((mod.get('X_test'), mod.get('Xr_test')), axis=2)
+        else:
+            XX_test = None
+
+        return XX, XX_test, y, y_test
+
+    def _handle_error(self, e):
+        """Handle exceptions and log errors."""
+        import sys, os
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        print(f"Error: {e}, File: {fname}, Line: {exc_tb.tb_lineno}")
+
+
+    
+    
+    
+    def _postprocess_results(self, optimization_result, XX, XX_test, y, y_test, dispersion, mod):
+        """
+        Process optimization results and calculate metrics.
+
+        Parameters:
+            optimization_result: The result of the optimization process.
+            XX: Design matrix for training data.
+            XX_test: Design matrix for test data (if applicable).
+            y: Observed outcomes for training data.
+            y_test: Observed outcomes for test data (if applicable).
+            dispersion: Dispersion parameter (0=Poisson, 1=NB, 2=GP).
+            mod: Dictionary containing additional model data.
+
+        Returns:
+            log_ll, aic, bic, stderr, zvalues, pvalue_alt, in_sample_mae, out_sample_mae
+        """
+        if optimization_result is not None and np.isfinite(optimization_result['fun']):
+            # Calculate post-fit metrics (log-likelihood, AIC, BIC, etc.)
+            log_ll, aic, bic, stderr, zvalues, pvalue_alt, other_measures = self._post_fit_ll_aic_bic(
+                optimization_result, simple_fit=False, is_dispersion=dispersion
+            )
+
+            # Validation metrics if test data is available (in-sample and out-of-sample MAE)
+            in_sample_mae = None
+            out_sample_mae = None
+            if self.is_multi and XX_test is not None:
+                in_sample_mae = self.validation(
+                    optimization_result['x'], y, XX, dispersion=dispersion, model_nature=mod, testing=0
+                )
+                out_sample_mae = self.validation(
+                    optimization_result['x'], y_test, XX_test, dispersion=dispersion, model_nature=mod
+                )
+
+            return log_ll, aic, bic, stderr, zvalues, pvalue_alt, in_sample_mae, out_sample_mae
+
+        else:
+            # Optimization failed, return None for all metrics
+            print("Optimization failed.")
+            return None, None, None, None, None, None, None, None
+    def _prepare_data_and_bounds(self, mod, dispersion):
+        """Prepare the data matrices, bounds, and initial parameters."""
+        # Prepare data matrices
+        XX = self._combine_data_matrices(mod)  # Combine mod['X'], mod['Xr'], mod['XH'], etc.
+
+        # Set initial parameters
+        initial_params = self._initialize_parameters(XX, dispersion)
+
+        # Define bounds for optimization
+        bounds = self._set_bounds(initial_params, dispersion)
+
+        return XX, bounds, initial_params
+
+
+    def _combine_data_matrices(self, mod):
+        """Combine data matrices (X, Xr, XH, etc.) into a single matrix."""
+        if 'XG' in mod:
+            return np.concatenate((mod.get('X'), mod.get('XG'), mod.get('Xr'), mod.get('XH')), axis=2)
+        elif 'XH' in mod:
+            return np.concatenate((mod.get('X'), mod.get('Xr'), mod.get('XH')), axis=2)
+        else:
+            return np.concatenate((mod.get('X'), mod.get('Xr')), axis=2)
+
+
+    def _initialize_parameters(self, XX, dispersion):
+        """Initialize random parameters for optimization."""
+        num_params = XX.shape[2]  # Number of features
+        return np.random.uniform(-0.05, 0.05, size=num_params)
+
+
+    def _set_bounds(self, initial_params, dispersion):
+        """Set bounds for optimization based on the dispersion type."""
+        return None
+        if dispersion == 0:
+            return [(-30, 30) for _ in initial_params]
+        elif dispersion == 1:
+            return [(-30, 30) for _ in initial_params[:-1]] + [(-1, 5)]
+        elif dispersion == 2:
+            return [(-5, 5) for _ in initial_params[:-1]] + [(0.1, 0.99)]
+        else:
+            return None
+    def _build_test_matrix(self, mod):
+        """
+        Build the test matrix `XX_test` by combining `X_test`, `Xr_test`, and `XH_test`.
+
+        Parameters:
+            mod: Dictionary containing test data.
+
+        Returns:
+            Combined test matrix `XX_test`.
+        """
+        X_test, Xr_test, XG_test, XH_test = (
+            mod.get('X_test'), mod.get('Xr_test'), mod.get('XG_test'), mod.get('XH_test')
+        )
+        if X_test is None or Xr_test is None:
+            return None
+
+        if XH_test is not None:
+            return np.concatenate((X_test, Xr_test, XH_test), axis=2)
+        elif XG_test is not None:
+            return np.concatenate((X_test, XG_test, Xr_test), axis=2)
+        else:
+            return np.concatenate((X_test, Xr_test), axis=2)
+        
+    def _calculate_num_coefficients(self, mod, dispersion):
+        """
+        Calculate the total number of coefficients for the regression model.
+
+        Parameters:
+            mod: Dictionary containing data and parameters.
+            dispersion: Dispersion parameter (0=Poisson, 1=NB, 2=GP).
+
+        Returns:
+            Total number of coefficients.
+        """
+        X, Xr, XG, XH = mod.get('X'), mod.get('Xr'), mod.get('XG'), mod.get('XH')
+        n, p, k = X.shape
+        kr = Xr.shape[2] if Xr is not None else 0
+        kg = XG.shape[2] if XG is not None else 0
+        kh = XH.shape[2] if XH is not None else 0
+
+        # Dispersion adds one additional parameter if enabled
+        dispersion_param = 1 if dispersion > 0 else 0
+        return sum(self.get_num_params()) + dispersion_param
+        #return k + kr + kg + kh + dispersion_param
+    def _build_initial_params(self, num_coefficients, dispersion):
+        """
+        Build the initial parameter array for optimization.
+
+        Parameters:
+            num_coefficients: Total number of coefficients.
+            dispersion: Dispersion parameter (0=Poisson, 1=NB, 2=GP).
+
+        Returns:
+            Initial parameter array.
+        """
+        # Generate random initial coefficients
+        initial_params = np.random.uniform(-0.05, 0.05, size=num_coefficients)
+
+        # Add dispersion parameter if applicable
+        if dispersion > 0:
+            initial_params = np.insert(initial_params, -1, 0.)
+
+        return initial_params
+    
+    def fitRegression(self, mod, dispersion=0, maxiter=4000, batch_size=None, num_hess=False, **kwargs):
+        """
+        Fits a Poisson regression, NB regression (dispersion=1), or GP regression (dispersion=2).
+
+        Parameters:
+            mod: Dictionary containing data and parameters.
+            dispersion: 0 for Poisson, 1 for NB, 2 for GP.
+            maxiter: Maximum number of optimization iterations.
+            batch_size: Batch size for certain methods (if applicable).
+            num_hess: Whether to compute the numerical Hessian.
+
+        Returns:
+            obj_1, log_lik, betas, stderr, pvalues, zvalues, is_halton, is_delete
+        """
+        try:
+            # Preprocessing
+            tol = {'ftol': 1e-8, 'gtol': 1e-6}
+            y, X, Xr, XG, XH = mod.get('y'), mod.get('X'), mod.get('Xr'), mod.get('XG'), mod.get('XH')
+
+            # Validate input data
+            if y is None or X is None:
+                raise ValueError("Both `y` and `X` must be provided in the `mod` dictionary.")
+
+            # Build the design matrix `XX` and test matrix `XX_test` if applicable
+            XX = self._build_design_matrix(mod)
+            XX_test = self._build_test_matrix(mod) if self.is_multi else None
+
+            # Determine the number of coefficients
+            num_coefficients = self._calculate_num_coefficients(mod, dispersion)
+
+            # Build initial parameters and bounds
+            initial_params = self._build_initial_params(num_coefficients, dispersion)
+            bounds = self._set_bounds(initial_params, dispersion)
+
+       
+            # Run optimization
+            optimization_result = self._run_optimization(
+                XX, y, dispersion, initial_params, bounds, tol, mod
+            )
+            
+            # Post-process results
+            log_lik, aic, bic, stderr, zvalues, pvalues, in_sample_mae, out_sample_mae = self._postprocess_results(
+                optimization_result, XX, XX_test, y, mod.get('y_test'), dispersion, mod
+            )
+           
+            # Extract other outputs
+            betas = optimization_result['x'] if optimization_result is not None else None
+            is_halton = Xr is not None and Xr.size > 0  # Halton draws used if `Xr` is not empty
+
+            # Determine `is_delete`
+            is_delete = not (
+                optimization_result is not None
+                and 'fun' in optimization_result
+                and not math.isnan(optimization_result['fun'])
+                and not math.isinf(optimization_result['fun'])
+            )
+
+            betas_est = optimization_result
+
+            # Post-fit metrics
+            log_ll, aic, bic, stderr, zvalues, pvalue_alt, other_measures = self._post_fit_ll_aic_bic(
+                betas_est, simple_fit=False, is_dispersion=dispersion
+            )
+
+            # Number of parameters
+            paramNum = len(betas_est['x'])
+
+            # Naming for printing (optional, for formatting or debugging purposes)
+            self.convergance = not is_delete
+            self.naming_for_printing(betas_est['x'], 0, dispersion, model_nature=mod)
+
+            # Add metrics to solution object
+            sol = Solution()  # Assuming Solution is the appropriate class to store results
+            sol.add_objective(
+                bic=bic,
+                aic=aic,
+                loglik=log_ll,
+                num_parm=paramNum,
+                GOF=other_measures
+            )
+
+
+            return (
+                sol,  # obj_1
+                log_lik,
+                betas,
+                stderr,
+                pvalues,
+                zvalues,
+                is_halton,
+                is_delete
+            )
+
+        except Exception as e:
+            self._handle_error(e)
+            return None, None, None, None, None, None, None, 0
+   
+   
+    def _prepare_draws(self, Xr, distribution):
+        """
+        Prepare the draws for the random effects.
+
+        Parameters:
+            Xr: Random effect design matrix.
+            distribution: Distribution type for the random effects.
+
+        Returns:
+            Draws matrix or None if `Xr` is not provided.
+        """
+        if Xr is None or Xr.size == 0:
+            return None
+
+        n_samples, n_features, n_random_effects = Xr.shape
+        return self.prepare_halton(
+            n_random_effects, n_samples, self.Ndraws, distribution, long=False, slice_this_way=self.group_halton
+        )
+
+    def _prepare_grouped_draws(self, XG, mod):
+        """
+        Prepare the grouped draws for the regression model.
+
+        Parameters:
+            XG: Grouped design matrix.
+            mod: Dictionary containing additional data.
+
+        Returns:
+            Grouped draws matrix.
+        """
+        n_samples, n_features, n_groups = XG.shape
+        if n_features == 0:
+            return None
+        group_distribution = mod.get('dist_fit_grouped', np.zeros(n_groups))
+
+        return self.prepare_halton(
+            n_groups, n_samples, self.Ndraws, group_distribution, slice_this_way=self.group_halton
+        )
+
+    def fitRegression_o(self, mod,
+                      dispersion=0, maxiter=2000, batch_size=None, num_hess=False, **kwargs):
+
+        """
+        Fits a poisson regression given data and outcomes if dispersion is not declared
+        if declared, fits a NB (dispersion = 1) regression or GP (disperions = 2)
+        
+        #TODO lineraregression
+        Inputs:
+        X - array.  Design matrix
+        y - array.  Observed outcomes
+        Outputs:
+        betas_est - array.  Coefficients which maximize the negative log-liklihood.
+        """
+        # Set defualt method
+        #TODO, the inital fit worked but it throws
+        tol = {'ftol': 1e-8, 'gtol': 1e-6}
+        
+
+        
+        sol = Solution()
+
+        tol = {'ftol': 1e-8, 'gtol': 1e-6}
+        is_delete = 0
+        dispersion = mod.get('dispersion')
+        y = mod.get('y')
+        try:
+            method = self.method_ll
+            method2 = self.method_ll
+            # method2 = 'BFGS_2'
+            if self.hess_yes == False:
+                method2 = 'BFGS_2'
+                method2 = self.method_ll
+
+            bic = None
+            pvalue_alt = None
+            zvalues = None
+            if mod.get('Xr') is not None or mod.get('XG') is not None or mod.get('XH') is not None:
+                calc_gradient = True
+                calc_gradient = False if self.linear_regression else True
                 n, p, k = mod.get('X').shape
                 _r, pr, kr = mod.get('Xr').shape
                 kh = mod.get('XH').shape[2]
@@ -5679,7 +6306,7 @@ class ObjectiveFunction(object):
                         initial_beta['hess_inv'] = initial_beta.hess_inv.todense() if hasattr(initial_beta.hess_inv,
                                                                                               'todense') else np.array(
                             [initial_beta.hess_inv(np.eye(len(bb))[i]) for i in range(len(bb))])
-
+                
                 bb = initial_beta['x'].copy()
 
                 if initial_beta is not None and np.isnan(initial_beta['fun']):
@@ -6070,7 +6697,8 @@ class ObjectiveFunction(object):
     def transformer(self, transform, idc, x_data):
         if transform == 0 or transform == 1 or transform == 'no':
             tr = x_data.astype(float)
-
+        elif transform == 'nil':
+            tr = x_data.astype(float)
         elif transform == 'log':
             tr = np.log1p(x_data.astype(float))
         elif transform == 'exp':
@@ -6087,7 +6715,8 @@ class ObjectiveFunction(object):
             tr = pd.Series(tr)
 
         else:  # will be a number
-            tr = np.power(x_data.astype(float), transform)
+            tr = x_data.astype(float)
+            transform = 'nil'
         # if tr.isin([np.inf, -np.inf, np.nan, None]).any() == True:
 
         if np.any(np.logical_or(pd.isna(tr), np.logical_or(pd.isna(tr), tr is None))):
