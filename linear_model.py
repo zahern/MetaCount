@@ -18,7 +18,10 @@ from metacountregressor.helperprocess import delete_folder_and_contents
 
 from metacountregressor import helperprocess
 
-delete_folder_and_contents('1')
+try:
+    delete_folder_and_contents('1')
+except Exception as e:
+    print(e)
 # Load the data
 df = pd.read_csv('data/Real estate.csv')
 y = df['Y house price of unit area']
@@ -85,7 +88,7 @@ arguments = {
     'val_percentage': 0,      # 15% of data for validation
     '_obj_1': 'bic',              # First objective: Bayesian Information Criterion
     '_obj_2': 'MAE',       # Second objective: Root Mean Square Error on Test data
-    '_max_time': 6000,               # Maximum time for the process (seconds)
+    '_max_time': 3600*12,               # Maximum time for the process (seconds)
     'linear_model': True,        # Use linear model, False for Poisson regression
     '_transformations': ['nil'], # No transformations
     'is_multi': False,         # Single output

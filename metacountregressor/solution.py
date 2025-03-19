@@ -451,7 +451,7 @@ class ObjectiveFunction(object):
         # define the variables
        
        
-        self._transformations = kwargs.get('_transformations', ["no", "log", "sqrt", "arcsinh"])
+        self._transformations = kwargs.get('_transformations', ["no", "log", "sqrt", "arcsinh", "nil"])
         # self._distribution = ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal', 'lindley']
 
         self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal'])
@@ -1576,7 +1576,12 @@ class ObjectiveFunction(object):
             fixed_vars, random_vars, random_var_cor)  # TODO handle distrubution
 
         distributions = alpha_rdm.copy()
-        transformations = ['no'] * len(alpha)  # todo add transformations
+        if self.linear_regression:
+
+            transformations = ['nil'] * len(alpha)  # todo add transformations
+        else:
+            transformations = ['no'] * len(alpha)  # todo add transformations
+
         cnt = 0
         joined_alpha = np.add(alpha_rdm, alpha_rdm_cor)
         for i, x in enumerate(joined_alpha):
