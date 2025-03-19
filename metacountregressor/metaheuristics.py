@@ -236,15 +236,15 @@ def differential_evolution(objective_function, initial_slns=None, **kwargs):
     else:
         de = DifferentialEvolution(objective_function, **kwargs)
 
-        iterations, solutions, best_solutions, best_fitness, best_struct, average_best = de.differential_evolution_run(
+        iterations, solutions, best_solutions, best_fitness, best_struct = de.differential_evolution_run(
             initial_slns=initial_slns, mod_init=man)
-
+        AVERAGE_BEST = st.mean(best_solutions)
         end = datetime.now()
         elapsed_time = end - start
         return DifferentialEvolutionResults(elapsed_time=elapsed_time, iteration=iterations,
                                             iter_solution=solutions, best_solutions=best_solutions,
                                             best_fitness=best_fitness,
-                                            best_struct=best_struct, average_best=average_best)
+                                            best_struct=best_struct, average_best=AVERAGE_BEST)
 
 
 def simulated_annealing(objective_function, initial_slns=None, **kwargs):

@@ -33,6 +33,7 @@ from statsmodels.tools.numdiff import approx_fprime, approx_hess
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from texttable import Texttable
 import time
+
 try:
     from ._device_cust import device as dev
     from .pareto_file import Pareto, Solution
@@ -122,14 +123,15 @@ class ObjectiveFunction(object):
 
     def __init__(self, x_data, y_data, **kwargs):
         self.gbl_best = 1000000.0
+        self.run_bootstrap =  kwargs.get('run_bootstrap', False)
         self.linear_regression = kwargs.get('linear_model', False)
-        self.reg_penalty = 0
+        self.reg_penalty = 1
         self.power_up_ll = False
         self.nb_parma = 1
         self.bic = None
         self.other_bic = False
         self.test_flag = 1
-        self.no_extra_param =1 #if true, fix dispersion. w
+        self.no_extra_param =0  #if true, fix dispersion. w
         if self.other_bic:
             print('change this to false latter ')
 
@@ -151,7 +153,7 @@ class ObjectiveFunction(object):
         self.rdm_fit = None
         self.rdm_cor_fit = None
         self.dist_fit = None
-        self.rounding_point = kwargs.get('decimals_in_coeff', 2)
+        self.rounding_point = kwargs.get('decimals_in_coeff', 4)
         self.MAE = None
         self.best_obj_1 = 1000000.0
         self._obj_1 = kwargs.get('_obj_1', 'bic') 
@@ -426,7 +428,7 @@ class ObjectiveFunction(object):
 
 
 
-        self.Ndraws = kwargs.get('Ndraws', 200)
+        self.Ndraws = kwargs.get('Ndraws', 100)
         self.draws1 = None
         self.initial_sig = 1  # pass the test of a single model
         self.pvalue_sig_value = .1
@@ -485,8 +487,8 @@ class ObjectiveFunction(object):
             model_types = [[0, 1]]  # add 2 for Generalized Poisson
             #model_types = [[0]]
         
-        if self:
-            model_types = [[0]]
+        if self.linear_regression:
+            model_types = [[1]]
             self.grad_yes = False
             
             print(f'Linear Model Selected: turning off gradient calculation')
@@ -494,6 +496,11 @@ class ObjectiveFunction(object):
 
         model_t_dict = {'Poisson':0,
                         "NB":1}
+        if self.linear_regression:
+        # Rename key "NB" to "sigma" if it exists in the dictionary
+            if "NB" in model_t_dict:
+                model_t_dict["sigma"] = model_t_dict.pop("NB")
+
         # Retrieve the keys (model names) corresponding to the values in model_types
         model_keys = [key for key, value in model_t_dict.items() if value in model_types[0]]
         # Print the formatted result
@@ -503,6 +510,7 @@ class ObjectiveFunction(object):
 
         self._model_type_codes = ['p', 'nb',
                                   'gp', "pl", ["nb-theta", 'nb-dis']]
+        self.update_model_type_codes()
         self._variable = [True] * len(self._discrete_values)
         self._lower_bounds = [None] * \
                              len(self._discrete_values)  # TODO have continus
@@ -522,7 +530,18 @@ class ObjectiveFunction(object):
 
         self.solution_analyst = None
 
+    def update_model_type_codes(self):
+        if self.linear_regression:
+            # Recursively update all occurrences of 'nb' to 'sigma'
+            def replace_nb_with_sigma(item):
+                if isinstance(item, list):
+                    return [replace_nb_with_sigma(sub_item) for sub_item in item]
+                elif item == 'nb':
+                    return 'sigma'
+                return item
 
+            # Update the _model_type_codes list
+            self._model_type_codes = replace_nb_with_sigma(self._model_type_codes)
 
 
     def over_ride_self(self, **kwargs):
@@ -584,6 +603,7 @@ class ObjectiveFunction(object):
         self.set_defined_seed(42)  # Set a specific seed
 
         modified_fit = self.modify_initial_fit(manual_fit)  # Modify the initial fit based on manual_fit
+        self.significant = 1
         self.makeRegression(modified_fit)  # Perform regression with the modified fit
 
 
@@ -820,6 +840,10 @@ class ObjectiveFunction(object):
 
         if dispersion == 0:
             return None
+        if dispersion == 1:
+            return np.clip(np.exp(betas[-1]),None, 2)
+            
+
         elif dispersion == 2 or dispersion == 1:
             if self.no_extra_param:
                 return self.nb_parma
@@ -1126,7 +1150,8 @@ class ObjectiveFunction(object):
                     print("-" * 80)
 
                 if solution is not None:
-                    print(f"{self._obj_2}: {self.round_with_padding(solution[self._obj_2], 2)}")
+                    if self.is_multi:
+                        print(f"{self._obj_2}: {self.round_with_padding(solution[self._obj_2], 2)}")
             
             self.pvalues = [self.round_with_padding(
                 x, 2) for x in self.pvalues]
@@ -1140,13 +1165,15 @@ class ObjectiveFunction(object):
                     self.zvalues = np.append(self.zvalues, 50)
 
                 elif self.coeff_[-1] < 0.25:
-                    print(self.coeff_[-1], 'Warning Check Dispersion')
-                    print(np.exp(self.coeff_[-1]))
+                    #print(self.coeff_[-1], 'Warning Check Dispersion')
+                    print(f'dispession is para,aters {np.exp(self.coeff_[-1])}')
                     #self.coeff_[-1] = np.exp(self.coeff_[-1])  # min possible value for negbinom
+            
 
 
+    
+            self.coeff_ = self.convert_coefficients(self.coeff_, model)
             self.coeff_ = [self.round_with_padding(x, self.rounding_point) for x in self.coeff_]
-
             self.stderr = [self.round_with_padding(x, 2) for x in self.stderr]
             self.zvalues = [self.round_with_padding(
                 x, 2) for x in self.zvalues]
@@ -1961,7 +1988,7 @@ class ObjectiveFunction(object):
                 subpvalues = pvalues.copy()
             else:
                 slice_this_amount = self.num_dispersion_params(dispersion)
-                slice_this_amount = 0  # TODO handle this
+                
                 if pvalues[-1] > sig_value:
                     vio_counts += 1
                 subpvalues = pvalues[:-slice_this_amount].copy()
@@ -3253,6 +3280,35 @@ class ObjectiveFunction(object):
         print('output', out)
         return out
 
+    def custom_betas_to_penalise(self, params, dispersion):
+        num_params = self.get_num_params()
+        skip_count = sum(num_params[:2])
+        betas_start = params[:skip_count]
+        if dispersion:
+            betas_end = params[-dispersion:]
+            betas_ = np.concatenate((betas_start,betas_end))
+            return betas_
+        else: return betas_start
+
+
+    def convert_coefficients(self, params, dispersion):
+        num_params = self.get_num_params()
+        skip_count = sum(num_params[:2])
+        remain_params = num_params[2:]
+        params[skip_count:skip_count+remain_params[1]] = np.abs(params[skip_count:skip_count+remain_params[1]])
+        return params
+            
+        
+
+    def custom_penalty(self, params, penalty):
+        num_params = self.get_num_params()
+        skip_count = sum(num_params[:2])
+        
+        for i in params[skip_count:-1]:
+            if i < 0.25:
+                penalty += self.reg_penalty*np.maximum(0, 2.25 -i)**2
+        return penalty
+
     # p is the paramaterisation GP1 is at 0
     def general_poisson(self, mu, y, nu, p=0):  # TODO laxywhere??
 
@@ -3915,8 +3971,10 @@ class ObjectiveFunction(object):
 
         
         if dispersion:
+            sigma = dispersion
             eta=  np.dot(Xd, params_main)[:, :, None] + np.array(offset[:, :, :])
 
+            epsilon = np.random.normal(loc=0, scale=sigma, size=eta.shape)
             #eta=  np.dot(Xd, params_main)[:, :, None] + np.array(offset[:, :, :])+dispersion
             #print('check if this holds size')
         else:
@@ -3925,7 +3983,7 @@ class ObjectiveFunction(object):
 
 
         if linear:
-            eta = eta.astype('float')
+            eta = eta.astype('float') +epsilon.astype('float')
             return eta
 
 
@@ -4591,6 +4649,41 @@ class ObjectiveFunction(object):
         pass
         """
         pass
+    def _linear_logliklihood(self, y, eta, sigma):
+        """
+        Calculate the log-likelihood for a linear regression model with random parameters.
+
+        Parameters:
+        y (np.ndarray): Observed responses (n_samples,).
+        eta (np.ndarray): Predicted values (linear predictor) (n_samples, 1, n_draws).
+        sigma (float): Standard deviation of the error term.
+
+        Returns:
+        float: The log-likelihood value aggregated across all draws.
+        """
+        n_samples, _, n_draws = eta.shape  # Number of observations and draws
+
+        # Repeat y to match the shape of eta
+        y_repeated = np.repeat(y, n_draws, axis=2)  # Shape (n_samples, 1, n_draws)
+
+        # Calculate residuals for each draw
+        residuals = y_repeated - eta  # Shape (n_samples, 1, n_draws)
+
+        # Calculate the residual sum of squares (RSS) for each draw
+        rss = np.sum(residuals ** 2, axis=(0, 1))  # Shape (n_draws,)
+
+        # Log-likelihood for each draw
+        log_likelihood_per_draw = (
+            -0.5 * n_samples * np.log(2 * np.pi)  # Constant term
+            - 0.5 * n_samples * np.log(sigma**2)  # Variance term
+            - 0.5 * rss / sigma**2                # Residual term
+        )  # Shape (n_draws,)
+
+        # Aggregate across draws (e.g., take the mean log-likelihood)
+        log_likelihood_value = np.mean(log_likelihood_per_draw)
+
+        return log_likelihood_value
+
     def _loglik_gradient(self, betas, Xd, y, draws=None, Xf=None, Xr=None, batch_size=None, return_gradient=False,
                          return_gradient_n=False, dispersion=0, test_set=0, return_EV=False, verbose=0, corr_list=None,
                          zi_list=None, exog_infl=None, draws_grouped=None, Xgroup=None, model_nature=None, kwarg=None,
@@ -4654,8 +4747,9 @@ class ObjectiveFunction(object):
 
                 if self.linear_regression:
                     # LINEAR MODEL PROCESS
-                    mse = np.mean((y - eVd) ** 2)
-                    return mse
+                    mse = self._linear_logliklihood(y, eVd, main_disper)
+                    #mse = np.mean((y - eVd) ** 2)
+                    return (-mse + penalty)*self.minimize_scaler
 
                 ### GLM PROCESS ########
                 llf_main = self.loglik_obs(
@@ -4671,7 +4765,10 @@ class ObjectiveFunction(object):
 
                     loglik += 2*loglik
                     print('am i powering up')
-                penalty =  self.regularise_l2(betas)
+                
+                b_pen = self.custom_betas_to_penalise(betas, dispersion)
+                penalty =  self.regularise_l2(betas) + self.regularise_l1(betas)
+                penalty = self.custom_penalty(betas, penalty)
 
                 if not np.isreal(loglik):
                     loglik = - 10000000.0
@@ -4888,12 +4985,24 @@ class ObjectiveFunction(object):
                 betas_hetro_sd = None
 
             Vdr = dev.cust_einsum("njk,nkr -> njr", Xdr, Br)  # (N,P,R)
-            if self:
+            if self.linear_regression:
                 ### LINEAR MODEL WAY #######
                 eVd = np.clip(
                 Vdf[:, :, None] + Vdr + Vdh + dev.np.array(offset), None, None)
-                mse = np.mean((y - eVd) ** 2)
-                return mse
+                main_disper = self.get_dispersion_paramaters(betas, dispersion)
+                penalty, main_disper = self._penalty_dispersion(
+                    dispersion, main_disper, eVd, y, penalty, model_nature)
+                error_term = np.random.normal(loc=0, scale=main_disper, size=eVd.shape)
+                b_pen = self.custom_betas_to_penalise(betas, dispersion)
+                penalty += self.regularise_l2(b_pen) + self.regularise_l1(b_pen)
+                #penalty = 0
+                penalty = self.custom_penalty(betas, penalty)
+                    # LINEAR MODEL PROCESS
+                mse = self._linear_logliklihood(y, eVd, main_disper)
+                    #mse = np.mean((y - eVd) ** 2)
+                    
+                return -mse + penalty
+                
 
             ##### GLM WAY #####
             eVd = dev.np.exp(np.clip(
@@ -4959,7 +5068,7 @@ class ObjectiveFunction(object):
             if self.power_up_ll:
                 penalty += self.regularise_l2(betas)
 
-            penalty += self.regularise_l2(betas)
+            penalty += self.regularise_l2(betas) + self.regularise_l1(betas)
             if not return_gradient:
 
                 output = ((-loglik + penalty)*self.minimize_scaler,)
@@ -5022,6 +5131,11 @@ class ObjectiveFunction(object):
         else:
             return -self.reg_penalty*sum(np.square(betas.copy()))
 
+    def regularise_l1(self, betas, backwards = False):
+        if backwards == False:
+            return self.reg_penalty*sum(np.square(betas.copy()))
+        else:
+            return -self.reg_penalty*sum(np.abs(betas.copy()))
 
     def _concat_gradients(self, gr_f):
         gr = np.concatenate((gr_f), axis=1)
@@ -5480,9 +5594,7 @@ class ObjectiveFunction(object):
         convergence = optim_res['success']
         coeff_ = optim_res['x']
         penalty = 0
-        for i in coeff_:  # pvalue penalty should handle this
-            if abs(i) > 120:
-                penalty += abs(i)
+        
         if 'hess_inv' in optim_res:
             covariance = self._robust_covariance(optim_res['hess_inv'], optim_res['grad_n']) \
                 if robust else optim_res['hess_inv']
@@ -5496,16 +5608,7 @@ class ObjectiveFunction(object):
         # stderr = [np.min(np.abs(optim_res['x'][i]/random.uniform(1.8, 3)), stderr[i]) if i > len(self.none_handler(self.fixed_fit)) and np.abs(optim_res['x'][i] > 0.2) else stderr[i] for i in range(len(optim_res['x']))]
         if is_dispersion:
             stderr[-1] = random.uniform(0.001, 0.005)
-        if simple_fit == False:
-            # gets the number of parmas before the correlations
-            pre_cor_pams = sum(self.get_num_params()[:3])
-            # gets the number of correlated rpm
-            post_cor_pams = sum(self.get_num_params()[:5])
-
-
-            # this calculation takes into account the correlated rpms distinct values
-            for i in range(pre_cor_pams, post_cor_pams):
-                stderr[i] = stderr[i] / np.sqrt(sample_size)
+        
 
         if np.isnan(stderr).any():
             raise ValueError("Error: Matrix contains NaN values")
@@ -5518,6 +5621,9 @@ class ObjectiveFunction(object):
             optim_res['fun'] = 10.0 ** 10
         if self.power_up_ll:
             loglikelihood =-optim_res['fun']/2 - penalty
+        elif self.linear_regression:
+            loglikelihood= -optim_res['fun']
+    
         else:
             loglikelihood = -optim_res['fun']/self.minimize_scaler - penalty
 
@@ -5817,11 +5923,15 @@ class ObjectiveFunction(object):
         draws_grouped = self._prepare_grouped_draws(XG, mod) if XG is not None else None
 
         # Optimization method and options
-        method = self.method_ll
+        method = self.method_ll if bounds is None else 'L-BFGS-B'
         print('updataing methods')
-        method = 'Nelder-Mead-BFGS'
-        options = {'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 2000}
 
+        #method = 'Nelder-Mead-BFGS'
+        options = {'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 4000}
+        args=(
+                X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion, 0, False, 0,
+                self.rdm_cor_fit, None, None, draws_grouped, XG, mod
+            )
         # Run optimization
         optimization_result = self._minimize(
             self._loglik_gradient,
@@ -5835,9 +5945,94 @@ class ObjectiveFunction(object):
             tol=tol.get('ftol', 1e-8),  # Use 'ftol' as the default tolerance
             options=options
         )
+
+       
+
+        # Run the bootstrap to calculate standard errors
+        if self.run_bootstrap:
+
+            std_errors = self.bootstrap_std_dev(
+                initial_params=optimization_result.x,
+                XX=XX,
+                y=y,
+                dispersion=dispersion,
+                bounds=bounds,
+                tol=tol,
+                mod=mod,
+                n_bootstraps=100
+            )
+            self.stderr = std_errors
+
+        
+
+    
         return optimization_result
 
+
    
+
+    def bootstrap_std_dev(self, initial_params, XX, y, dispersion, bounds, tol, mod, n_bootstraps=100):
+        """
+        Perform bootstrap resampling to estimate the standard deviations of the parameters.
+
+        Parameters:
+            self: Reference to the class instance.
+            initial_params: Initial parameter estimates from the optimization.
+            XX: Design matrix.
+            y: Observed outcomes.
+            dispersion: Dispersion parameter (0=Poisson, 1=NB, 2=GP).
+            bounds: List of bounds for each parameter.
+            tol: Tolerance for the optimization process (dictionary with ftol and gtol).
+            mod: Dictionary containing additional data.
+            n_bootstraps: Number of bootstrap resamples (default=100).
+
+        Returns:
+            std_devs: Standard deviations of the parameter estimates (from bootstrap resampling).
+        """
+        # List to store parameter estimates from each bootstrap iteration
+        bootstrap_estimates = []
+
+        # Extract design matrices and additional components from `mod`
+        X, Xr, XG = mod.get('X'), mod.get('Xr'), mod.get('XG')
+        distribution = mod.get('dist_fit')
+
+        # Prepare draws
+        draws = self._prepare_draws(Xr, distribution)
+        draws_grouped = self._prepare_grouped_draws(XG, mod) if XG is not None else None
+
+        # Perform bootstrap iterations
+        for _ in range(n_bootstraps):
+            # Resample data with replacement
+            indices = np.random.choice(len(y), size=len(y), replace=True)
+            X_resampled = X[indices]
+            y_resampled = y[indices]
+
+            # Refit the model with resampled data
+            bootstrap_result = self._minimize(
+                self._loglik_gradient,
+                initial_params,
+                args=(
+                    X_resampled, y_resampled, draws, X_resampled, Xr, self.batch_size, self.grad_yes,
+                    self.hess_yes, dispersion, 0, False, 0, self.rdm_cor_fit, None, None,
+                    draws_grouped, XG, mod
+                ),
+                method=self.method_ll,
+                bounds=bounds,
+                tol=tol.get('ftol', 1e-8),  # Use 'ftol' as the default tolerance
+                options={'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 2000}
+            )
+
+            # Store the parameter estimates from this bootstrap iteration
+            bootstrap_estimates.append(bootstrap_result.x)
+
+        # Convert bootstrap parameter estimates to a NumPy array
+        bootstrap_estimates = np.array(bootstrap_estimates)
+
+        # Compute the standard deviations of the parameter estimates
+        std_devs = np.std(bootstrap_estimates, axis=0)
+
+        return std_devs
+    
     def _initialize_params_and_bounds(self, XX, dispersion):
         """Initialize parameters and set bounds for optimization."""
         num_params = XX.shape[2]  # Number of features
@@ -5963,7 +6158,13 @@ class ObjectiveFunction(object):
         if dispersion == 0:
             return [(-30, 30) for _ in initial_params]
         elif dispersion == 1:
-            return [(-30, 30) for _ in initial_params[:-1]] + [(-1, 5)]
+            num_params = self.get_num_params()
+            skip_count = sum(num_params[:2])
+        
+        
+            bounds = [(-3, 3) for _ in initial_params[:-1]] + [(-1, 1)]
+            bounds[skip_count: -1] = [(0.02, None) for _ in bounds[skip_count: -1]]
+            return bounds
         elif dispersion == 2:
             return [(-5, 5) for _ in initial_params[:-1]] + [(0.1, 0.99)]
         else:
@@ -6024,11 +6225,16 @@ class ObjectiveFunction(object):
             Initial parameter array.
         """
         # Generate random initial coefficients
-        initial_params = np.random.uniform(-0.05, 0.05, size=num_coefficients)
+        initial_params = np.random.uniform(-.1, 0.1, size=num_coefficients)
+        parma_sum = sum(self.get_num_params()[:2])
+       
+                       
+        initial_params[parma_sum:-dispersion] =0.5
 
         # Add dispersion parameter if applicable
         if dispersion > 0:
-            initial_params = np.insert(initial_params, -1, 0.)
+            initial_params[-1] =  0.0
+            #initial_params[0] =3
 
         return initial_params
     
@@ -6047,8 +6253,9 @@ class ObjectiveFunction(object):
             obj_1, log_lik, betas, stderr, pvalues, zvalues, is_halton, is_delete
         """
         try:
+            dispersion = mod.get('dispersion', dispersion)
             # Preprocessing
-            tol = {'ftol': 1e-8, 'gtol': 1e-6}
+            tol = {'ftol': 1e-6, 'gtol': 1e-6, 'xtol': 1e-6}
             y, X, Xr, XG, XH = mod.get('y'), mod.get('X'), mod.get('Xr'), mod.get('XG'), mod.get('XH')
 
             # Validate input data
@@ -7369,7 +7576,7 @@ class ObjectiveFunction(object):
             sequence.append(n_th_number)
         return sequence
 
-    def _generate_halton_draws(self, sample_size, n_draws, n_vars, shuffled=False, drop=100, primes=None,
+    def _generate_halton_draws(self, sample_size, n_draws, n_vars, shuffled=False, drop=10, primes=None,
                                long=False) -> np.ndarray:
         """Generate Halton draws for multiple random variables using different primes as base"""
         if primes is None:
@@ -7398,6 +7605,7 @@ class ObjectiveFunction(object):
                     i += 1
                 t += 1
             seq = seq[drop:length + drop]
+            seq = np.clip(seq, 1e-4, 1-1e-4)
             if shuffled:
                 np.random.shuffle(seq)
             return seq
@@ -7450,6 +7658,12 @@ class ObjectiveFunction(object):
         b = x * np.random.gamma(1, scale=theta, size=n) + \
             (1 - x) * np.random.gamma(2, scale=theta, size=n)
         return b
+
+ 
+
+
+ 
+
 
     def _compute_derivatives(self, betas, draws, betas_std=None, distribution=None):
         # N, N_draws, K = len(draws)/self.Ndraws, self.Ndraws, len(self._distribution)
