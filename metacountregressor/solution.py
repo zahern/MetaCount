@@ -6225,7 +6225,7 @@ class ObjectiveFunction(object):
         # Dispersion adds one additional parameter if enabled
         dispersion_param = 1 if dispersion > 0 else 0
         return sum(self.get_num_params()) + dispersion_param
-        #return k + kr + kg + kh + dispersion_param
+       
     def _build_initial_params(self, num_coefficients, dispersion):
         """
         Build the initial parameter array for optimization.
@@ -6296,7 +6296,7 @@ class ObjectiveFunction(object):
             log_lik, aic, bic, stderr, zvalues, pvalues, in_sample_mae, out_sample_mae = self._postprocess_results(
                 optimization_result, XX, XX_test, y, mod.get('y_test'), dispersion, mod
             )
-           
+        
             # Extract other outputs
             betas = optimization_result['x'] if optimization_result is not None else None
             is_halton = Xr is not None and Xr.size > 0  # Halton draws used if `Xr` is not empty
@@ -7345,7 +7345,7 @@ class ObjectiveFunction(object):
                 obj_1[self._obj_1] = 10 ** 100
 
         else:
-            print('The model did not converge')
+            print('Did not converge')
             obj_1[self._obj_1] = 10 ** 100
 
             self.significant = 3
