@@ -1156,16 +1156,16 @@ class ObjectiveFunction(object):
                 x, 2) for x in self.pvalues]
             signif_list = self.pvalue_asterix_add(self.pvalues)
             if model == 1:
-
-                #self.coeff_[-1] = 1/np.exp(self.coeff_[-1])
+                # raise to the exponential
+                self.coeff_[-1] = np.maximum([np.exp(self.coeff_[-1]),2])
                 if self.no_extra_param:
                     self.coeff_ = np.append(self.coeff_, self.nb_parma)
                     self.stderr = np.append(self.stderr, 0.00001)
                     self.zvalues = np.append(self.zvalues, 50)
 
-                elif self.coeff_[-1] < 0.25:
+                #elif self.coeff_[-1] < 0.25:
                     #print(self.coeff_[-1], 'Warning Check Dispersion')
-                    print(f'dispession is para,aters {np.exp(self.coeff_[-1])}')
+                    #print(f'dispession is para,aters {np.exp(self.coeff_[-1])}')
                     #self.coeff_[-1] = np.exp(self.coeff_[-1])  # min possible value for negbinom
             
 
@@ -1225,6 +1225,7 @@ class ObjectiveFunction(object):
             if model is not None:
                 caption_parts = []
                 if self.algorithm is not None:
+                    
                     caption_parts.append(
                         f"{self._model_type_codes[model]} model found through the {self.algorithm} algorithm.")
 
@@ -1235,7 +1236,8 @@ class ObjectiveFunction(object):
                     caption_parts.append(f"Log-Likelihood: {self.round_with_padding(self.log_lik, 2)}")
 
                 if solution is not None:
-                    caption_parts.append(f"{self._obj_2}: {self.round_with_padding(solution[self._obj_2], 2)}")
+                    if self.is_multi:
+                        caption_parts.append(f"{self._obj_2}: {self.round_with_padding(solution[self._obj_2], 2)}")
 
                 caption = " ".join(caption_parts)
                 # print(latextable.draw_latex(table, caption=caption, caption_above = True))
