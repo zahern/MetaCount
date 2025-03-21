@@ -405,6 +405,7 @@ class DifferentialEvolution(object):
     """
 
     def __init__(self, objective_function, **kwargs):
+        objective_function.algorithm = 'de'
         self._obj_fun = objective_function
         if self._obj_fun._obj_1 is None:
             print('no objective found, automatically selecting BIC')
@@ -780,7 +781,7 @@ class SimulatedAnnealing(object):
         """
 
     def __init__(self, objective_function, **kwargs):
-
+        objective_function.algorithm = 'sa'
         self._STEPS_PER_TEMP = int(kwargs.get('STEPS_PER_TEMP', 2)) or int(kwargs.get('_ts', 2))
         self._INITAL_ACCEPT_RATE = float(kwargs.get('INTL_ACPT', 0.5))
         self._NUM_INITIAL_SLNS = int(kwargs.get('_num_intl_slns', 20))
@@ -1247,6 +1248,7 @@ class HarmonySearch(object):
         """
             Initialize HS with the specified objective function. Note that this objective function must implement ObjectiveFunctionInterface.
         """
+        objective_function.algorithm = 'hs'
         self._obj_fun = objective_function
         ## NEW CODE, TRYING TO EXCTACT OUT THE PARAMATERS
         self._hms = kwargs.get('_hms', 20)

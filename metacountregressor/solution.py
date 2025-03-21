@@ -125,7 +125,7 @@ class ObjectiveFunction(object):
         self.gbl_best = 1000000.0
         self.run_bootstrap =  kwargs.get('run_bootstrap', False)
         self.linear_regression = kwargs.get('linear_model', False)
-        self.reg_penalty = 1
+        self.reg_penalty = kwargs.get('reg_penalty',1)
         self.power_up_ll = False
         self.nb_parma = 1
         self.bic = None
@@ -176,7 +176,6 @@ class ObjectiveFunction(object):
         self._max_imp = kwargs.get('_max_imp', 90000000)
         self._WIC =  kwargs.get("WIC",10000) # Number of Iterations without Multiobjective Improvement #tod chuck into solution
         self._panels = None
-        self.is_multi = True
         self.method_ll = 'Nelder-Mead-BFGS'
 
         self.method_ll = 'L-BFGS-B'  # alternatives 'BFGS_2', 'BFGS
@@ -5936,7 +5935,7 @@ class ObjectiveFunction(object):
 
         # Optimization method and options
         method = self.method_ll if bounds is None else 'L-BFGS-B'
-        print('updataing methods')
+        
 
         #method = 'Nelder-Mead-BFGS'
         options = {'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 4000}
