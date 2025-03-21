@@ -240,7 +240,9 @@ def differential_evolution(objective_function, initial_slns=None, **kwargs):
             initial_slns=initial_slns, mod_init=man)
         AVERAGE_BEST = st.mean(best_solutions)
         end = datetime.now()
+    
         elapsed_time = end - start
+        print(f'elapsed time{elapsed_time}')
         return DifferentialEvolutionResults(elapsed_time=elapsed_time, iteration=iterations,
                                             iter_solution=solutions, best_solutions=best_solutions,
                                             best_fitness=best_fitness,

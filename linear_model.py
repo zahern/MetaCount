@@ -88,7 +88,7 @@ arguments = {
     'val_percentage': 0,      # 15% of data for validation
     '_obj_1': 'bic',              # First objective: Bayesian Information Criterion
     '_obj_2': 'MAE',       # Second objective: Root Mean Square Error on Test data
-    '_max_time': 3600*12,               # Maximum time for the process (seconds)
+    '_max_time': 12,               # Maximum time for the process (seconds)
     'linear_model': True,        # Use linear model, False for Poisson regression
     '_transformations': ['nil'], # No transformations
     'is_multi': False,         # Single output
@@ -99,3 +99,4 @@ obj_fun = ObjectiveFunction(X, y, **arguments)
 
 # Use Harmony Search metaheuristic to optimize the objective function
 results = differential_evolution(obj_fun, None, **args_de)
+helperprocess.results_printer(results, arguments['algorithm'], int(arguments['is_multi']))

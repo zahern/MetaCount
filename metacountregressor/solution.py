@@ -3988,7 +3988,7 @@ class ObjectiveFunction(object):
 
 
         if linear:
-            eta = eta.astype('float') +epsilon.astype('float')
+            eta = eta.astype('float')
             return eta
 
 
@@ -4747,8 +4747,15 @@ class ObjectiveFunction(object):
                 if self.is_dispersion(dispersion):
                     penalty, main_disper = self._penalty_dispersion(dispersion, main_disper, eVd, y, penalty,
                                                                     model_nature)
+                    b_pen = self.custom_betas_to_penalise(betas, dispersion)
+                    penalty =  self.regularise_l2(betas) + self.regularise_l1(betas)
+                    penalty = self.custom_penalty(betas, penalty)
 
                     betas[-1] = main_disper
+
+                b_pen = self.custom_betas_to_penalise(betas, dispersion)
+                penalty =  self.regularise_l2(betas) + self.regularise_l1(betas)
+                penalty = self.custom_penalty(betas, penalty)
 
                 if self.linear_regression:
                     # LINEAR MODEL PROCESS

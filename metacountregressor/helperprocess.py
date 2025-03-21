@@ -539,6 +539,37 @@ def check_list_type(lst, check_type):
             raise TypeError(f"All elements in the list must be of type {check_type}")
 
 
+def plot_fitness_progress(iterations, iteration_fitnesses, best_fitnesses, average_fitness):
+    """
+    Plots the fitness values over iterations.
+
+    Args:
+        iterations (list): List of iteration numbers.
+        iteration_fitnesses (list): List of fitness values for each iteration.
+        best_fitnesses (list): List of best fitness values across iterations.
+        average_fitness (list): List of average fitness values across iterations.
+    """
+    plt.figure(figsize=(10, 6))
+
+    # Plot iteration fitnesses
+    plt.plot(iterations, iteration_fitnesses, label='Iteration Fitnesses', marker='o', color='blue')
+    # Plot best fitnesses
+    plt.plot(iterations, best_fitnesses, label='Best Fitnesses', marker='s', color='green')
+    # Plot average fitness
+    plt.plot(iterations, average_fitness, label='Average Fitness', marker='d', color='orange')
+
+    # Add labels and title
+    plt.xlabel('Iteration')
+    plt.ylabel('Fitness')
+    plt.title('Fitness Progression Over Iterations')
+    plt.legend()
+    plt.grid(True)
+
+    # Show the plot
+    plt.show()
+
+
+
 def results_printer(results, algorithm='hs', is_multi=1, obj_1='bic', obj_2='MSE'):
     if algorithm == 'hs':
         plt.scatter([x['bic'] for x in results.harmony_memories], [x['MAE'] for x in results.harmony_memories])
@@ -565,6 +596,12 @@ def results_printer(results, algorithm='hs', is_multi=1, obj_1='bic', obj_2='MSE
                     results.iteration, results.iter_solution, results.best_solutions, results.best_fitness,
                     # type: ignore
                     results.best_struct, results.average_best))  # type: ignore
+            plot_fitness_progress(
+                iterations=results.iteration,  # Replace with actual iteration numbers
+                iteration_fitnesses=results.iter_solution,  # Replace with actual iteration fitnesses
+                best_fitnesses=results.best_solutions,  # Replace with the best fitnesses
+                average_fitness=results.average_best  # Replace with average fitnesses
+            )
     elif algorithm == 'sa':
         print(
             'Elapsed time: {}\nIterations: {}'.format(

@@ -51,6 +51,7 @@ setuptools.setup(
         'pandas',
         'scikit-learn>=1.3.1',
         'statsmodels',
-        'psutil'
+        'psutil',
+        'pybind11 >=2.12'
     ]
 )

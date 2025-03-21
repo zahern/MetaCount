@@ -61,6 +61,7 @@ __pycache__/
 *.fdb_latexmk
 *.synctex.gz
 *.run.xml
+*.tex
 
 
 # Ignore specific auto-generated files
