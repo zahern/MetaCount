@@ -611,11 +611,12 @@ class ObjectiveFunction(object):
         Function to for proceccing testing, and finding a suitable initial coefficient (linear intercept)
         """
         if hard_code:
+            # Grouped Terns TODO
             manual_fit_spec = {
                 'fixed_terms': ['Constant', 'US', 'RSMS', 'MCV'],
                 'rdm_terms': ['RSHS:normal', 'AADT:normal', 'Curve50:normal'],
                 'rdm_cor_terms': [],
-                'grouped_terms': [],
+                'group_rdm': [],
                 'hetro_in_means': [],
                 'transformations': ['no', 'log', 'log', 'no', 'no', 'no', 'no'],
                 'dispersion': 1
@@ -637,7 +638,7 @@ class ObjectiveFunction(object):
                         'fixed_terms': ['const'],
                         'rdm_terms': [],
                         'rdm_cor_terms': [],
-                        'grouped_terms': [],
+                        'group_rdm': [],
                         'hetro_in_means': [],
                         'transformations': ['no'],
                         'dispersion': 1
@@ -6238,11 +6239,11 @@ class ObjectiveFunction(object):
             Initial parameter array.
         """
         # Generate random initial coefficients
-        initial_params = np.random.uniform(-.1, 0.1, size=num_coefficients)
+        initial_params = np.random.uniform(0.0000, 0.01, size=num_coefficients)
         parma_sum = sum(self.get_num_params()[:2])
        
                        
-        initial_params[parma_sum:-dispersion] =0.5
+        initial_params[parma_sum:-dispersion] =0.0001
 
         # Add dispersion parameter if applicable
         if dispersion > 0:
@@ -6251,7 +6252,7 @@ class ObjectiveFunction(object):
 
         return initial_params
     
-    def fitRegression(self, mod, dispersion=0, maxiter=4000, batch_size=None, num_hess=False, **kwargs):
+    def fitRegression(self, mod, dispersion=0, maxiter=20000, batch_size=None, num_hess=False, **kwargs):
         """
         Fits a Poisson regression, NB regression (dispersion=1), or GP regression (dispersion=2).
 
