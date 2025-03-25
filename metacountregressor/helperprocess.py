@@ -4,7 +4,7 @@ import pandas as pd
 import csv
 import matplotlib.pyplot as plt
 from scipy import stats as st
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import os
 import shutil
 plt.style.use('https://github.com/dhaitz/matplotlib-stylesheets/raw/master/pitayasmoothie-dark.mplstyle')
@@ -413,6 +413,10 @@ def transform_dataframe(df, config):
                 # Apply custom function
                 data = data.apply(settings['apply_func'])
             output_df[column] = data
+        elif settings['type'] == 'normalized':
+            # Normalize the column
+            scaler = MinMaxScaler
+            output_df[column] = scaler.fit_transform(df[[column]]).flatten()
 
         elif settings['type'] == 'none':
             # Leave the column unchanged
@@ -447,7 +451,7 @@ def guess_column_type(column_name, series):
             # Otherwise, fallback to continuous standardization
             return {
                 'type': 'continuous',
-                'apply_func': (lambda x: (x - series.mean()) / series.std())  # Z-Score Standardization
+                'apply_func': (lambda x: ((x - series.mean()) / series.std()) + abs(((series - series.mean()) / series.std()).min()) + 0.001)
             }
     else:
         # Default fallback (leave the column unchanged)

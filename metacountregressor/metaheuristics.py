@@ -422,6 +422,7 @@ class DifferentialEvolution(object):
         self.iter = kwargs.get('_max_iter', 10000)
         self.cr = kwargs.get('_crossover_perc') or kwargs.get('_cr', 0.2)
         self.instance_number = str(kwargs.get('instance_number', 1))
+        self.instance_number = objective_function.instance_number
         self.get_directory()
 
         self._population = list()

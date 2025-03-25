@@ -30,6 +30,7 @@ from scipy.special import gammaln
 from sklearn.metrics import mean_absolute_error as MAE
 from sklearn.metrics import mean_squared_error as MSPE
 from statsmodels.tools.numdiff import approx_fprime, approx_hess
+from autograd import hessian as autograd_hessian
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from texttable import Texttable
 import time
@@ -123,6 +124,7 @@ class ObjectiveFunction(object):
 
     def __init__(self, x_data, y_data, **kwargs):
         self.gbl_best = 1000000.0
+        self.run_numerical_hessian = kwargs.get('r_nu_hess', False)
         self.run_bootstrap =  kwargs.get('run_bootstrap', False)
         self.linear_regression = kwargs.get('linear_model', False)
         self.reg_penalty = kwargs.get('reg_penalty',1)
@@ -186,7 +188,7 @@ class ObjectiveFunction(object):
         self.MP = 0
         # Nelder-Mead-BFGS
 
-        self._max_characteristics = kwargs.get('_max_vars', 30)
+        self._max_characteristics = kwargs.get('_max_vars', 90)
 
         self.beta_dict = dict
         if 'model_terms' in kwargs:
@@ -611,7 +613,7 @@ class ObjectiveFunction(object):
         Function to for proceccing testing, and finding a suitable initial coefficient (linear intercept)
         """
         if hard_code:
-            # Grouped Terns TODO
+            # Grouped Terrs TODO
             manual_fit_spec = {
                 'fixed_terms': ['Constant', 'US', 'RSMS', 'MCV'],
                 'rdm_terms': ['RSHS:normal', 'AADT:normal', 'Curve50:normal'],
@@ -5602,13 +5604,42 @@ class ObjectiveFunction(object):
         return covariance
 
 
+        # Numerical Hessian (finite differences)
+    def numerical_hessian_post(self, f, theta, epsilon=1e-5):
+        n = len(theta)
+        hessian = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                theta_ij_plus = theta.copy()
+                theta_ij_minus = theta.copy()
+                theta_ij_plus[i] += epsilon
+                theta_ij_plus[j] += epsilon
+                theta_ij_minus[i] += epsilon
+                theta_ij_minus[j] -= epsilon
+
+                f_ij_plus = f(theta_ij_plus)
+                f_ij_minus = f(theta_ij_minus)
+                f_original = f(theta)
+
+                hessian[i, j] = (f_ij_plus - 2 * f_original + f_ij_minus) / (epsilon ** 2)
+        return hessian
+
+
     def _post_fit_ll_aic_bic(self, optim_res, verbose=1, robust=False, simple_fit=True, is_dispersion=0):
         # sample_size = len(self._x_data) - len(optim_res['x']) -1
         sample_size = len(self._x_data)
         convergence = optim_res['success']
         coeff_ = optim_res['x']
         penalty = 0
+        stderr_opg = None
+        if self.run_numerical_hessian:
+            
+            stderr_opg = self.stderr
+
         
+
+
+
         if 'hess_inv' in optim_res:
             covariance = self._robust_covariance(optim_res['hess_inv'], optim_res['grad_n']) \
                 if robust else optim_res['hess_inv']
@@ -5617,9 +5648,11 @@ class ObjectiveFunction(object):
         covariance = self.handle_covariance(covariance)
         covariance = np.clip(covariance, 0, None)
         stderr = np.sqrt(np.diag(covariance))
-        # stderr =  [if np.abs(optim_res['x'][i]) >.1 else min(np.abs(optim_res['x'][i]/1.5), stderr[i]) for i in range(len(optim_res['x']))]
-        # stderr = [if np.abs(optim_res['x'][i]) > 0.1 else min(np.abs(optim_res['x'][i]/1.5), stderr[i]) for i in range(len(optim_res['x']))]
-        # stderr = [np.min(np.abs(optim_res['x'][i]/random.uniform(1.8, 3)), stderr[i]) if i > len(self.none_handler(self.fixed_fit)) and np.abs(optim_res['x'][i] > 0.2) else stderr[i] for i in range(len(optim_res['x']))]
+        if stderr_opg:
+            stderr = np.minimum(stderr, stderr_opg)
+
+        
+       
         if is_dispersion:
             stderr[-1] = random.uniform(0.001, 0.005)
         
@@ -5912,6 +5945,9 @@ class ObjectiveFunction(object):
         else:
             self.draws = 0
     
+    def hessian_loglik_function(self, params, *args):
+        return self._loglik_gradient(params, *args)
+
     def _run_optimization(self, XX, y, dispersion, initial_params, bounds, tol, mod):
         """
         Run the optimization process with draws logic and update the Solution object.
@@ -5941,7 +5977,7 @@ class ObjectiveFunction(object):
         
 
         #method = 'Nelder-Mead-BFGS'
-        options = {'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 4000}
+        options = {'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 20000}
         args=(
                 X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion, 0, False, 0,
                 self.rdm_cor_fit, None, None, draws_grouped, XG, mod
@@ -5956,9 +5992,24 @@ class ObjectiveFunction(object):
             ),
             method=method,
             bounds=bounds,
-            tol=tol.get('ftol', 1e-8),  # Use 'ftol' as the default tolerance
+            tol=tol.get('ftol', 1e-6),  # Use 'ftol' as the default tolerance
             options=options
         )
+        if self.run_numerical_hessian:
+            std_errors = self.bootstrap_std_dev(
+                initial_params=optimization_result.x,
+                XX=XX,
+                y=y,
+                dispersion=dispersion,
+                bounds=bounds,
+                tol=tol,
+                mod=mod,
+                n_bootstraps=5
+            )
+            self.stderr = std_errors
+            
+
+
 
        
 
@@ -6032,8 +6083,8 @@ class ObjectiveFunction(object):
                 ),
                 method=self.method_ll,
                 bounds=bounds,
-                tol=tol.get('ftol', 1e-8),  # Use 'ftol' as the default tolerance
-                options={'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 2000}
+                tol=tol.get('ftol', 1e-6),  # Use 'ftol' as the default tolerance
+                options={'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 200}
             )
 
             # Store the parameter estimates from this bootstrap iteration
@@ -6122,6 +6173,7 @@ class ObjectiveFunction(object):
             # Validation metrics if test data is available (in-sample and out-of-sample MAE)
             in_sample_mae = None
             out_sample_mae = None
+            out_sample_validation = None
             if self.is_multi and XX_test is not None:
                 in_sample_mae = self.validation(
                     optimization_result['x'], y, XX, dispersion=dispersion, model_nature=mod, testing=0
@@ -6129,8 +6181,12 @@ class ObjectiveFunction(object):
                 out_sample_mae = self.validation(
                     optimization_result['x'], y_test, XX_test, dispersion=dispersion, model_nature=mod
                 )
+                if self.val_percentage > 0:
+                    out_sample_validation = self.validation(
+                        optimization_result['x'], y_test, XX_test, dispersion=dispersion, model_nature=mod, testing=1
+                    )
 
-            return log_ll, aic, bic, stderr, zvalues, pvalue_alt, in_sample_mae, out_sample_mae
+            return log_ll, aic, bic, stderr, zvalues, pvalue_alt, in_sample_mae, out_sample_mae, out_sample_validation
 
         else:
             # Optimization failed, return None for all metrics
@@ -6225,7 +6281,8 @@ class ObjectiveFunction(object):
 
         # Dispersion adds one additional parameter if enabled
         dispersion_param = 1 if dispersion > 0 else 0
-        return sum(self.get_num_params()) + dispersion_param
+        total = sum(self.get_num_params()) + dispersion_param
+        return total
        
     def _build_initial_params(self, num_coefficients, dispersion):
         """
@@ -6294,7 +6351,7 @@ class ObjectiveFunction(object):
             )
             
             # Post-process results
-            log_lik, aic, bic, stderr, zvalues, pvalues, in_sample_mae, out_sample_mae = self._postprocess_results(
+            log_lik, aic, bic, stderr, zvalues, pvalues, in_sample_mae, out_sample_mae, out_sample_val = self._postprocess_results(
                 optimization_result, XX, XX_test, y, mod.get('y_test'), dispersion, mod
             )
         
@@ -6326,10 +6383,14 @@ class ObjectiveFunction(object):
 
             # Add metrics to solution object
             sol = Solution()  # Assuming Solution is the appropriate class to store results
+            
             sol.add_objective(
                 bic=bic,
                 aic=aic,
                 loglik=log_ll,
+                TRAIN=in_sample_mae,
+                TEST=out_sample_mae,
+                VAL=out_sample_val,
                 num_parm=paramNum,
                 GOF=other_measures
             )
