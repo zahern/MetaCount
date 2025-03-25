@@ -30,7 +30,7 @@ from scipy.special import gammaln
 from sklearn.metrics import mean_absolute_error as MAE
 from sklearn.metrics import mean_squared_error as MSPE
 from statsmodels.tools.numdiff import approx_fprime, approx_hess
-from autograd import hessian as autograd_hessian
+
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from texttable import Texttable
 import time
@@ -455,7 +455,7 @@ class ObjectiveFunction(object):
         self._transformations = kwargs.get('_transformations', ["no", "log", "sqrt", "arcsinh", "nil"])
         # self._distribution = ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal', 'lindley']
 
-        self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal'])
+        self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal', 'tn_normal'])
 
         if self.G is not None:
             #TODO need to handle this for groups
@@ -5060,11 +5060,12 @@ class ObjectiveFunction(object):
             proba_ = proba_n.sum(axis =1)
             
             """""
-            betas_last = betas[-1]
+            main_disper = self.get_dispersion_paramaters(betas, dispersion)
+            
 
             # print(betas_last)
             proba_, proba_n = self.prob_obs_draws_all_at_once(
-                eVd, np.atleast_3d(y), betas_last, dispersion)
+                eVd, np.atleast_3d(y), main_disper, dispersion)
             # self._prob_product_against_panels()
 
             # print(top_stats)
@@ -5648,7 +5649,7 @@ class ObjectiveFunction(object):
         covariance = self.handle_covariance(covariance)
         covariance = np.clip(covariance, 0, None)
         stderr = np.sqrt(np.diag(covariance))
-        if stderr_opg:
+        if stderr_opg is not None:
             stderr = np.minimum(stderr, stderr_opg)
 
         
@@ -5995,6 +5996,20 @@ class ObjectiveFunction(object):
             tol=tol.get('ftol', 1e-6),  # Use 'ftol' as the default tolerance
             options=options
         )
+        if optimization_result.message == 'NaN result encountered.':
+            optimization_result = self._minimize(self._loglik_gradient,
+            initial_params,
+            args=(
+                X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion, 0, False, 0,
+                self.rdm_cor_fit, None, None, draws_grouped, XG, mod
+            ),
+            method='Nelder-Mead-BFGS',
+            bounds=bounds,
+            tol=tol.get('ftol', 1e-4),  # Use 'ftol' as the default tolerance
+            options=options
+            )
+
+
         if self.run_numerical_hessian:
             std_errors = self.bootstrap_std_dev(
                 initial_params=optimization_result.x,
@@ -6191,7 +6206,7 @@ class ObjectiveFunction(object):
         else:
             # Optimization failed, return None for all metrics
             print("Optimization failed.")
-            return None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None, None, None
     def _prepare_data_and_bounds(self, mod, dispersion):
         """Prepare the data matrices, bounds, and initial parameters."""
         # Prepare data matrices
