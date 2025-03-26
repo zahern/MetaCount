@@ -414,10 +414,12 @@ def transform_dataframe(df, config):
                 data = data.apply(settings['apply_func'])
             output_df[column] = data
         elif settings['type'] == 'normalized':
+            if column in df.columns:
             # Normalize the column
-            scaler = MinMaxScaler
-            output_df[column] = scaler.fit_transform(df[[column]]).flatten()
-
+                scaler = MinMaxScaler
+                output_df[column] = scaler.fit_transform(df[[column]]).flatten()
+            else: 
+                print(f'config variable {column} is not in the data. Ignoring ...')
         elif settings['type'] == 'none':
             # Leave the column unchanged
             if column in df.columns:
