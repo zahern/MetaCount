@@ -3549,37 +3549,27 @@ class ObjectiveFunction(object):
 
         return inv_hess
 
+    def _correlated_pos(self, correlation, varnames):
+        if (isinstance(correlation, list)):
+            correlationpos = [varnames.tolist().index(x) for x in
+                              varnames if x in correlation]
+            uncorrelatedpos = [varnames.tolist().index(x) for x in
+                               varnames if x not in correlation]
+            return
+
     def _chol_mat(self, correlationLength, br, Br_w, correlation):
         # if correlation = True correlation pos is randpos, if list get correct pos
-        dont_run = 0
-        if dont_run:
-            correlationpos = []
-            varnames = ['a', 'b', 'c', 'd', 'e', 'f']
-            varnames = np.asarray(varnames)
-            randvars = ['c', 'd', 'e', 'f']
-            correlation = ['e', 'f']
-            if randvars:
-                # Position of correlated variables within randvars
-                correlationpos = [varnames.tolist().index(x)
-                                  for x in varnames if x in randvars]
-            if (isinstance(correlation, list)):
-                self.correlationpos = [varnames.tolist().index(x) for x in
-                                       varnames if x in correlation]
-                self.uncorrelatedpos = [varnames.tolist().index(x) for x in
-                                        varnames if x not in correlation]
-            # if correlation = True correlation pos is randpos, if list get correct pos
-            correlationpos = []
-        else:
-            varnames = self.none_handler(
+        
+        
+        
+        varnames = self.none_handler(
                 self.rdm_fit) + self.none_handler(self.rdm_cor_fit)
 
-        if (isinstance(correlation, list)):
+        
             # Kchol, permutations of specified params in correlation list
-            Kchol = int((len(correlation) *
+        Kchol = int((len(correlation) *
                          (len(correlation) + 1)) / 2)
-        else:
-            # i.e. correlation = True, Kchol permutations of random paramaters
-            Kchol = int((len(br) * (len(br) + 1)) / 2)
+        
 
         # creating cholesky matrix for the variance-covariance matrix
         # all random variables not included in correlation will only
@@ -3608,7 +3598,16 @@ class ObjectiveFunction(object):
                 is_correlated = True
             else:
                 is_correlated = False
-            rv_val = chol[chol_count] if is_correlated else br_w[rv_count]
+            try:
+                rv_val = chol[chol_count] if is_correlated else br_w[rv_count]
+            except:
+                print(self.rdm_cor_fit, 'rdm_cor_fit')
+                print(self.rdm_fit, 'rdm_fit')
+                print('varnames', varnames)
+                print(br, 'br')
+                print(Br_w, 'Br_w')
+                print(chol, 'chol')
+                print(br_w, 'br_w')
             chol_mat_temp[rv_count_all, rv_count_all] = rv_val
             rv_count_all += 1
             if is_correlated:
