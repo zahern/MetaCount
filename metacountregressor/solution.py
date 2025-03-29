@@ -3557,6 +3557,9 @@ class ObjectiveFunction(object):
                                varnames if x not in correlation]
             return
 
+    
+
+
     def _chol_mat(self, correlationLength, br, Br_w, correlation):
         # if correlation = True correlation pos is randpos, if list get correct pos
         
@@ -3601,13 +3604,15 @@ class ObjectiveFunction(object):
             try:
                 rv_val = chol[chol_count] if is_correlated else br_w[rv_count]
             except:
+                print('exception here start') 
                 print(self.rdm_cor_fit, 'rdm_cor_fit')
                 print(self.rdm_fit, 'rdm_fit')
                 print('varnames', varnames)
-                print(br, 'br')
+                print('br', br, 'br')
                 print(Br_w, 'Br_w')
                 print(chol, 'chol')
                 print(br_w, 'br_w')
+                print('exception here end')
             chol_mat_temp[rv_count_all, rv_count_all] = rv_val
             rv_count_all += 1
             if is_correlated:
@@ -4869,10 +4874,10 @@ class ObjectiveFunction(object):
                 n_coeff = self.get_param_num(dispersion)
                 Kf_a, Kr_a, Kr_c, Kr_b_a, Kchol_a, Kh = self.get_num_params()
                 if Kchol_a != Kchol:
-                    print('hold qhy')
+                    print('this should not hh qhy')
 
-                if Kr_b != Kr_b_a:
-                    print('hold qhy')
+                if Kr_b != Kr_a:
+                    print('hold qhy this should never happen')
 
 
 
@@ -4886,13 +4891,14 @@ class ObjectiveFunction(object):
 
                     )
                 Bf = betas[0:Kf]  # Fixed betas
-
-
-           # Bf_new, Br_new, Br_std_new, Br_rema = self.extract_parameters(betas, Kf, Kr, Kchol_a, Kr_b_a)
+            TEST_ME = False
+            if not TEST_ME:
+                Bf, br, br_std, Br_rema = self.extract_parameters(betas, Kf, Kr, Kchol_a, Kr_b_a)
 
 
             Vdf = dev.np.einsum('njk,k -> nj', Xdf, Bf, dtype=np.float64)  # (N, P)
-            br = betas[Kf:Kf + Kr]
+            if TEST_ME:
+                br = betas[Kf:Kf + Kr]
 
 
 
@@ -4910,9 +4916,9 @@ class ObjectiveFunction(object):
             # Kchol_a + Krb_a
             #its grabbing from the
 
+            if TEST_ME:
 
-
-            brstd = betas[Kf + Kr:Kf + Kr + Kr_b + Kchol]
+                brstd = betas[Kf + Kr:Kf + Kr + Kr_b + Kchol]
 
             # initialises size matrix
             proba = []  # Temp batching storage
@@ -7209,6 +7215,20 @@ class ObjectiveFunction(object):
         indices = [i for i, name in enumerate(self._characteristics_names) if name in names and isinstance(name, str)]
         return indices
 
+    def sanity_check(self, Xr):
+        a =len(self.rdm_cor_fit)+len(self.rdm_fit) != Xr.shape[2]
+        if a:
+            print('why')
+            print('The number of random effects does not match the data')
+            print(Xr.shape)
+            print(self.rdm_cor_fit)
+            print(self.rdm_fit)
+            
+            #raise Exception('The number of random effects does not match the data')
+        else:
+            return True
+    
+    
     """
     This function is named 'makeRegression'. It takes several parameters; 'self', 'model_nature', 'layout', '*args', and '**kwargs'.
     The purpose of this function is to execute a regression based on the training and testing datasets.
@@ -7315,7 +7335,7 @@ class ObjectiveFunction(object):
             Xr_cor = df_tf[:, :, indices3]
             # FIXME not sure if this is the right way orientatied
             Xr = np.concatenate((Xr, Xr_cor), axis=2)
-
+            self.sanity_check(Xr)
         model_nature['Xr'] = Xr
         if self.is_multi:
             Xr_test = df_test[:, :, indices2]

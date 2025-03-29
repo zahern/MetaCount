@@ -615,10 +615,16 @@ class DifferentialEvolution(object):
                     obj_trial = self._obj_fun.get_fitness(trial, self.pf.get_objective_is_multi())
                     if not self.pf.get_objective_is_multi():
                         average_iteration += obj_trial[self._obj_fun._obj_1]
-                        logger(i, obj_trial, None, True, self.get_instance_name(), 1)
-                    else:
-                        logger(i, obj_trial, None, True, self.get_instance_name(), self.pf.get_objective_is_multi())
+                        try:
 
+                            logger(i, obj_trial, None, True, self.get_instance_name(), 1)
+                        except:
+                            pass
+                    else:
+                        try:
+                            logger(i, obj_trial, None, True, self.get_instance_name(), self.pf.get_objective_is_multi())
+                        except:    
+                            pass
                 except Exception as e:
                     print('why is there an exception')
                     print(e)
@@ -637,7 +643,7 @@ class DifferentialEvolution(object):
 
                         iterations_without_improvement = 0
                         self._population[j] = obj_trial
-
+                        
                         logger(self.it_process, obj_trial, self._population, True,
                                self.instance_number + '/population_logger_strict_non_pareto.csv', 1)
                         logger(self.it_process, obj_trial, self._pareto_population, True,
