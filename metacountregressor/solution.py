@@ -4893,7 +4893,7 @@ class ObjectiveFunction(object):
                 Bf = betas[0:Kf]  # Fixed betas
             TEST_ME = False
             if not TEST_ME:
-                Bf, br, br_std, Br_rema = self.extract_parameters(betas, Kf, Kr, Kchol_a, Kr_b_a)
+                Bf, br, brstd, Br_rema = self.extract_parameters(betas, Kf, Kr, Kchol_a, Kr_b_a)
 
 
             Vdf = dev.np.einsum('njk,k -> nj', Xdf, Bf, dtype=np.float64)  # (N, P)
