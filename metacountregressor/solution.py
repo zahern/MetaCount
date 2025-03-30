@@ -1035,9 +1035,9 @@ class ObjectiveFunction(object):
 
                 abct = []
                 hetro_long = hetro_long + hetro_std
-                for i in model_nature['transfrom_hetro']:
+                for i in model_nature['transform_hetro']:
                     abct = abct + i
-                for i in model_nature['transfrom_hetro']:
+                for i in model_nature['transform_hetro']:
                     abct = abct + ['']
             else:
                 big_hetro = []
@@ -5971,13 +5971,13 @@ class ObjectiveFunction(object):
             Solution object with updated objectives.
         """
         # Extract relevant data
-        X, Xr, XG = mod.get('X'), mod.get('Xr'), mod.get('XG')
+        X, Xr, XG, XH= mod.get('X'), mod.get('Xr'), mod.get('XG'), mod.get('XH')
         distribution = mod.get('dist_fit')
 
         # Prepare draws
         draws = self._prepare_draws(Xr, distribution)
         draws_grouped = self._prepare_grouped_draws(XG, mod) if XG is not None else None
-
+        mod = self._prepare_hetro(mod)
         # Optimization method and options
         method = self.method_ll if bounds is None else 'L-BFGS-B'
         
@@ -6451,6 +6451,27 @@ class ObjectiveFunction(object):
         return self.prepare_halton(
             n_random_effects, n_samples, self.Ndraws, distribution, long=False, slice_this_way=self.group_halton
         )
+    
+    def _prepare_hetro(self, mod):
+        if 'XH' in mod and len(mod.get('hetro_hold')) > 0:
+
+            XH = mod.get('XH')
+
+            styd = list(mod.get('hetro_hold').keys())
+
+            nh, ph, ______ = XH.shape
+            kgh = len(mod.get('hetro_hold'))
+            draws_hetro = self.prepare_halton(kgh, nh, self.Ndraws, styd, slice_this_way=self.group_halton)
+            mod['draws_hetro'] = draws_hetro.copy()
+            if self.is_multi:
+                XHtest = mod.get('XH_test')
+                nht, pht, ______ = XHtest.shape
+                draws_hetro_test = self.prepare_halton(kgh, nht, self.Ndraws, styd,
+                                                    slice_this_way=self.group_halton_test)
+                mod['draws_hetro_test'] = draws_hetro_test.copy()
+        return mod
+
+
 
     def _prepare_grouped_draws(self, XG, mod):
         """
@@ -7291,7 +7312,7 @@ class ObjectiveFunction(object):
                 X_h_test = df_test[:, :, indices_hetro]
                 x_h_storage_test.append(X_h_test)
         model_nature['x_h_storage'] = x_h_storage
-        model_nature['transfrom_hetro'] = transform_hetro
+        model_nature['transform_hetro'] = transform_hetro
         model_nature['x_h_storage_test'] = x_h_storage_test
 
         if hasattr(self, 'group_dummies'):
