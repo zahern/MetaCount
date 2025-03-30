@@ -5954,7 +5954,7 @@ class ObjectiveFunction(object):
     def hessian_loglik_function(self, params, *args):
         return self._loglik_gradient(params, *args)
 
-    def _run_optimization(self, XX, y, dispersion, initial_params, bounds, tol, mod):
+    def _run_optimization(self, XX, y, dispersion, initial_params, bounds, tol, mod, maxiter):
         """
         Run the optimization process with draws logic and update the Solution object.
 
@@ -5983,7 +5983,8 @@ class ObjectiveFunction(object):
         
 
         #method = 'Nelder-Mead-BFGS'
-        options = {'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': 20000}
+        
+        options = {'gtol': tol['gtol'], 'ftol': tol['ftol'], 'maxiter': maxiter}
         args=(
                 X, y, draws, X, Xr, self.batch_size, self.grad_yes, self.hess_yes, dispersion, 0, False, 0,
                 self.rdm_cor_fit, None, None, draws_grouped, XG, mod
@@ -6329,7 +6330,7 @@ class ObjectiveFunction(object):
 
         return initial_params
     
-    def fitRegression(self, mod, dispersion=0, maxiter=20000, batch_size=None, num_hess=False, **kwargs):
+    def fitRegression(self, mod, dispersion=0, maxiter=20, batch_size=None, num_hess=False, **kwargs):
         """
         Fits a Poisson regression, NB regression (dispersion=1), or GP regression (dispersion=2).
 
@@ -6367,7 +6368,7 @@ class ObjectiveFunction(object):
        
             # Run optimization
             optimization_result = self._run_optimization(
-                XX, y, dispersion, initial_params, bounds, tol, mod
+                XX, y, dispersion, initial_params, bounds, tol, mod, maxiter=maxiter
             )
             
             # Post-process results
