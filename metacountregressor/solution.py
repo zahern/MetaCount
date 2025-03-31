@@ -4704,6 +4704,27 @@ class ObjectiveFunction(object):
 
         return log_likelihood_value
 
+    def _no_draws(self, draws, grouped_draws, model_nature):
+        # Check if 'draws_hetro' exists and has the required attributes
+        if 'draws_hetro' in model_nature:
+            draws_hetro = model_nature.get('draws_hetro')
+            try:
+                # Check if the condition is met
+                if draws_hetro.shape[1] == 0:
+                    return False
+                else: return True
+            except AttributeError:
+                pass
+        else:
+            # If 'draws_hetro' does not exist, return False
+            if draws is None and grouped_draws is None:
+                return False
+            else: return True
+            
+        # Return True if none of the conditions for False are met
+        return True
+        
+
     def _loglik_gradient(self, betas, Xd, y, draws=None, Xf=None, Xr=None, batch_size=None, return_gradient=False,
                          return_gradient_n=False, dispersion=0, test_set=0, return_EV=False, verbose=0, corr_list=None,
                          zi_list=None, exog_infl=None, draws_grouped=None, Xgroup=None, model_nature=None, kwarg=None,
@@ -4733,8 +4754,7 @@ class ObjectiveFunction(object):
             penalty = self._penalty_betas(
                 betas, dispersion, penalty, float(len(y) / 10.0))
             self.n_obs = len(y)  # feeds into gradient
-            if draws is None and draws_grouped is None and (model_nature is None or
-                    'draws_hetro' not in model_nature or model_nature.get('draws_hetro').shape[1] == 0):
+            if not self._no_draws(draws, draws_grouped, model_nature):
                 #TODO do i shuffle the draws
                 if type(Xd) == dict:
                     N, Kf, P = 0, 0, 0
