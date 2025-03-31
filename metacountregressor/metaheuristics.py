@@ -65,7 +65,7 @@ def _plot(x, y, z, xlabel=None, ylabel=None, zlabel=None, filename=None):
 def dict_mean(dict_list,
               ignore=None):
     if ignore is None:
-        ignore = ['AIC', 'layout', 'fixed_fit', 'rdm_fit', 'rdm_cor_fit', 'zi_fit', 'simple', 'pvalues']
+        ignore = ['AIC', 'layout', 'fixed_fit', 'rdm_fit', 'rdm_cor_fit', 'zi_fit', 'simple', 'pvalues', "CAIC"]
     mean_dict = {}
     if ignore is None:
         for key in dict_list[0].keys():
@@ -76,7 +76,13 @@ def dict_mean(dict_list,
         for key in dict_list[0].keys():
             if key in ignore:
                 continue
-            mean_dict[key] = sum(d[key] for d in dict_list) / len(dict_list)
+            # Filter out dictionaries that don't have the key
+            filtered_values = [d[key] for d in dict_list if key in d]
+            
+            if filtered_values:  # Ensure there are values to compute the mean
+                mean_dict[key] = sum(filtered_values) / len(filtered_values)
+            else:
+                mean_dict[key] = None  # Or handle missing data differently if needed
         return mean_dict
 
 
@@ -1198,7 +1204,7 @@ class SimulatedAnnealing(object):
             Temp3 = (Temp1 + Temp2) / (w_1 * Temp2 + w_2 * Temp1)
 
             self.best_energy = slns[0]
-            low_best = 10000000
+            low_best = 1e5
             for i, val in enumerate(fitness_list):
                 low = w_1 * fitness_list[i] + w_2 * fitness_list_2[i]
                 if low < low_best:
@@ -2359,7 +2365,7 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
             Temp3 = (Temp1 + Temp2) / (w_1 * Temp2 + w_2 * Temp1)
 
             self.best_energy = slns[0]
-            low_best = 10000000
+            low_best = 1e5
             for i, val in enumerate(fitness_list):
                 low = w_1 * fitness_list[i] + w_2 * fitness_list_2[i]
                 if low < low_best:

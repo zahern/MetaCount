@@ -123,7 +123,7 @@ class ObjectiveFunction(object):
     """
 
     def __init__(self, x_data, y_data, **kwargs):
-        self.gbl_best = 1000000.0
+        self.gbl_best = 1e5
         self.run_numerical_hessian = kwargs.get('r_nu_hess', False)
         self.run_bootstrap =  kwargs.get('run_bootstrap', False)
         self.linear_regression = kwargs.get('linear_model', False)
@@ -1571,9 +1571,9 @@ class ObjectiveFunction(object):
             eVy = eVy.ravel()
 
        
-        eVy = np.nan_to_num(eVy, nan=100000, posinf=100000)
-        eVy = np.clip(eVy, None, 1000)
-        mae = np.nan_to_num(MAE(np.squeeze(y), np.squeeze(eVy)), nan=100000, posinf=100000)
+        eVy = np.nan_to_num(eVy, nan=1E5, posinf=1E5)
+        eVy = np.clip(eVy, None, 1E5)
+        mae = np.nan_to_num(MAE(np.squeeze(y), np.squeeze(eVy)), nan=1e5, posinf=1e5)
 
         mspe = np.nan_to_num(MSPE(np.squeeze(y), np.squeeze(eVy)), nan=100000, posinf=100000)
         RMSE = np.sqrt(mspe)
@@ -4797,7 +4797,7 @@ class ObjectiveFunction(object):
                 penalty = self.custom_penalty(betas, penalty)
 
                 if not np.isreal(loglik):
-                    loglik = - 10000000.0
+                    loglik = - 1e5
 
                 output = (-loglik + penalty,)
                 if return_gradient:
