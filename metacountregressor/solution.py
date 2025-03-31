@@ -459,8 +459,14 @@ class ObjectiveFunction(object):
 
         if self.G is not None:
             #TODO need to handle this for groups
-            self._distribution = ["trad| " + item for item in self._distribution
+            print('group by groups off for now')
+            NAH_GROUP = 0
+            if NAH_GROUP:
+                self._distribution = ["trad| " + item for item in self._distribution
                                   ] + ["grpd| " + item for item in self._distribution]
+            else:
+                self._distribution = ["trad| " + item for item in self._distribution
+                                  ]
 
         # output information
         self.convergence = None
@@ -3563,9 +3569,9 @@ class ObjectiveFunction(object):
     def _chol_mat(self, correlationLength, br, Br_w, correlation):
         # if correlation = True correlation pos is randpos, if list get correct pos
         
+        print(self.rdm_grouped_fit, 'i think this causes the errror')
         
-        
-        varnames = self.none_handler(
+        varnames = self.none_handler(self.grouped_rpm)+ self.none_handler(
                 self.rdm_fit) + self.none_handler(self.rdm_cor_fit)
 
         
@@ -4874,11 +4880,17 @@ class ObjectiveFunction(object):
                 n_coeff = self.get_param_num(dispersion)
                 Kf_a, Kr_a, Kr_c, Kr_b_a, Kchol_a, Kh = self.get_num_params()
                 if Kchol_a != Kchol:
-                    print('this should not hh qhy')
+                    print('this should not happeb but why', Kr_b, 'kr)b is')
 
                 if Kr_b != Kr_a:
-                    print('hold qhy this should never happen')
+                    print('self.rdm_cor_fit', self.rdm_cor_fit)
+                    print('grouped_fit', self.rdm_grouped_fit)
+                    print('self.rdm_fit', self.rdm_fit) 
+                    print('odd, check this this should never happen')
+                
 
+
+                self.sanity_check(Xr, self.grouped_rpm)
 
 
 
@@ -4971,7 +4983,8 @@ class ObjectiveFunction(object):
                     betas_hetro = betas[Kf + Kr + Kr_b + Kchol:Kf + Kr + Kr_b + Kchol + KFH]
                     # betas_hetro = betas[:Xdh.shape[2]+1]
                     betas_hetro_sd = betas[Kf + Kr + Kr_b + Kchol + KFH:Kf + Kr + Kr_b + Kchol + KFH + KFHs]
-                    if KFHs > 1:
+
+                    if KFHs >= 1:
                         # print('now what how do i split')
                         x_i_h = model_nature.get('x_h_storage_test') if test_set else model_nature.get('x_h_storage')
                         if test_set == 2:
@@ -4992,6 +5005,7 @@ class ObjectiveFunction(object):
                             Vdh += dev.cust_einsum("njk,nkr -> njr", i, Bh)
 
                     else:
+                        print('this will not work cause i cant trul the right drawse')
                         Bh = self._transform_rand_betas(betas_hetro, betas_hetro_sd, draws_hetro)
 
                         Vdh = dev.cust_einsum("njk,nkr -> njr", Xdh, Bh)
@@ -7237,8 +7251,12 @@ class ObjectiveFunction(object):
         indices = [i for i, name in enumerate(self._characteristics_names) if name in names and isinstance(name, str)]
         return indices
 
-    def sanity_check(self, Xr):
-        a =len(self.rdm_cor_fit)+len(self.rdm_fit) != Xr.shape[2]
+    def sanity_check(self, Xr, grouped_rpm = None):
+        if grouped_rpm is None:
+            a =len(self.rdm_cor_fit)+len(self.rdm_fit) != Xr.shape[2]
+        else:
+            a = len(self.none_handler(self.rdm_cor_fit)) + len(self.none_handler(self.rdm_fit)) + len(self.none_handler(grouped_rpm)) != Xr.shape[2]
+            
         if a:
             print('why')
             print('The number of random effects does not match the data')
