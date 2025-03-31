@@ -611,6 +611,7 @@ class ObjectiveFunction(object):
 
         modified_fit = self.modify_initial_fit(manual_fit)  # Modify the initial fit based on manual_fit
         self.significant = 1
+        #self.define_selfs_fixed_rdm_cor(modified_fit)
         self.makeRegression(modified_fit)  # Perform regression with the modified fit
 
 
@@ -5933,7 +5934,11 @@ class ObjectiveFunction(object):
         """
         X, Xr, XG, XH = mod.get('X'), mod.get('Xr'), mod.get('XG'), mod.get('XH')
         if XG is not None:
-            return np.concatenate((X, XG, Xr, XH), axis=2)
+            if XH is not None:
+                return np.concatenate((X, XG, Xr, XH), axis=2)
+            else:
+                return np.concatenate((X, XG, Xr), axis=2)
+           # return np.concatenate((X, XG, Xr, XH), axis=2)
         elif XH is not None:
             return np.concatenate((X, Xr, XH), axis=2)
         else:
@@ -6287,11 +6292,14 @@ class ObjectiveFunction(object):
         X_test, Xr_test, XG_test, XH_test = (
             mod.get('X_test'), mod.get('Xr_test'), mod.get('XG_test'), mod.get('XH_test')
         )
-        if X_test is None or Xr_test is None:
+        if X_test is None and Xr_test is None:
             return None
 
         if XH_test is not None:
-            return np.concatenate((X_test, Xr_test, XH_test), axis=2)
+            if XG_test is not None:
+                return np.concatenate((X_test, XG_test, Xr_test, XH_test), axis=2)
+            else:
+                return np.concatenate((X_test, Xr_test, XH_test), axis=2)
         elif XG_test is not None:
             return np.concatenate((X_test, XG_test, Xr_test), axis=2)
         else:
@@ -7638,6 +7646,8 @@ class ObjectiveFunction(object):
         alpha_group_rdm = np.isin(select_data, data.get('group_rdm', [])).astype(int).tolist()
         alpha_hetro = np.isin(select_data, [item.split(':')[0] for item in data.get('hetro_in_means', [])]).astype(
             int).tolist()
+        matching_names = [name for name in select_data if name in [item.split(':')[0] for item in data.get('hetro_in_means', [])]]
+        self.hetro_fit = matching_names
         for i in range(len(alpha_rdm)):
 
             if alpha[i]:
@@ -7678,14 +7688,14 @@ class ObjectiveFunction(object):
         # select_data = self._x_data.columns
 
         select_data = self._characteristics_names
-        alpha = np.in1d(select_data, fix) * 1
-        alpha_rdm = np.in1d(select_data, rdm) * 1
+        alpha = np.isin(select_data, fix) * 1
+        alpha_rdm = np.isin(select_data, rdm) * 1
         alpha = alpha.tolist()
         alpha_rdm = alpha_rdm.tolist()
 
-        alpha_cor_rdm = np.in1d(select_data, cor_rdm) * 1
+        alpha_cor_rdm = np.isin(select_data, cor_rdm) * 1
         alpha_cor_rdm = alpha_cor_rdm.tolist()
-        alpha_group_rdm = np.in1d(select_data, group_rdm) * 1
+        alpha_group_rdm = np.isin(select_data, group_rdm) * 1
         alpha_group_rdm = alpha_group_rdm.tolist() #todo will this ever trigger
         return alpha, alpha_rdm, alpha_cor_rdm
 
