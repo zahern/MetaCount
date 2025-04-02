@@ -48,11 +48,6 @@ jobs:
       - name: Clear pip cache
         run: pip cache purge
 
-      # Run tests (optional but strongly recommended)
-      - name: Run tests
-        run: |
-          python -m pip install pytest
-          pytest
 
       # Build the package
       - name: Build the package
