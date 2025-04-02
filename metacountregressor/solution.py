@@ -3570,7 +3570,7 @@ class ObjectiveFunction(object):
     def _chol_mat(self, correlationLength, br, Br_w, correlation):
         # if correlation = True correlation pos is randpos, if list get correct pos
         
-        print(self.rdm_grouped_fit, 'i think this causes the errror')
+        #print(self.rdm_grouped_fit, 'i think this causes the errror')
         
         varnames = self.none_handler(self.grouped_rpm)+ self.none_handler(
                 self.rdm_fit) + self.none_handler(self.rdm_cor_fit)
@@ -4982,6 +4982,8 @@ class ObjectiveFunction(object):
                          np.matmul(chol_mat[:len(br), :len(br)], draws_)
                     self.Br = Br.copy()
             else:
+                if 'draws_hetro' in model_nature:
+                    self.naming_for_printing(betas, dispersion=dispersion, model_nature=model_nature)
                 Br = br.reshape((N, 0, self.Ndraws))
                 draws_ = np.zeros((N, 0, self.Ndraws))
 

@@ -1,4 +1,4 @@
-numpy>=2.2.2
+numpy>=2.2.4
 scipy>=1.0.0
 matplotlib>=3.0.0
 pandas>=2.2.2
@@ -11,5 +11,5 @@ texttable >= 1.0.0
 latextable >= 1.0.0
 tabulate >= 0.9.0
 requests >= 2.0.0
-pybind11 >= 2.12
+pybind11 >= 2.1.2
 
