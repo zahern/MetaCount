@@ -44,7 +44,7 @@ setuptools.setup(
     zip_safe=False,
     python_requires='>=3.10',
     install_requires=[
-        'numpy>=2.2.4',
+        'numpy>=2.2.2',
         'scipy>=1.0.0',
         'requests',
         'latextable',
@@ -52,8 +52,8 @@ setuptools.setup(
         'scikit-learn>=1.3.1',
         'statsmodels',
         'psutil',
-        'matplotlib'
-        'pybind11 >=2.12'
-        'pyarrow >= 19.0.1'
+        'matplotlib >= 3.0.0',
+        'pybind11',
+        'pyarrow'
     ]
 )
