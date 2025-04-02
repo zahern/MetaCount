@@ -52,6 +52,8 @@ setuptools.setup(
         'scikit-learn>=1.3.1',
         'statsmodels',
         'psutil',
+        'matplotlib'
         'pybind11 >=2.12'
+        'pyarrow >= 19.0.1'
     ]
 )
