@@ -44,7 +44,7 @@ setuptools.setup(
     zip_safe=False,
     python_requires='>=3.10',
     install_requires=[
-        'numpy>=2.2.2',
+        'numpy>=2.0.0',
         'scipy>=1.0.0',
         'requests',
         'latextable',
