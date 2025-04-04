@@ -17,10 +17,13 @@ import pandas as pd
 
 try:
     from .pareto_file import Pareto, Solution
-    from .solution import ObjectiveFunction
-except:
+except ImportError:
     print('Exception relative import')
     from pareto_file import Pareto, Solution
+
+try:
+    from .solution import ObjectiveFunction
+except ImportError:
     from solution import ObjectiveFunction
 
 

@@ -5,12 +5,12 @@ import faulthandler
 import sys
 import timeit
 from collections import namedtuple
+import numpy as np
+import pandas as pd
 print('loaded standard packages')
 
-import numpy as np
-
-import pandas as pd
 from .helperprocess import*
+from .data_split_helper import DataProcessor
 print('loaded helper')
 from .metaheuristics import (differential_evolution,
                             harmony_search, 
