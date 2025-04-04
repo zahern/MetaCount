@@ -29,6 +29,7 @@ new_version = f"{major}.{minor}.{patch}"
 with open('version.txt', 'w') as f:
     f.write(new_version)
 
+
 # Setup configuration
 setuptools.setup(
     name='metacountregressor',
