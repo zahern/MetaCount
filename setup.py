@@ -46,13 +46,13 @@ setuptools.setup(
     python_requires='>=3.10',
     install_requires=[
         'numpy<2.0.0',
-        'requests',
+        'requests>=2.20.0,<3.0.0',
         'latextable',
-        'pandas',
+        'pandas>=1.4,!=2.1.0',
         'scikit-learn>=1.3.1',
         'statsmodels',
         'psutil',
         'matplotlib >= 3.0.0',
-        "pybind11>=2.12
-    ]
+        "pybind11>=2.12,<3.0.0"    
+        ]
 )
