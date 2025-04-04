@@ -24,6 +24,7 @@ except ImportError:
 try:
     from .solution import ObjectiveFunction
 except ImportError:
+    print
     from solution import ObjectiveFunction
 
 

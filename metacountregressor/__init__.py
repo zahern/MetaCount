@@ -15,8 +15,9 @@ print('loaded helper')
 from .metaheuristics import (differential_evolution,
                             harmony_search, 
                             simulated_annealing)
+print('loaded metaheuristics')
 from .solution import ObjectiveFunction
-
+print
 
 
 
