@@ -45,15 +45,12 @@ setuptools.setup(
     python_requires='>=3.10',
     install_requires=[
         'numpy>=2.0.0',
-        'scipy>=1.0.0',
         'requests',
         'latextable',
         'pandas',
         'scikit-learn>=1.3.1',
         'statsmodels',
         'psutil',
-        'matplotlib >= 3.0.0',
-        'pybind11',
-        'pyarrow'
+        'matplotlib >= 3.0.0'
     ]
 )
