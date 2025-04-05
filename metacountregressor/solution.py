@@ -1737,7 +1737,7 @@ class ObjectiveFunction(object):
 
         b = self.get_param_num(dispersion=vector[-1])
         # b = sum(prmVect) + self.is_dispersion(vector[-1])
-        max_loops = 100  # Maximum number of loops
+        max_loops = 10  # Maximum number of loops
         counter = 0  # Counter variable to keep track of the number of loops
 
 
@@ -1793,7 +1793,7 @@ class ObjectiveFunction(object):
 
         counter = 0
         while b < self._min_characteristics and counter < max_loops:
-
+            counter +=1
             weights = [1 if x == 0 else 0 for x in only_ints_vals]
             get_rdm_i = random.choices(only_ints, weights=weights)[0]
 
