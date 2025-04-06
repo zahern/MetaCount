@@ -1793,22 +1793,39 @@ class ObjectiveFunction(object):
 
         counter = 0
         while b < self._min_characteristics and counter < max_loops:
-            counter +=1
+            counter += 1
             weights = [1 if x == 0 else 0 for x in only_ints_vals]
             get_rdm_i = random.choices(only_ints, weights=weights)[0]
 
-            # todo if only 1 this will get stuck
+            # Safeguard: Check if only one valid value exists to handle the "stuck" case
+            if len(only_ints_vals) == 1 and only_ints_vals[0] == 0:
+                print("Breaking out: only one valid value exists and it is 0.")
+                break
+
             if vector[get_rdm_i] == 0:
+                max_inner_loops = 100  # Limit for the inner loop
+                inner_counter = 0
                 while new_j == 0:
-                    # print('this should only ever be 3 ocasionally 2', self.get_num_discrete_values(get_rdm_i))
-                    get_rdm_j = random.randint(
-                        0, self.get_num_discrete_values(get_rdm_i) - 1)
+                    inner_counter += 1
+                    if inner_counter > max_inner_loops:
+                        print("Breaking out of inner loop: exceeded maximum iterations.")
+                        break
+                    
+                    get_rdm_j = random.randint(0, self.get_num_discrete_values(get_rdm_i) - 1)
                     new_j = self.get_value(get_rdm_i, get_rdm_j)
+
+                # If the inner loop exited early, check and continue
+                if new_j == 0:
+                    print("Inner loop exited without finding a valid value.")
+                    break
+
+                # Assign the value after successfully exiting the inner loop
                 vector[get_rdm_i] = new_j
                 prmVect[get_rdm_i] = new_j
 
                 b += new_j
                 new_j = 0
+
 
         if hasattr(self, 'forced_variables'):
             self.force_inclusion(vector)
@@ -2477,7 +2494,7 @@ class ObjectiveFunction(object):
             layout = vector.copy()
 
             while max_trial <= max_routine and trial_run == 1:  # and max_trial <= 200:
-
+                
                 obj_1, model_mod = self.makeRegression(model_nature, layout=layout, **a)
 
                 if obj_best is None:
