@@ -7227,7 +7227,7 @@ class ObjectiveFunction(object):
             if len(self.none_handler(zi)) > 0:
                 the_name = the_name + '_zi'
             if model_nature is not None:
-                if 'XG' in model_nature:
+                if 'XG' in model_nature and model_nature.get('XG') is not None:
                     if model_nature.get('XG').shape[2] > 0:
                         the_name = the_name + 'grp'
 
@@ -7300,10 +7300,11 @@ class ObjectiveFunction(object):
         if grouped_rpm is None:
             a =len(self.rdm_cor_fit)+len(self.rdm_fit) != Xr.shape[2]
         else:
-            a = len(self.none_handler(self.rdm_cor_fit)) + len(self.none_handler(self.rdm_fit)) + len(self.none_handler(grouped_rpm)) != Xr.shape[2]
+            a = len(self.none_handler(self.rdm_cor_fit)) + len(self.none_handler(self.rdm_fit)) + len(self.none_handler(grouped_rpm))*self._Gnum != Xr.shape[2]
             
         if a:
             print('why')
+
             print('The number of random effects does not match the data')
             print(Xr.shape)
             print(self.rdm_cor_fit)
@@ -7383,16 +7384,19 @@ class ObjectiveFunction(object):
                                  self.group_dummies.shape[2]) if self.grouped_rpm != [] else []
             X_set = df_tf[:, :, indices4]
             XG = np.tile(self.group_dummies, len(self.grouped_rpm)) * X_set if X_set.shape[2] != 0 else None
+            if XG is not None:
+                model_nature['XG'] = XG
+            
         else:
             XG = None
         X = df_tf[:, :, indices]
         XH = df_tf[:, :, indices5]
 
-        if XG is not None:
+        if XG is not None and self.is_multi:
             indices4_test = np.repeat(self.get_named_indices(self.grouped_rpm),
                                       self.group_dummies_test.shape[2]) if self.grouped_rpm != [] else []
             XGtest = np.tile(self.group_dummies_test, len(self.grouped_rpm)) * df_test[:, :, indices4_test]
-            model_nature['XG'] = XG
+            #model_nature['XG'] = XG
             model_nature['XGtest'] = XGtest
 
         model_nature['X'] = X
@@ -7411,7 +7415,7 @@ class ObjectiveFunction(object):
         if np.isin(X, [np.inf, -np.inf, None, np.nan]).any():  # type ignore
             raise Exception('there is some kind of error in X')
 
-        # numpy data setup fpr estimation
+        # numpy data setup for estimation
         indices2 = self.get_named_indices(self.rdm_fit)
         Xr = df_tf[:, :, indices2]
         if self.rdm_cor_fit is not None:
