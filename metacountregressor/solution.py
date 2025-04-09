@@ -459,14 +459,12 @@ class ObjectiveFunction(object):
 
         if self.G is not None:
             #TODO need to handle this for groups
-            print('group by groups off for now')
-            NAH_GROUP = 0
-            if NAH_GROUP:
-                self._distribution = ["trad| " + item for item in self._distribution
+            
+           
+            self._distribution = ["trad| " + item for item in self._distribution
                                   ] + ["grpd| " + item for item in self._distribution]
-            else:
-                self._distribution = ["trad| " + item for item in self._distribution
-                                  ]
+        
+                                  
 
         # output information
         self.convergence = None
