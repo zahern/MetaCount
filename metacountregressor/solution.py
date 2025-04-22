@@ -171,7 +171,7 @@ class ObjectiveFunction(object):
         # defalt paramaters for hs #TODO unpack into harmony search class
         self.algorithm = kwargs.get('algorithm', 'hs')  # 'sa' 'de' also avialable
         self._hms = 20
-        self._max_time = kwargs.get('_max_time', 0.8* 60 * 60 * 24)
+        self._max_time = self._max_time = kwargs.get('_max_time', kwargs.get('MAX_TIME', 0.8 * 60 * 60 * 24))
         self._hmcr = kwargs.get('_hmcr', .5)
         self._par = 0.3 #dont think this gets useted
         self._mpai = 1
