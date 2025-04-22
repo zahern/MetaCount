@@ -1165,7 +1165,7 @@ class ObjectiveFunction(object):
             signif_list = self.pvalue_asterix_add(self.pvalues)
             if model == 1:
                 # raise to the exponential
-                self.coeff_[-1] = np.maximum([np.exp(self.coeff_[-1]),2])
+                self.coeff_[-1] = np.maximum(np.exp(self.coeff_[-1]),5)
                 if self.no_extra_param:
                     self.coeff_ = np.append(self.coeff_, self.nb_parma)
                     self.stderr = np.append(self.stderr, 0.00001)
