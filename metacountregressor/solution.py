@@ -257,7 +257,7 @@ class ObjectiveFunction(object):
             self.test_percentage = float(kwargs.get('test_percentage', 0))
             self.val_percentage = float(kwargs.get('val_percentage', 0))
             if self.test_percentage == 0:
-                print('test percentage is 0, please enter arg test_percentage as decimal, eg 0.8')
+                print('test percentage is 0, please enter arg test_percentage as decimal if intended for multi objective optimisation, eg 0.8')
                 print('continuing single objective')
                 time.sleep(2)
                 self.is_multi = False
@@ -296,6 +296,7 @@ class ObjectiveFunction(object):
                 ids = np.random.choice(N, training_size, replace=False)
                 id_unique = np.array([i for i in range(N)])
                 ids = id_unique[ids]
+                #todo make sure its split so counts are split
                 train_idx = [ii for ii in range(len(id_unique)) if id_unique[ii] in ids]
                 test_idx = [ii for ii in range(len(id_unique)) if id_unique[ii] not in ids]
                 df_train = x_data.loc[train_idx, :]
@@ -429,7 +430,7 @@ class ObjectiveFunction(object):
 
 
 
-        self.Ndraws = kwargs.get('Ndraws', 100)
+        self.Ndraws = kwargs.get('Ndraws', 200)
         self.draws1 = None
         self.initial_sig = 1  # pass the test of a single model
         self.pvalue_sig_value = .1
@@ -484,12 +485,24 @@ class ObjectiveFunction(object):
         self._discrete_values = self._discrete_values + \
                                 self.define_distributions_analyst(extra=kwargs.get('decisions', None))
 
-        if 'model_types' in kwargs:
-            model_types = kwargs['model_types']
+        if 'model_types' in kwargs or 'Model' in kwargs:
+            model_type_mapping = {
+                    'POS': 0,
+                    'NB': 1
+                }
+            model_types = kwargs.get('model_types', kwargs.get('Model', [[0,1]]))
+            converted_model_types = [
+                                        [model_type_mapping.get(item, item) for item in sublist]
+                                        for sublist in model_types
+                                    ]
+            model_types = converted_model_types
+            #this should be a list of list like [[0, 1]]
+            # also if it is [['POS', 'NB']] then it will be converted to [0, 1]
         else:
 
 
             model_types = [[0, 1]]  # add 2 for Generalized Poisson
+            
             #model_types = [[0]]
         
         if self.linear_regression:

@@ -265,6 +265,10 @@ def simulated_annealing(objective_function, initial_slns=None, **kwargs):
     # else:
     #   TEMP_ALPHA, MAX_STEPS, INTL_ACCEPT, STEPS, SWAP_PERC, NUM_INTL_SLNS, IS_MULTI= hyperparameters
     man = None
+    try:
+        objective_function.instance_number = str(0)
+    except:
+        pass
     if 'Manual_Fit' in kwargs:
         if kwargs['Manual_Fit'] is not None:
             man = kwargs['Manual_Fit']
@@ -292,7 +296,10 @@ def harmony_search(objective_function, initial_harmonies=None, hyperparameters=N
         objective_function._hms = kwargs.get('_hms')
     if kwargs.get('_hmcr') is not None:
         objective_function._hmcr = kwargs.get('_hmcr')
-
+    try:
+        objective_function.instance_number = str(0)
+    except:
+        pass
 
     man = None
     if 'Manual_Fit' in kwargs:
@@ -416,6 +423,10 @@ class DifferentialEvolution(object):
 
     def __init__(self, objective_function, **kwargs):
         objective_function.algorithm = 'de'
+        try:
+            objective_function.instance_number = str(0)
+        except:
+            pass
         self._obj_fun = objective_function
         if self._obj_fun._obj_1 is None:
             print('no objective found, automatically selecting BIC')
