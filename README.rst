@@ -91,7 +91,7 @@ the Pareto frontier.
     X = df.drop(columns=['FREQ', 'ID', 'AADT'])  
     
     #some example argument, these are defualt so the following line is just for claritity. See the later agruments section for detials.
-    arguments = {'algorithm': 'hs', 'test_percentage': 0.15, 'test_complexity': 6, 'instance_number':1,
+    arguments = {'algorithm': 'hs', 'test_percentage': 0.15, 'test_complexity': 6, 'instance_name':1,
                  'val_percentage':0.15, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "_max_time": 6}
     # Fit the model with metacountregressor
     obj_fun = ObjectiveFunction(X, y, **arguments)
@@ -158,9 +158,9 @@ code as a guide.
             'test_percentage': 0.2, # used in multi-objective optimisation only. Saves 20% of data for testing.
             'val_percenetage:': 0.2, # Saves 20% of data for testing.
             'test_complexity': 6, # Complexity level for testing (6 tests all) or a list to consider potential differences in complexity
-            'instance_number': 'name', # used for creeating a named folder where your models are saved into from the directory
+            'instance_name': 'name', # used for creeting a named folder where your models are saved into from the directory
             'distribution': ['Normal', 'LnNormal', 'Triangular', 'Uniform'],
-            'Model': [0,1],  # or equivalently ['POS', 'NB']
+            'model_types': [[0,1]],  # or equivalently ['POS', 'NB']
             'transformations': ['no', 'sqrt', 'archsinh'],
             'method_ll': 'BFGS_2',
             '_max_time': 10
@@ -184,7 +184,7 @@ modeling components may completely replace the initial solution.
         'fixed_terms': ['SINGLE', 'LENGTH'],
         'rdm_terms': ['AADT:normal'],
         'rdm_cor_terms': ['GRADEBR:normal', 'CURVES:normal'],
-        'grouped_terms': [],
+        'grouped_rdm': [],
         'hetro_in_means': ['ACCESS:normal', 'MINRAD:normal'],
         'transformations': ['no', 'no', 'log', 'no', 'no', 'no', 'no'],
         'dispersion': 0
@@ -196,7 +196,7 @@ modeling components may completely replace the initial solution.
         'algorithm': 'hs',
         'test_percentage': 0.2,
         'test_complexity': 6,
-        'instance_number': 'name',
+        'instance_name': 'name',
         'Manual_Fit': manual_fit_spec
     }
     obj_fun = ObjectiveFunction(X, y, **arguments)
@@ -341,11 +341,9 @@ considered. Example code will be provided later in this guide.
    each string corresponds to a distribution. Valid options include:
 
    -  “Normal”
-   -  “Lindley”
    -  “Uniform”
    -  “LogNormal”
    -  “Triangular”
-   -  “Gamma”
    -  “TruncatedNormal”
    -  Any of the above, concatenated with “:” (e.g., “Normal:grouped”;
       requires a grouping term defined in the model)
@@ -355,7 +353,6 @@ considered. Example code will be provided later in this guide.
 
    -  0: Poisson
    -  1: Negative-Binomial
-   -  2: Generalized-Poisson
 
 4. **``transformations``**: This argument accepts a list of strings
    representing available transformations within the framework. Valid
@@ -365,7 +362,7 @@ considered. Example code will be provided later in this guide.
    -  “square-root”
    -  “logarithmic”
    -  “archsinh”
-   -  “as_factor”
+   -  “nil”
 
 5. **``is_multi``**: This argument accepts an integer indicating whether
    single or multiple objectives are to be tested (0 for single, 1 for
@@ -413,9 +410,9 @@ factors for our search.
             'val_percentage:': 0.2, # Saves 20% of data for testing.
             'test_complexity': 3, # For Very simple Models
             'obj_1': 'BIC', '_obj_2': 'RMSE_TEST',
-            'instance_number': 'hs_run', # used for creeating a named folder where your models are saved into from the directory
+            'instance_name': 'hs_run', # used for creeating a named folder where your models are saved into from the directory
             'distribution': ['Normal'],
-            'Model': [0, 1],  # or equivalently ['POS', 'NB']
+            'model_types': [0, 1],  # or equivalently ['POS', 'NB']
             'transformations': ['no', 'sqrt', 'archsinh'],
             '_max_time': 10000
     } '''Arguments for the solution algorithm'''
@@ -495,7 +492,7 @@ packages, including Statsmodels.”
         'fixed_terms': ['const','YEAR'],
         'rdm_terms': [],
         'rdm_cor_terms': [],
-        'grouped_terms': [],
+        'grouped_rdm': [],
         'hetro_in_means': [],
         'transformations': ['no', 'no'],
         'dispersion': 1 #Negative Binomial 
@@ -507,7 +504,7 @@ packages, including Statsmodels.”
         'algorithm': 'hs',
         'test_percentage': 0,
         'test_complexity': 6,
-        'instance_number': 'name',
+        'instance': 'name',
         'Manual_Fit': manual_fit_spec
     }
     obj_fun = ObjectiveFunction(data_exog, data_endog, **arguments)

@@ -266,7 +266,7 @@ def simulated_annealing(objective_function, initial_slns=None, **kwargs):
     #   TEMP_ALPHA, MAX_STEPS, INTL_ACCEPT, STEPS, SWAP_PERC, NUM_INTL_SLNS, IS_MULTI= hyperparameters
     man = None
     try:
-        objective_function.instance_number = str(0)
+        objective_function.instance_name = str(0)
     except:
         pass
     if 'Manual_Fit' in kwargs:
@@ -297,7 +297,7 @@ def harmony_search(objective_function, initial_harmonies=None, hyperparameters=N
     if kwargs.get('_hmcr') is not None:
         objective_function._hmcr = kwargs.get('_hmcr')
     try:
-        objective_function.instance_number = str(0)
+        objective_function.instance_name = f"run_hs_{str(0)}"
     except:
         pass
 
@@ -335,7 +335,7 @@ class Metaheuristic(object):
         self.F = kwargs['_AI']  # mustation scale
         self.iter = kwargs.get('_max_iter', 10000)
         self.cr = kwargs.get('_crossover_perc') or kwargs.get('_cr', 0.2)
-        self.instance_number = str(kwargs.get('instance_number', 1))
+        self.instance_name = str(kwargs.get('instance_name', 1))
         if objective_function.is_multi:
 
             self.obj_1 = objective_function._obj_1
@@ -424,7 +424,7 @@ class DifferentialEvolution(object):
     def __init__(self, objective_function, **kwargs):
         objective_function.algorithm = 'de'
         try:
-            objective_function.instance_number = str(0)
+            objective_function.instance_name = str(0)
         except:
             pass
         self._obj_fun = objective_function
@@ -442,8 +442,8 @@ class DifferentialEvolution(object):
         self.F = kwargs.get('_AI', 2)  # mutation scale
         self.iter = kwargs.get('_max_iter', 10000)
         self.cr = kwargs.get('_crossover_perc') or kwargs.get('_cr', 0.2)
-        self.instance_number = str(kwargs.get('instance_number', 1))
-        self.instance_number = objective_function.instance_number
+        self.instance_name = str(kwargs.get('instance_name', 1))
+        self.instance_name = objective_function.instance_name
         self.get_directory()
 
         self._population = list()
@@ -461,13 +461,13 @@ class DifferentialEvolution(object):
     def get_directory(self):
         # checking if the directory demo_folder2 
         # exist or not.
-        if not os.path.isdir(self.instance_number):
+        if not os.path.isdir(self.instance_name):
             # if the demo_folder2 directory is
             # not present then create it.
-            os.makedirs(self.instance_number)
+            os.makedirs(self.instance_name)
 
     def get_instance_name(self):
-        name = str(self.instance_number) + '/log.csv'
+        name = str(self.instance_name) + '/log.csv'
         return name
 
     def _random_selection(self, sln, i):
@@ -666,18 +666,18 @@ class DifferentialEvolution(object):
                         self._population[j] = obj_trial
                         
                         logger(self.it_process, obj_trial, self._population, True,
-                               self.instance_number + '/population_logger_strict_non_pareto.csv', 1)
+                               self.instance_name + '/population_logger_strict_non_pareto.csv', 1)
                         logger(self.it_process, obj_trial, self._pareto_population, True,
-                               self.instance_number + '/population_logger_pareto.csv', 1)
+                               self.instance_name + '/population_logger_pareto.csv', 1)
                     else:
                         if self.pf.calculate_difference(obj_trial, self._population[j]):
                             iterations_without_improvement = 0
                             self._population[j] = obj_trial
                             self._pareto_population = self.pf.Pareto_F
                             logger(self.it_process, obj_trial, self._population, True,
-                                   self.instance_number + '/population_logger_strict_non_pareto.csv', 1)
+                                   self.instance_name + '/population_logger_strict_non_pareto.csv', 1)
                             logger(self.it_process, obj_trial, self._pareto_population, True,
-                                   self.instance_number + '/population_logger_pareto.csv', 1)
+                                   self.instance_name + '/population_logger_pareto.csv', 1)
 
                     if it_best is None:
                         it_best = obj_trial
@@ -822,7 +822,7 @@ class SimulatedAnnealing(object):
         self.temp_min = 0.05
         self._MAX_ITERATIONS = int(kwargs.get('MAX_ITERATIONS', 10000)) or int(kwargs.get('_max_iter', 10000))
 
-        self.instance_number = str(objective_function.instance_number)
+        self.instance_name = str(objective_function.instance_name)
         self.accept = 0
         self.profiler = []
         self.update_t = self.cooling_linear_m
@@ -843,12 +843,12 @@ class SimulatedAnnealing(object):
     def get_directory(self):
         # checking if the directory demo_folder2 
         # exist or not.
-        if not os.path.isdir(self.instance_number):
+        if not os.path.isdir(self.instance_name):
             # not present then create it.
-            os.makedirs(self.instance_number)
+            os.makedirs(self.instance_name)
 
     def get_instance_name(self):
-        name = str(self.instance_number) + '/log.csv'
+        name = str(self.instance_name) + '/log.csv'
         return name
 
     def run(self, initial_slns=None, mod_init=None):
@@ -939,7 +939,7 @@ class SimulatedAnnealing(object):
                     didchange = self.pf.did_it_change()
                     if didchange:
                         pareto_logger(self.pf.Pareto_F, iteration, self._obj_fun.complexity_level,
-                                      self._obj_fun.instance_number)
+                                      self._obj_fun.instance_name)
                     self._current_energy = nbr_energy
                     self.current_struct = nbr_struct
                     self.accept += 1
@@ -1284,7 +1284,7 @@ class HarmonySearch(object):
         self.F = kwargs.get('_AI', 2)  # mutation scale
         self.iter = kwargs.get('_max_iter', 10000)
         self.cr = kwargs.get('_crossover_perc') or kwargs.get('_cr', 0.2)
-        self.instance_number = str(kwargs.get('instance_number', 1))
+        self.instance_name = str(kwargs.get('instance_name', 1))
 
 
 
@@ -1295,7 +1295,7 @@ class HarmonySearch(object):
         # harmony_history stores all hms harmonies every nth improvisations (i.e., one 'generation')
         self._harmony_history = list()
         # saves the best fitness
-        self.instance_number = str(objective_function.instance_number)
+        self.instance_name = str(objective_function.instance_name)
         self.get_directory()
         self._harmony_trace_best = list()
         self._harmony_trace_incumbent = list()
@@ -1315,13 +1315,13 @@ class HarmonySearch(object):
     def get_directory(self):
         # checking if the directory demo_folder2 
         # exist or not.
-        if not os.path.isdir(self.instance_number):
+        if not os.path.isdir(self.instance_name):
             # if the demo_folder2 directory is
             # not present then create it.
-            os.makedirs(self.instance_number)
+            os.makedirs(self.instance_name)
 
     def get_instance_name(self):
-        name = str(self.instance_number) + '/log.csv'
+        name = str(self.instance_name) + '/log.csv'
         return name
 
     def hard_mutate_index_and_value(self):
@@ -1432,7 +1432,7 @@ class HarmonySearch(object):
                                1)  # for consistency
                     except Exception as e:
                         print(e, 'logger run hs')
-                    # logger(num_imp, fitness, self._pareto_harmony_memory, True, self.instance_number +'/log_for_pareto_harmony_memory.csv', 1)
+                    # logger(num_imp, fitness, self._pareto_harmony_memory, True, self.instance_name +'/log_for_pareto_harmony_memory.csv', 1)
 
 
                 else:
@@ -1477,7 +1477,7 @@ class HarmonySearch(object):
 
                 else:
                     pareto_logger(self._pareto_harmony_memory, num_imp / self._obj_fun.get_hms(),
-                                  self._obj_fun.complexity_level, self._obj_fun.instance_number)
+                                  self._obj_fun.complexity_level, self._obj_fun.instance_name)
                 generation += 1
                 iterations_without_improvement += 1
 
@@ -1915,7 +1915,7 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
                         logger(num_imp, fitness, self._harmony_memory, True, self.get_instance_name(),
                                1)  # for consistency
                         logger(num_imp, fitness, self._pareto_harmony_memory, True,
-                               self.instance_number + '/log_for_pareto_harmony_memory.csv', 1)
+                               self.instance_name + '/log_for_pareto_harmony_memory.csv', 1)
 
 
                     else:
@@ -1960,7 +1960,7 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
 
                 else:
                     pareto_logger(self._pareto_harmony_memory, num_imp / self._obj_fun.get_hms(),
-                                  self._obj_fun.complexity_level, self._obj_fun.instance_number)
+                                  self._obj_fun.complexity_level, self._obj_fun.instance_name)
                 generation += 1
                 iterations_without_improvement += 1
 
@@ -2081,7 +2081,7 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
                         didchange = self.pf.did_it_change()
                         if didchange:
                             pareto_logger(self.pf.Pareto_F, iteration, self._obj_fun.complexity_level,
-                                          self._obj_fun.instance_number)
+                                          self._obj_fun.instance_name)
                         current_energy[j] = nbr_energy
 
                         self.accept += 1
@@ -2278,18 +2278,18 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
                         self._population[j] = obj_trial
 
                         logger(self.it_process, obj_trial, self._population, True,
-                               self.instance_number + '/population_logger_strict_non_pareto.csv', 1)
+                               self.instance_name + '/population_logger_strict_non_pareto.csv', 1)
                         logger(self.it_process, obj_trial, self._pareto_population, True,
-                               self.instance_number + '/population_logger_pareto.csv', 1)
+                               self.instance_name + '/population_logger_pareto.csv', 1)
                     else:
                         if self.pf.calculate_difference(obj_trial, self._population[j]):
                             iterations_without_improvement = 0
                             self._population[j] = obj_trial
                             self._pareto_population = self.pf.Pareto_F
                             logger(self.it_process, obj_trial, self._population, True,
-                                   self.instance_number + '/population_logger_strict_non_pareto.csv', 1)
+                                   self.instance_name + '/population_logger_strict_non_pareto.csv', 1)
                             logger(self.it_process, obj_trial, self._pareto_population, True,
-                                   self.instance_number + '/population_logger_pareto.csv', 1)
+                                   self.instance_name + '/population_logger_pareto.csv', 1)
 
                     if it_best is None:
                         it_best = obj_trial

@@ -1,9 +1,12 @@
 import attr
 import nbformat
+import os
+import sys
 
 from nbconvert import MarkdownExporter, RSTExporter
 #WAS README
-name = 'Tutorial_Batch'
+name = 'README'
+#name - 'Tutorial_Batch'
 # Load your notebook
 with open(f'{name}.ipynb') as fh:
     notebook_node = nbformat.read(fh, as_version=4)

@@ -212,19 +212,19 @@ class ObjectiveFunction(object):
         if 'complexity_level' in kwargs:
             self.complexity_level = kwargs['complexity_level']
 
-        if 'instance_number' in kwargs:
-            self.instance_number = str(kwargs['instance_number'])
+        if 'instance_name' in kwargs:
+            self.instance_name = str(kwargs['instance_name'])
         else:
             
             print('no name set, setting name as 0')
-            self.instance_number = str(0)  # set an arbitrary instance number
+            self.instance_name = f"run_{str(0)}"  # set an arbitrary instance number
 
         if kwargs.get('save_directory', True):
             self.save_state = True
-            if not os.path.exists(self.instance_number):
+            if not os.path.exists(self.instance_name):
                 if kwargs.get('make_directory', True):
                     print('Making a Directory, if you want to stop from storing the files to this directory set argumet: make_directory:False')
-                    os.makedirs(self.instance_number)
+                    os.makedirs(self.instance_name)
         else:
             self.save_state = False
         if not hasattr(self, '_obj_1'):
@@ -456,7 +456,7 @@ class ObjectiveFunction(object):
         self._transformations = kwargs.get('_transformations', ["no", "log", "sqrt", "arcsinh", "nil"])
         # self._distribution = ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal', 'lindley']
 
-        self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal', 'tn_normal'])
+        self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal', 'tn_normal', 'ln_normal'])
 
         if self.G is not None:
             #TODO need to handle this for groups
@@ -1263,10 +1263,10 @@ class ObjectiveFunction(object):
                 caption = " ".join(caption_parts)
                 # print(latextable.draw_latex(table, caption=caption, caption_above = True))
                 if solution is None:
-                    file_name = self.instance_number + "/sln" + \
+                    file_name = self.instance_name + "/sln" + \
                                 "_with_BIC_" + str(self.bic) + ".tex"
                 else:
-                    file_name = self.instance_number + "/sln" + \
+                    file_name = self.instance_name + "/sln" + \
                                 str(solution['sol_num']) + \
                                 "_with_BIC_" + str(self.bic) + ".tex"
 
