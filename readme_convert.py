@@ -27,5 +27,9 @@ with open(f'{name}.md', 'w') as fh:
 with open(f'{name}.rst', 'w') as fh:
     fh.write(rst)
 
+# Save as HTML
+html_content = "<html><body><pre>" + rst + "</pre></body></html>"
+with open(f'{name}.html', 'w') as fh:
+    fh.write(html_content)
 
 print('This finished.')

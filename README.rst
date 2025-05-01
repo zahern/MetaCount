@@ -2,8 +2,8 @@
 
    ::
 
-      <img src="https://github.com/zahern/data/raw/main/m.png" alt="My Image" style="width: 100px; margin-right: 20px;">
-      <p><span style="font-size: 60px;"><strong>MetaCountRegressor</strong></span></p>
+      <img src="https://github.com/zahern/data/raw/main/m.png" alt="My Image" width="100">
+      <h1 style="margin-left: 20px;">MetaCountRegressor</h1>
 
 Tutorial also available as a jupyter notebook
 =============================================
@@ -13,6 +13,9 @@ Notebook <https://github.com/zahern/CountDataEstimation/blob/main/Tutorial.ipynb
 
 The tutorial provides more extensive examples on how to run the code and
 perform experiments. Further documentation is currently in development.
+
+`Download Notebook Designed for Analysis Use
+Case <https://github.com/zahern/data/blob/main/Step%20By%20Step_Synthetic.ipynb>`__
 
 For an Application Setup Download the following GUI
 ===================================================
