@@ -433,7 +433,7 @@ class ObjectiveFunction(object):
         self.Ndraws = kwargs.get('Ndraws', 200)
         self.draws1 = None
         self.initial_sig = 1  # pass the test of a single model
-        self.pvalue_sig_value = .1
+        self.pvalue_sig_value = kwargs.get('pvalue_sig_value',.1)
         self.observations = self._x_data.shape[0]
         self.minimize_scaler = 1/self.observations # scale the minimization function to the observations
 
