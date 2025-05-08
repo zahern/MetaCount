@@ -1194,7 +1194,7 @@ class ObjectiveFunction(object):
     
             self.coeff_ = self.convert_coefficients(self.coeff_, model)
             self.coeff_ = [self.round_with_padding(x, self.rounding_point) for x in self.coeff_]
-            self.stderr = [self.round_with_padding(x, 2) for x in self.stderr]
+            self.stderr = [self.round_with_padding(x, self.rounding_point) for x in self.stderr]
             self.zvalues = [self.round_with_padding(
                 x, 2) for x in self.zvalues]
 
