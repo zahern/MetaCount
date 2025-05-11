@@ -124,6 +124,559 @@ class ObjectiveFunction(object):
 
     def __init__(self, x_data, y_data, **kwargs):
         self.gbl_best = 1e5
+        self.non_sig_prints = kwargs.get('non_sig_prints', False)
+        self.run_numerical_hessian = kwargs.get('r_nu_hess', False)
+        self.run_bootstrap = kwargs.get('run_bootstrap', False)
+        self.linear_regression = kwargs.get('linear_model', False)
+        self.reg_penalty = kwargs.get('reg_penalty', 1)
+        self.power_up_ll = False
+        self.nb_parma = 1
+        self.bic = None
+        self.other_bic = False
+        self.test_flag = 1
+        self.no_extra_param = 0  # if true, fix dispersion. w
+        if self.other_bic:
+            print('change this to false latter ')
+
+        # initialize values
+        self.constant_value = 0
+        self.negative_binomial_value = 1
+
+        self.verbose_safe = kwargs.get('verbose', 0)
+        self.please_print = kwargs.get('please_print', 0)
+        self.group_halton = None
+        self.grad_yes = kwargs.get('grad_est', False)
+        self.hess_yes = False
+        self.group_halton_test = None
+        self.panels = None
+        self.group_names = []
+        self.pvalues = None
+        self.Last_Sol = None
+        self.fixed_fit = None
+        self.rdm_fit = None
+        self.rdm_cor_fit = None
+        self.dist_fit = None
+        self.rounding_point = kwargs.get('decimals_in_coeff', 4)
+        self.MAE = None
+        self.best_obj_1 = 1000000.0
+        self._obj_1 = kwargs.get('_obj_1', 'bic')
+        self._obj_2 = kwargs.get('_obj_2', 'MSE')
+        self.numerical_hessian_calc = 0  # calculates hessian by statsmodels otherwise scipy
+        self.full_model = None
+        self.GP_parameter = 0
+        self.is_multi = kwargs.get('is_multi', False)
+        self.complexity_level = kwargs.get('complexity_level', kwargs.get('test_complexity',6))
+        self._max_iterations_improvement = kwargs.get("WIC", 10000)
+        self.generated_sln = set()
+        self.ave_mae = 0
+        # defalt paramaters for hs #TODO unpack into harmony search class
+        self.algorithm = kwargs.get('algorithm', 'hs')  # 'sa' 'de' also avialable
+        self._hms = 20
+        self._max_time = self._max_time = kwargs.get('_max_time', kwargs.get('MAX_TIME', 0.8 * 60 * 60 * 24))
+        self._hmcr = kwargs.get('_hmcr', .5)
+        self._par = 0.3  # dont think this gets useted
+        self._mpai = 1
+        self._max_imp = kwargs.get('_max_imp', 90000000)
+        self._WIC = kwargs.get("WIC",
+                               10000)  # Number of Iterations without Multiobjective Improvement #tod chuck into solution
+        self._panels = None
+        self.method_ll = 'Nelder-Mead-BFGS'
+
+        self.method_ll = 'L-BFGS-B'  # alternatives 'BFGS_2', 'BFGS
+        self.method_ll = kwargs.get('method', 'BFGS_2')
+
+        # self.method_ll = 'Nelder-Mead-BFGS'
+        self.Keep_Fit = 2
+        self.MP = 0
+        # Nelder-Mead-BFGS
+
+        self._max_characteristics = kwargs.get('_max_vars', 90)
+
+        self.beta_dict = dict
+        if 'model_terms' in kwargs:
+
+            if kwargs.get('model_terms').get('group') is not None:
+                kwargs['group'] = kwargs.get('model_terms').get('group')
+
+            if kwargs.get('model_terms').get('panels') is not None:
+                kwargs['panels'] = kwargs.get('model_terms').get('panels')
+        acceptable_keys_list = ['_par', '_max_imp', '_hmcr', 'steps',
+                                'algorithm', '_random_seed', '_max_time',
+                                'forcedvariables', '_obj_1', '_obj_2', '_par',
+                                'Manuel_Estimate', 'test_percentage', 'is_multi', 'val_percentage'
+                                                                                  'complexity_level', '_hms', '_mpai',
+                                'group', '_max_characteristics', 'zi_force_names']
+        for k in kwargs.keys():
+            if k in acceptable_keys_list:
+                self.__setattr__(k, self.tryeval(kwargs[k]))
+
+        if 'complexity_level' in kwargs:
+            self.complexity_level = kwargs['complexity_level']
+
+        if 'instance_name' in kwargs:
+            self.instance_name = str(kwargs['instance_name'])
+        else:
+
+            print('no name set, setting name as 0')
+            self.instance_name = f"run_{str(0)}"  # set an arbitrary instance number
+
+        if kwargs.get('save_directory', True):
+            self.save_state = True
+            if not os.path.exists(self.instance_name):
+                if kwargs.get('make_directory', True):
+                    print(
+                        'Making a Directory, if you want to stop from storing the files to this directory set argumet: make_directory:False')
+                    os.makedirs(self.instance_name)
+        else:
+            self.save_state = False
+        if not hasattr(self, '_obj_1'):
+            print('_obj_1 required, define as bic, aic, ll')
+            raise Exception
+
+        self.pvalue_penalty = float(kwargs.get('pvalue_penalty', 0.5))
+        self.pvalue_exceed = 0
+        self._maximize = False  # do we maximize or minimize?
+
+        x_data = sm.add_constant(x_data)
+        standardize_the_data = 0
+        if standardize_the_data:
+            print('we are standardize the data')
+            x_data = self.self_standardize_positive(x_data)
+
+        self._input_data(x_data, y_data)
+
+        if y_data.ndim == 1:
+            y_data = pd.DataFrame(y_data)
+
+        '''
+        #TODO ADD THIS IN LATER
+        splitter = DataProcessor(x_data, y_data, kwargs)
+        self.copy_class_attributes(splitter) #inherit the self objects
+        '''
+
+        if self._obj_1 == 'MAE' or self._obj_2 in ["MAE", 'RMSE', 'MAE', 'MSE', 'RMSE_IN', 'RMSE_TEST']:
+            self.test_percentage = float(kwargs.get('test_percentage', 0))
+            self.val_percentage = float(kwargs.get('val_percentage', 0))
+            if self.test_percentage == 0:
+                print(
+                    'test percentage is 0, please enter arg test_percentage as decimal if intended for multi objective optimisation, eg 0.8')
+                print('continuing single objective')
+                time.sleep(2)
+                self.is_multi = False
+
+            if 'panels' in kwargs and not (kwargs.get('panels') == None):
+                if kwargs.get('group') is not None:
+                    self.group_names = np.asarray(
+                        x_data[kwargs['group']].astype('category').cat._parent.dtype.categories)
+
+                    x_data[kwargs['group']] = x_data[kwargs['group']].astype(
+                        'category').cat.codes
+                self.complexity_level = 6
+                # create test dataset
+
+                try:
+                    x_data[kwargs['panels']] = x_data[kwargs['panels']].rank(method='dense').astype(int)
+                    x_data[kwargs['panels']] -= x_data[kwargs['panels']].min() - 1
+
+                    N = len(np.unique(x_data[kwargs['panels']].values))
+                    id_unique = np.unique(x_data[kwargs['panels']].values)
+                except KeyError:
+                    N = len(np.unique(x_data[kwargs['panels']]))
+                    id_unique = np.unique(x_data[kwargs['panels']].values)
+
+                training_size = int((1 - self.test_percentage - self.val_percentage) * N)
+                ids = np.random.choice(N, training_size, replace=False)
+                ids = id_unique[ids]
+                train_idx = [ii for ii, id_val in enumerate(x_data[kwargs['panels']]) if id_val in ids]
+                test_idx = [ii for ii, id_val in enumerate(x_data[kwargs['panels']]) if id_val not in ids]
+                df_train = x_data.loc[train_idx, :]
+                df_test = x_data.loc[test_idx, :]
+                y_train = y_data.loc[train_idx, :]
+                y_test = y_data.loc[test_idx, :]
+            else:
+                N = len(x_data)
+                training_size = int((1 - self.test_percentage - self.val_percentage) * N)
+                ids = np.random.choice(N, training_size, replace=False)
+                id_unique = np.array([i for i in range(N)])
+                ids = id_unique[ids]
+                # todo make sure its split so counts are split
+                train_idx = [ii for ii in range(len(id_unique)) if id_unique[ii] in ids]
+                test_idx = [ii for ii in range(len(id_unique)) if id_unique[ii] not in ids]
+                df_train = x_data.loc[train_idx, :]
+                df_test = x_data.loc[test_idx, :]
+                y_train = y_data.loc[train_idx, :]
+                y_test = y_data.loc[test_idx, :]
+
+        # self.n_obs = N
+        self._characteristics_names = list(self._x_data.columns)
+        self._max_group_all_means = 2
+
+        exclude_this_test = [4]
+
+        if 'panels' in kwargs and not (kwargs.get('panels') == None):
+            self.panels = np.asarray(df_train[kwargs['panels']])
+            self.panels_test = np.asarray(df_test[kwargs['panels']])
+            self.ids = np.asarray(
+                df_train[kwargs['panels']]) if kwargs['panels'] is not None else None
+            self.ids_test = np.asarray(
+                df_test[kwargs['panels']]) if kwargs['panels'] is not None else None
+            if kwargs.get('group') is not None:
+                groupll = np.asarray(df_train[kwargs['group']].astype(
+                    'category').cat.codes)
+                group_test = np.asarray(df_test[kwargs['group']].astype(
+                    'category').cat.codes)
+            else:
+                groupll = None
+            X, Y, panel, group = self._arrange_long_format(
+                df_train, y_train, self.ids, self.ids, groupll)
+            self.group_halton = group.copy()
+            self.group_dummies = pd.get_dummies(group)
+            Xnew, Ynew, panel_info = self._balance_panels(X, Y, panel)
+
+            Xnew = pd.DataFrame(Xnew, columns=X.columns)
+            self.panel_info = panel_info
+            self.N, self.P = panel_info.shape
+            Xnew.drop(kwargs['panels'], axis=1, inplace=True)
+            Xnew.drop(kwargs['group'], axis=1, inplace=True)
+            K = Xnew.shape[1]
+            self._characteristics_names = list(Xnew.columns)
+            XX = Xnew.values.reshape(self.N, self.P, K).copy()
+            XX = XX.astype('float')
+            self.group_dummies = self.group_dummies.values.reshape(self.N, self.P, -1)
+            self.group_halton = self.group_halton.reshape(self.N, self.P)[:, 0]
+            YY = Ynew.values.reshape(self.N, self.P, 1).copy()
+            YY = YY.astype('float')
+            self._x_data = XX.copy()
+            self._y_data = YY.copy()
+            X, Y, panel, group = self._arrange_long_format(df_test, y_test, self.ids_test, self.panels_test, group_test)
+            if np.max(group) > 50:
+                exclude_this_test = [4]
+                self._max_group_all_means = 0
+            else:
+                exclude_this_test = []
+            self.group_halton_test = group.copy()
+            X, Y, panel_info = self._balance_panels(X, Y, panel)
+            X.drop(kwargs['panels'], axis=1, inplace=True)
+            X.drop(kwargs['group'], axis=1, inplace=True)
+            self.N_test, self.P_test = panel_info.shape
+
+            self.G = 1
+            self._Gnum = self.group_dummies.shape[2]
+            self.group_dummies_test = pd.get_dummies(group)
+            self.group_dummies_test = self.group_dummies_test.values.reshape(self.N_test, self.P_test, -1)
+            K = X.shape[1]
+            self.columns_names = X.columns
+            X = X.values.reshape(self.N_test, self.P_test, K)
+            X = X.astype('float')
+            self.group_halton_test = self.group_halton_test.reshape(self.N_test, self.P_test)[:, 0]
+            Y = Y.values.reshape(self.N_test, self.P_test, 1)
+            Y = Y.astype('float')
+            self._x_data_test = X.copy()
+            self.y_data_test = Y.copy()
+            self.y_data_test = self.y_data_test.astype('float')
+
+            self._samples, self._panels, self._characteristics = self._x_data.shape
+
+
+
+        else:
+            print('No Panels. Grouped Random Paramaters Will not be estimated')
+            self.G = None
+            self._Gnum = 1
+            self._max_group_all_means = 0
+            self.ids = np.asarray(train_idx)
+            self.ids_test = np.asarray(test_idx)
+            groupll = None
+            X, Y, panel, group = self._arrange_long_format(
+                df_train, y_train, self.ids, self.ids, groupll)
+
+            Xnew, Ynew, panel_info = self._balance_panels(X, Y, panel)
+            self.panel_info = panel_info
+            self.N, self.P = panel_info.shape
+
+            K = Xnew.shape[1]
+            self._characteristics_names = list(Xnew.columns)
+            XX = Xnew.values.reshape(self.N, self.P, K).copy()
+            XX = XX.astype('float')
+            YY = Ynew.values.reshape(self.N, self.P, 1).copy()
+            YY = YY.astype('float')
+            self._x_data = XX.copy()
+            self._y_data = YY.copy()
+
+            if self.is_multi:
+                X, Y, panel, group = self._arrange_long_format(df_test, y_test, self.ids_test, self.ids_test, None)
+                if np.max(group) > 50:
+                    exclude_this_test = [4]
+                else:
+                    exclude_this_test = []
+                X, Y, panel_info = self._balance_panels(X, Y, panel)
+
+                self.N_test, self.P_test = panel_info.shape
+                K = X.shape[1]
+                self.columns_names = X.columns
+                X = X.values.reshape(self.N_test, self.P_test, K)
+                X = X.astype('float')
+                Y = Y.values.reshape(self.N_test, self.P_test, 1)
+                Y = Y.astype('float')
+                self._x_data_test = X.copy()
+                self.y_data_test = Y.copy()
+
+            self._samples, self._panels, self._characteristics = self._x_data.shape
+
+        # Define the offset into the data
+        self.process_offset()
+        if self.is_multi:
+            self.pareto_printer = Pareto(self._obj_1, self._obj_2, True)
+            self._pareto_population = list()
+
+        self.Ndraws = kwargs.get('Ndraws', 200)
+        self.draws1 = None
+        self.initial_sig = 1  # pass the test of a single model
+        self.pvalue_sig_value = kwargs.get('pvalue_sig_value', .1)
+        self.observations = self._x_data.shape[0]
+        self.minimize_scaler = 1 / self.observations  # scale the minimization function to the observations
+
+        self.batch_size = None
+        # open the file in the write mode
+        self.grab_transforms = 0
+
+        if not isinstance(self._characteristics, int):
+            raise Exception
+        if not isinstance(self._x_data, pd.DataFrame):
+
+            print('Setup Complete...')
+        else:
+            print('No Panels Supplied')
+            print('Setup Complete...')
+            self._characteristics_names = list(self._x_data.columns)
+        # define the variables
+
+        self._transformations = kwargs.get('_transformations', ["no", "log", "sqrt", "arcsinh", "nil"])
+        # self._distribution = ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal', 'lindley']
+
+        self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal', 'tn_normal', 'ln_normal'])
+
+        if self.G is not None:
+            # TODO need to handle this for groups
+
+            self._distribution = ["trad| " + item for item in self._distribution
+                                  ] + ["grpd| " + item for item in self._distribution]
+
+        # output information
+        self.convergence = None
+        self.coeff_names = None
+        self._interactions = None  # was 2
+        self.coeff_ = None
+
+        self.significant = 0
+        # define the states of our explanatory variables
+
+        self._discrete_values = self.define_alphas(self.complexity_level, exclude_this_test,
+                                                   kwargs.get('must_include', []), extra=kwargs.get('decisions', None))
+
+        self._discrete_values = self._discrete_values + \
+                                self.define_distributions_analyst(extra=kwargs.get('decisions', None))
+
+        if 'model_types' in kwargs or 'Model' in kwargs:
+            model_type_mapping = {
+                'POS': 0,
+                'NB': 1
+            }
+            model_types = kwargs.get('model_types', kwargs.get('Model', [[0, 1]]))
+            converted_model_types = [
+                [model_type_mapping.get(item, item) for item in sublist]
+                for sublist in model_types
+            ]
+            model_types = converted_model_types
+            # this should be a list of list like [[0, 1]]
+            # also if it is [['POS', 'NB']] then it will be converted to [0, 1]
+        else:
+
+            model_types = [[0, 1]]  # add 2 for Generalized Poisson
+
+            # model_types = [[0]]
+
+        if self.linear_regression:
+            model_types = [[1]]
+            self.grad_yes = False
+
+            print(f'Linear Model Selected: turning off gradient calculation')
+
+        model_t_dict = {'Poisson': 0,
+                        "NB": 1}
+        if self.linear_regression:
+            # Rename key "NB" to "sigma" if it exists in the dictionary
+            if "NB" in model_t_dict:
+                model_t_dict["sigma"] = model_t_dict.pop("NB")
+
+        # Retrieve the keys (model names) corresponding to the values in model_types
+        model_keys = [key for key, value in model_t_dict.items() if value in model_types[0]]
+        # Print the formatted result
+        print(f'The type of models possible will consider: {", ".join(model_keys)}')
+        self._discrete_values = self._discrete_values + self.define_poissible_transforms(
+            self._transformations, kwargs.get('decisions', None)) + model_types
+
+        self._model_type_codes = ['p', 'nb',
+                                  'gp', "pl", ["nb-theta", 'nb-dis']]
+        self.update_model_type_codes()
+        self._variable = [True] * len(self._discrete_values)
+        self._lower_bounds = [None] * \
+                             len(self._discrete_values)  # TODO have continus
+        self._upper_bounds = [None] * \
+                             len(self._discrete_values)  # TODO have continous
+        # model specs
+        self.endog = None
+        # solution parameters
+        self._min_characteristics = kwargs.get('_min_vars', 3)
+        self._max_hurdle = 4
+
+        # Manually fit from analyst specification
+        manual_fit = kwargs.get('Manual_Fit', None)
+        if manual_fit is not None:
+            print('fitting manual')
+            self.process_manual_fit(manual_fit)
+
+        self.solution_analyst = None
+
+    def __init__v(self, x_data, y_data, **kwargs):
+    # Default attributes
+        self.gbl_best = 1e5
+        self.non_sig_prints = kwargs.get('non_sig_prints', False)
+        self.run_numerical_hessian = kwargs.get('r_nu_hess', False)
+        self.run_bootstrap = kwargs.get('run_bootstrap', False)
+        self.linear_regression = kwargs.get('linear_model', False)
+        self.reg_penalty = kwargs.get('reg_penalty', 1)
+        self.power_up_ll = False
+        self.nb_parma = 1
+        self.bic = None
+        self.other_bic = False
+        self.test_flag = 1
+        self.no_extra_param = 0  # Fix dispersion if true
+        self.constant_value = 0
+        self.negative_binomial_value = 1
+        self.verbose_safe = kwargs.get('verbose', 0)
+        self.please_print = kwargs.get('please_print', 0)
+        self.grad_yes = kwargs.get('grad_est', False)
+        self.hess_yes = False
+        self.rounding_point = kwargs.get('decimals_in_coeff', 4)
+        self.best_obj_1 = 1e6
+        self._obj_1 = kwargs.get('_obj_1', 'bic')
+        self._obj_2 = kwargs.get('_obj_2', 'MSE')
+        self.numerical_hessian_calc = 0
+        self.full_model = None
+        self.GP_parameter = 0
+        self.is_multi = kwargs.get('is_multi', False)
+        self.complexity_level = kwargs.get('complexity_level', 6)
+        self._max_iterations_improvement = kwargs.get("WIC", 10000)
+        self.generated_sln = set()
+        self.ave_mae = 0
+
+        # Harmony search parameters
+        self.algorithm = kwargs.get('algorithm', 'hs')
+        self._hms = 20
+        self._max_time = kwargs.get('_max_time', 0.8 * 60 * 60 * 24)
+        self._hmcr = kwargs.get('_hmcr', 0.5)
+        self._par = 0.3
+        self._mpai = 1
+        self._max_imp = kwargs.get('_max_imp', 90000000)
+        self.method_ll = kwargs.get('method', 'BFGS_2')
+        self._max_characteristics = kwargs.get('_max_vars', 90)
+
+        # Beta dictionary
+        self.beta_dict = dict
+
+        # Handle `model_terms` in kwargs
+        if 'model_terms' in kwargs:
+            if kwargs['model_terms'].get('group') is not None:
+                kwargs['group'] = kwargs['model_terms']['group']
+            if kwargs['model_terms'].get('panels') is not None:
+                kwargs['panels'] = kwargs['model_terms']['panels']
+
+        # Acceptable keys
+        acceptable_keys = [
+            '_par', '_max_imp', '_hmcr', 'steps', 'algorithm', '_random_seed', '_max_time',
+            'forcedvariables', '_obj_1', '_obj_2', 'Manuel_Estimate', 'test_percentage', 'is_multi',
+            'val_percentage', 'complexity_level', '_hms', '_mpai', 'group', '_max_characteristics',
+            'zi_force_names'
+        ]
+        for k, v in kwargs.items():
+            if k in acceptable_keys:
+                setattr(self, k, self.tryeval(v))
+
+        # Instance name
+        self.instance_name = str(kwargs.get('instance_name', f"run_0"))
+        if kwargs.get('save_directory', True):
+            self.save_state = True
+            if not os.path.exists(self.instance_name):
+                if kwargs.get('make_directory', True):
+                    print(f"Creating directory: {self.instance_name}")
+                    os.makedirs(self.instance_name)
+        else:
+            self.save_state = False
+
+        # P-value penalty
+        self.pvalue_penalty = float(kwargs.get('pvalue_penalty', 0.5))
+        self.pvalue_exceed = 0
+        self._maximize = False
+
+        # Data processing
+        x_data = sm.add_constant(x_data)
+        if kwargs.get('standardize_data', False):
+            print("Standardizing data")
+            x_data = self.self_standardize_positive(x_data)
+
+        self._input_data(x_data, y_data)
+        if y_data.ndim == 1:
+            y_data = pd.DataFrame(y_data)
+
+        # Handle panels and groups
+        self.handle_panels_and_groups(x_data, y_data, kwargs)
+
+        # Define transformations and distributions
+        self._transformations = kwargs.get('_transformations', ["no", "log", "sqrt", "arcsinh", "nil"])
+        self._distribution = kwargs.get(
+            '_distributions', ['triangular', 'uniform', 'normal', 'tn_normal', 'ln_normal']
+        )
+        if self.G is not None:
+            self._distribution = ["trad| " + dist for dist in self._distribution] + \
+                                ["grpd| " + dist for dist in self._distribution]
+
+        # Output and model specs
+        self.convergence = None
+        self.coeff_names = None
+        self._interactions = None
+        self.coeff_ = None
+        self.significant = 0
+        self._min_characteristics = kwargs.get('_min_vars', 3)
+        self._max_hurdle = 4
+        self.solution_analyst = None
+
+        # Setup complete
+        print("Setup Complete...")
+
+    def handle_panels_and_groups(self, x_data, y_data, kwargs):
+        """Handles panels and groups for the model."""
+        if 'panels' in kwargs and kwargs['panels'] is not None:
+            self.setup_panels_groups(x_data, y_data, kwargs)
+        else:
+            print("No Panels. Grouped Random Parameters Will Not Be Estimated")
+            self.G = None
+            self._Gnum = 1
+            self._max_group_all_means = 0
+
+
+
+
+
+
+
+
+
+    def __init__old(self, x_data, y_data, **kwargs):
+
+        # 1. GENERAL PARAMETERS
+        self.gbl_best = 1e5
+        self.non_sig_prints = kwargs.get('non_sig_prints', True)
         self.run_numerical_hessian = kwargs.get('r_nu_hess', False)
         self.run_bootstrap =  kwargs.get('run_bootstrap', False)
         self.linear_regression = kwargs.get('linear_model', False)
@@ -253,175 +806,20 @@ class ObjectiveFunction(object):
         self.copy_class_attributes(splitter) #inherit the self objects
         '''
 
-        if self._obj_1 == 'MAE' or self._obj_2 in ["MAE", 'RMSE', 'MAE', 'MSE', 'RMSE_IN', 'RMSE_TEST']:
-            self.test_percentage = float(kwargs.get('test_percentage', 0))
-            self.val_percentage = float(kwargs.get('val_percentage', 0))
-            if self.test_percentage == 0:
-                print('test percentage is 0, please enter arg test_percentage as decimal if intended for multi objective optimisation, eg 0.8')
-                print('continuing single objective')
-                time.sleep(2)
-                self.is_multi = False
-
-            if 'panels' in kwargs and not (kwargs.get('panels') == None):
-                if kwargs.get('group') is not None:
-                    self.group_names = np.asarray(x_data[kwargs['group']].astype('category').cat._parent.dtype.categories)
-
-                    x_data[kwargs['group']] = x_data[kwargs['group']].astype(
-                        'category').cat.codes
-                self.complexity_level = 6
-                # create test dataset
-
-                try:
-                    x_data[kwargs['panels']] = x_data[kwargs['panels']].rank(method='dense').astype(int)
-                    x_data[kwargs['panels']] -= x_data[kwargs['panels']].min() - 1
-
-                    N = len(np.unique(x_data[kwargs['panels']].values))
-                    id_unique = np.unique(x_data[kwargs['panels']].values)
-                except KeyError:
-                    N = len(np.unique(x_data[kwargs['panels']]))
-                    id_unique = np.unique(x_data[kwargs['panels']].values)
-
-                training_size = int((1 - self.test_percentage - self.val_percentage) * N)
-                ids = np.random.choice(N, training_size, replace=False)
-                ids = id_unique[ids]
-                train_idx = [ii for ii, id_val in enumerate(x_data[kwargs['panels']]) if id_val in ids]
-                test_idx = [ii for ii, id_val in enumerate(x_data[kwargs['panels']]) if id_val not in ids]
-                df_train = x_data.loc[train_idx, :]
-                df_test = x_data.loc[test_idx, :]
-                y_train = y_data.loc[train_idx, :]
-                y_test = y_data.loc[test_idx, :]
-            else:
-                N = len(x_data)
-                training_size = int((1 - self.test_percentage - self.val_percentage) * N)
-                ids = np.random.choice(N, training_size, replace=False)
-                id_unique = np.array([i for i in range(N)])
-                ids = id_unique[ids]
-                #todo make sure its split so counts are split
-                train_idx = [ii for ii in range(len(id_unique)) if id_unique[ii] in ids]
-                test_idx = [ii for ii in range(len(id_unique)) if id_unique[ii] not in ids]
-                df_train = x_data.loc[train_idx, :]
-                df_test = x_data.loc[test_idx, :]
-                y_train = y_data.loc[train_idx, :]
-                y_test = y_data.loc[test_idx, :]
-
-
+        
+        result = self.handle_data_splitting(x_data, y_data, kwargs)
+        if result[0] is not None:  # Check if splitting was done
+            self.df_train, self.df_test, self.y_train, self.y_test = result
         #self.n_obs = N
         self._characteristics_names = list(self._x_data.columns)
         self._max_group_all_means = 2
 
         exclude_this_test = [4]
         
-        if 'panels' in kwargs and not (kwargs.get('panels') == None):
-            self.panels = np.asarray(df_train[kwargs['panels']])
-            self.panels_test = np.asarray(df_test[kwargs['panels']])
-            self.ids = np.asarray(
-                df_train[kwargs['panels']]) if kwargs['panels'] is not None else None
-            self.ids_test = np.asarray(
-                df_test[kwargs['panels']]) if kwargs['panels'] is not None else None
-            if kwargs.get('group') is not None:
-                groupll = np.asarray(df_train[kwargs['group']].astype(
-                    'category').cat.codes)
-                group_test = np.asarray(df_test[kwargs['group']].astype(
-                    'category').cat.codes)
-            else:
-                groupll = None
-            X, Y, panel, group = self._arrange_long_format(
-                df_train, y_train, self.ids, self.ids, groupll)
-            self.group_halton = group.copy()
-            self.group_dummies = pd.get_dummies(group)
-            Xnew, Ynew, panel_info = self._balance_panels(X, Y, panel)
-
-            Xnew = pd.DataFrame(Xnew, columns=X.columns)
-            self.panel_info = panel_info
-            self.N, self.P = panel_info.shape
-            Xnew.drop(kwargs['panels'], axis=1, inplace=True)
-            Xnew.drop(kwargs['group'], axis=1, inplace=True)
-            K = Xnew.shape[1]
-            self._characteristics_names = list(Xnew.columns)
-            XX = Xnew.values.reshape(self.N, self.P, K).copy()
-            XX = XX.astype('float')
-            self.group_dummies = self.group_dummies.values.reshape(self.N, self.P, -1)
-            self.group_halton = self.group_halton.reshape(self.N, self.P)[:, 0]
-            YY = Ynew.values.reshape(self.N, self.P, 1).copy()
-            YY = YY.astype('float')
-            self._x_data = XX.copy()
-            self._y_data = YY.copy()
-            X, Y, panel, group = self._arrange_long_format(df_test, y_test, self.ids_test, self.panels_test, group_test)
-            if np.max(group) > 50:
-                exclude_this_test = [4]
-                self._max_group_all_means = 0
-            else:
-                exclude_this_test = []
-            self.group_halton_test = group.copy()
-            X, Y, panel_info = self._balance_panels(X, Y, panel)
-            X.drop(kwargs['panels'], axis=1, inplace=True)
-            X.drop(kwargs['group'], axis=1, inplace=True)
-            self.N_test, self.P_test = panel_info.shape
-
-            self.G = 1
-            self._Gnum = self.group_dummies.shape[2]
-            self.group_dummies_test = pd.get_dummies(group)
-            self.group_dummies_test = self.group_dummies_test.values.reshape(self.N_test, self.P_test, -1)
-            K = X.shape[1]
-            self.columns_names = X.columns
-            X = X.values.reshape(self.N_test, self.P_test, K)
-            X = X.astype('float')
-            self.group_halton_test = self.group_halton_test.reshape(self.N_test, self.P_test)[:, 0]
-            Y = Y.values.reshape(self.N_test, self.P_test, 1)
-            Y = Y.astype('float')
-            self._x_data_test = X.copy()
-            self.y_data_test = Y.copy()
-            self.y_data_test = self.y_data_test.astype('float')
-
-            self._samples, self._panels, self._characteristics = self._x_data.shape
-
-            
-
-        else:
-            print('No Panels. Grouped Random Paramaters Will not be estimated')
-            self.G = None
-            self._Gnum = 1
-            self._max_group_all_means = 0
-            self.ids = np.asarray(train_idx)
-            self.ids_test = np.asarray(test_idx)
-            groupll = None
-            X, Y, panel, group = self._arrange_long_format(
-                df_train, y_train, self.ids, self.ids, groupll)
-
-            Xnew, Ynew, panel_info = self._balance_panels(X, Y, panel)
-            self.panel_info = panel_info
-            self.N, self.P = panel_info.shape
-
-            K = Xnew.shape[1]
-            self._characteristics_names = list(Xnew.columns)
-            XX = Xnew.values.reshape(self.N, self.P, K).copy()
-            XX = XX.astype('float')
-            YY = Ynew.values.reshape(self.N, self.P, 1).copy()
-            YY = YY.astype('float')
-            self._x_data = XX.copy()
-            self._y_data = YY.copy()
-        
-            if self.is_multi:
-                X, Y, panel, group = self._arrange_long_format(df_test, y_test, self.ids_test, self.ids_test, None)
-                if np.max(group) > 50:
-                    exclude_this_test = [4]
-                else:
-                    exclude_this_test = []
-                X, Y, panel_info = self._balance_panels(X, Y, panel)
-    
-                self.N_test, self.P_test = panel_info.shape
-                K = X.shape[1]
-                self.columns_names = X.columns
-                X = X.values.reshape(self.N_test, self.P_test, K)
-                X = X.astype('float')
-                Y = Y.values.reshape(self.N_test, self.P_test, 1)
-                Y = Y.astype('float')
-                self._x_data_test = X.copy()
-                self.y_data_test = Y.copy()
-    
-            self._samples, self._panels, self._characteristics = self._x_data.shape
-
-
+     
+        # Other initialization logic...
+        #TODO CHECK THIS IS RIGHT
+        self.process_panels_and_groups(self.df_train, self.df_test, self.y_train, self.y_test, kwargs)
         #Define the offset into the data
         self.process_offset()
         if self.is_multi:
@@ -534,8 +932,7 @@ class ObjectiveFunction(object):
                              len(self._discrete_values)  # TODO have continus
         self._upper_bounds = [None] * \
                              len(self._discrete_values)  # TODO have continous
-        # model specs
-        self.endog = None
+        
         # solution parameters
         self._min_characteristics = kwargs.get('_min_vars', 3)
         self._max_hurdle = 4
@@ -561,7 +958,221 @@ class ObjectiveFunction(object):
             # Update the _model_type_codes list
             self._model_type_codes = replace_nb_with_sigma(self._model_type_codes)
 
+    def process_panels_and_groups(self, df_train, df_test, y_train, y_test, kwargs):
+        """
+        Process panels and groups for grouped random parameters.
 
+        Args:
+            df_train (DataFrame): Training feature data.
+            df_test (DataFrame): Testing feature data.
+            y_train (DataFrame): Training target data.
+            y_test (DataFrame): Testing target data.
+            kwargs (dict): Keyword arguments with configurations.
+
+        Returns:
+            None. Updates instance variables for panel processing.
+        """
+
+
+        if 'panels' in kwargs and kwargs.get('panels') is not None:
+            # Extract panel and group information
+            self.panels = np.asarray(df_train[kwargs['panels']])
+            self.panels_test = np.asarray(df_test[kwargs['panels']])
+            self.ids = np.asarray(df_train[kwargs['panels']])
+            self.ids_test = np.asarray(df_test[kwargs['panels']])
+
+            # Process group information if provided
+            if kwargs.get('group') is not None:
+                groupll = np.asarray(df_train[kwargs['group']].astype('category').cat.codes)
+                group_test = np.asarray(df_test[kwargs['group']].astype('category').cat.codes)
+            else:
+                groupll = None
+
+            # Arrange data in long format
+            X, Y, panel, group = self._arrange_long_format(df_train, y_train, self.ids, self.ids, groupll)
+            self.group_halton = group.copy()
+            self.group_dummies = pd.get_dummies(group)
+
+            # Balance panels for training data
+            Xnew, Ynew, panel_info = self._balance_panels(X, Y, panel)
+            Xnew = pd.DataFrame(Xnew, columns=X.columns)
+            self.panel_info = panel_info
+            self.N, self.P = panel_info.shape
+
+            # Drop panel and group columns
+            Xnew.drop(kwargs['panels'], axis=1, inplace=True)
+            Xnew.drop(kwargs['group'], axis=1, inplace=True)
+
+            # Reshape data
+            K = Xnew.shape[1]
+            self._characteristics_names = list(Xnew.columns)
+            XX = Xnew.values.reshape(self.N, self.P, K).astype('float')
+            YY = Ynew.values.reshape(self.N, self.P, 1).astype('float')
+
+            self._x_data = XX.copy()
+            self._y_data = YY.copy()
+
+            # Process test data
+            X, Y, panel, group = self._arrange_long_format(df_test, y_test, self.ids_test, self.panels_test, group_test)
+            if np.max(group) > 50:
+                exclude_this_test = [4]
+                self._max_group_all_means = 0
+            else:
+                exclude_this_test = []
+
+            self.group_halton_test = group.copy()
+            X, Y, panel_info = self._balance_panels(X, Y, panel)
+            X.drop(kwargs['panels'], axis=1, inplace=True)
+            X.drop(kwargs['group'], axis=1, inplace=True)
+
+            # Reshape test data
+            self.N_test, self.P_test = panel_info.shape
+            self.G = 1
+            self._Gnum = self.group_dummies.shape[2]
+            self.group_dummies_test = pd.get_dummies(group).values.reshape(self.N_test, self.P_test, -1)
+
+            K = X.shape[1]
+            self.columns_names = X.columns
+            X = X.values.reshape(self.N_test, self.P_test, K).astype('float')
+            Y = Y.values.reshape(self.N_test, self.P_test, 1).astype('float')
+
+            self._x_data_test = X.copy()
+            self.y_data_test = Y.copy()
+            self.y_data_test = self.y_data_test.astype('float')
+
+            # Update shape attributes
+            self._samples, self._panels, self._characteristics = self._x_data.shape
+
+        else:
+            print('No Panels. Grouped Random Parameters Will not be estimated')
+            # Handle case with no panels
+            self.G = None
+            self._Gnum = 1
+            self._max_group_all_means = 0
+            self.ids = np.asarray(df_train.index)
+            self.ids_test = np.asarray(df_test.index)
+
+            # Arrange and balance training data
+            groupll = None
+            X, Y, panel, group = self._arrange_long_format(df_train, y_train, self.ids, self.ids, groupll)
+            Xnew, Ynew, panel_info = self._balance_panels(X, Y, panel)
+            self.panel_info = panel_info
+            self.N, self.P = panel_info.shape
+
+            K = Xnew.shape[1]
+            self._characteristics_names = list(Xnew.columns)
+            XX = Xnew.values.reshape(self.N, self.P, K).astype('float')
+            YY = Ynew.values.reshape(self.N, self.P, 1).astype('float')
+
+            self._x_data = XX.copy()
+            self._y_data = YY.copy()
+
+            # Arrange and balance test data if multi-objective optimization is enabled
+            if self.is_multi:
+                X, Y, panel, group = self._arrange_long_format(df_test, y_test, self.ids_test, self.ids_test, None)
+                if np.max(group) > 50:
+                    exclude_this_test = [4]
+                else:
+                    exclude_this_test = []
+
+                X, Y, panel_info = self._balance_panels(X, Y, panel)
+                self.N_test, self.P_test = panel_info.shape
+                K = X.shape[1]
+                self.columns_names = X.columns
+                X = X.values.reshape(self.N_test, self.P_test, K).astype('float')
+                Y = Y.values.reshape(self.N_test, self.P_test, 1).astype('float')
+
+                self._x_data_test = X.copy()
+                self.y_data_test = Y.copy()
+
+            # Update shape attributes
+            self._samples, self._panels, self._characteristics = self._x_data.shape
+
+    def handle_data_splitting(self, x_data, y_data, kwargs):
+        """
+        Handle data splitting for training and testing based on objectives and panels.
+
+        Args:
+            x_data (DataFrame): Input feature data.
+            y_data (DataFrame): Input target data.
+            kwargs (dict): Dictionary of configuration options.
+
+        Returns:
+            tuple: (df_train, df_test, y_train, y_test) - Split datasets.
+        """
+        
+
+        # Check if the objectives involve multi-objective metrics
+        if self._obj_1 == 'MAE' or self._obj_2 in ["MAE", "RMSE", "MSE", "RMSE_IN", "RMSE_TEST"]:
+            # Retrieve test and validation percentages
+            self.test_percentage = float(kwargs.get('test_percentage', 0))
+            self.val_percentage = float(kwargs.get('val_percentage', 0))
+
+            # Handle zero test percentage
+            if self.test_percentage == 0:
+                print("Test percentage is 0. Please provide 'test_percentage' as a decimal (e.g., 0.8) for multi-objective optimization.")
+                print("Continuing with single-objective optimization.")
+                time.sleep(2)
+                self.is_multi = False
+
+            # Handle panels if provided
+            if 'panels' in kwargs and kwargs.get('panels') is not None:
+                # Handle group information if provided
+                if kwargs.get('group') is not None:
+                    self.group_names = np.asarray(x_data[kwargs['group']].astype('category').cat.categories)
+                    x_data[kwargs['group']] = x_data[kwargs['group']].astype('category').cat.codes
+
+                # Set complexity level
+                self.complexity_level = 6
+
+                # Prepare test and training dataset splits based on panels
+                try:
+                    x_data[kwargs['panels']] = x_data[kwargs['panels']].rank(method='dense').astype(int)
+                    x_data[kwargs['panels']] -= x_data[kwargs['panels']].min() - 1
+
+                    N = len(np.unique(x_data[kwargs['panels']].values))
+                    id_unique = np.unique(x_data[kwargs['panels']].values)
+                except KeyError:
+                    N = len(np.unique(x_data[kwargs['panels']]))
+                    id_unique = np.unique(x_data[kwargs['panels']].values)
+
+                # Calculate training size and split IDs
+                training_size = int((1 - self.test_percentage - self.val_percentage) * N)
+                ids = np.random.choice(N, training_size, replace=False)
+                ids = id_unique[ids]
+
+                # Create training and testing indices
+                train_idx = [ii for ii, id_val in enumerate(x_data[kwargs['panels']]) if id_val in ids]
+                test_idx = [ii for ii, id_val in enumerate(x_data[kwargs['panels']]) if id_val not in ids]
+
+                # Split datasets
+                df_train = x_data.loc[train_idx, :]
+                df_test = x_data.loc[test_idx, :]
+                y_train = y_data.loc[train_idx, :]
+                y_test = y_data.loc[test_idx, :]
+            else:
+                # Handle case when panels are not provided
+                N = len(x_data)
+                training_size = int((1 - self.test_percentage - self.val_percentage) * N)
+                ids = np.random.choice(N, training_size, replace=False)
+                id_unique = np.array([i for i in range(N)])
+                ids = id_unique[ids]
+
+                # Create training and testing indices
+                train_idx = [ii for ii in range(len(id_unique)) if id_unique[ii] in ids]
+                test_idx = [ii for ii in range(len(id_unique)) if id_unique[ii] not in ids]
+
+                # Split datasets
+                df_train = x_data.loc[train_idx, :]
+                df_test = x_data.loc[test_idx, :]
+                y_train = y_data.loc[train_idx, :]
+                y_test = y_data.loc[test_idx, :]
+
+            return df_train, df_test, y_train, y_test
+
+        else:
+            print("No multi-objective metrics detected. No data splitting performed.")
+            return None, None, None, None
     def over_ride_self(self, **kwargs):
         """
         Dynamically sets attributes on the instance based on the provided keyword arguments.
@@ -2774,27 +3385,6 @@ class ObjectiveFunction(object):
     def get_termination_iter(self):
         return self._max_iterations_improvement
 
-    def score(self, params):
-        """
-        Poisson model score (gradient) vector of the log-likelihood
-        Parameters
-        ----------
-        params : array_like
-            The parameters of the model
-        Returns
-        -------
-        score : ndarray, 1-D
-            The score vector of the model, i.e. the first derivative of the
-            loglikelihood function, evaluated at `params`
-        Notes
-        -----
-        .. math:: \\frac{\\partial\\ln L}{\\partial\\beta}=\\sum_{i=1}^{n}\\left(y_{i}-\\lambda_{i}\\right)x_{i}
-        where the loglinear model is assumed
-        .. math:: \\ln\\lambda_{i}=x_{i}\\beta
-        """
-        X = self.exog
-        L = np.exp(np.dot(X, params))
-        return np.dot(self.endog - L, X)
 
     def GenPos_Score(self, params, y, mu, X, p=0, obs_specific=False):
 
@@ -4041,48 +4631,7 @@ class ObjectiveFunction(object):
             eVd = np.exp(np.clip(eta, None, EXP_UPPER_LIMIT))
         return eVd
 
-    def ZeroInflated(self, betas, exog, exog_infl, exposure, k_inflate, offset, y_values, return_grad=True):
-        from scipy._lib._util import _lazywhere
-        from statsmodels.discrete.discrete_model import Logit
-        self.k_inflate = k_inflate
-        self.exog = exog.to_numpy()
-        self.endog = y_values.values.ravel()
-        exog = exog.to_numpy()
-        exog_infl = exog_infl.to_numpy()
-
-        def _argcheck(self, mu, alpha, p):
-            return (mu >= 0) & (alpha == alpha) & (p > 0)
-
-        def loglik_obs_poisson(params, y):
-            """
-            Loglikelihood for observations of Poisson model
-
-            Parameters
-            ----------
-            params : array_like
-                The parameters of the model.
-
-            Returns
-            -------
-            loglike : array_like
-                The log likelihood for each observation of the model evaluated
-                at `params`. See Notes
-
-            Notes
-            -----
-            .. math:: \\ln L_{i}=\\left[-\\lambda_{i}+y_{i}x_{i}^{\\prime}\\beta-\\ln y_{i}!\\right]
-
-            for observations :math:`i=1,...,n`
-            """
-            offset = getattr(self, "offset", 0)
-            exposure = getattr(self, "exposure", 0)
-            XB = np.dot(self.exog, params) + offset + exposure
-
-            # np.sum(stats.poisson.logpmf(endog, np.exp(XB)))
-            return -np.exp(XB) + y * XB - sc.gammaln(y + 1)
-
-
-
+  
     def dpoisl(self, x, theta, log=False):
         # if theta < 0:
         #    raise ValueError("theta must be positive!")
@@ -5703,7 +6252,9 @@ class ObjectiveFunction(object):
         coeff_ = optim_res['x']
         penalty = 0
         stderr_opg = None
-        if self.run_numerical_hessian:
+        if self.run_bootstrap:
+            stderr_opg = self.stderr
+        elif self.run_numerical_hessian:
             
             stderr_opg = self.stderr
 
@@ -5717,7 +6268,8 @@ class ObjectiveFunction(object):
         else:
             covariance = np.diag(np.ones(len(optim_res.x)))
         covariance = self.handle_covariance(covariance)
-        covariance = np.clip(covariance, 0, None)
+        self
+        covariance = np.clip(covariance, 0, self.N)
         stderr = np.sqrt(np.diag(covariance))
         if stderr_opg is not None:
             stderr = np.minimum(stderr, stderr_opg)
@@ -6114,7 +6666,7 @@ class ObjectiveFunction(object):
                 bounds=bounds,
                 tol=tol,
                 mod=mod,
-                n_bootstraps=100
+                n_bootstraps=6
             )
             self.stderr = std_errors
 
@@ -6259,6 +6811,7 @@ class ObjectiveFunction(object):
             log_ll, aic, bic, stderr, zvalues, pvalue_alt, other_measures = self._post_fit_ll_aic_bic(
                 optimization_result, simple_fit=False, is_dispersion=dispersion
             )
+
 
             # Validation metrics if test data is available (in-sample and out-of-sample MAE)
             in_sample_mae = None
@@ -7575,9 +8128,11 @@ class ObjectiveFunction(object):
 
 
             else:
-                if self.significant == 1 and obj_1['layout'] is not None and obj_1['pval_exceed'] == 0:
-                    self.summary_alternative(model=dispersion, solution=obj_1)
 
+                if self.significant == 1 and obj_1['layout'] is not None:
+                    self.summary_alternative(long_print = self.non_sig_prints, model=dispersion, solution=obj_1)
+                elif self.significant == 1 and obj_1['layout'] is not None and obj_1['pval_exceed'] == 0:
+                    self.summary_alternative(model=dispersion, solution=obj_1)
         return obj_1, model_nature
 
     def get_X_tril(self):

@@ -186,8 +186,16 @@ def main(args, **kwargs):
         }
         a_des, df = helperprocess.set_up_analyst_constraints(df, model_terms)
         # some example argument, these are defualt so the following line is just for claritity
-        args = {'algorithm': 'hs', 'test_percentage': 0.15, 'test_complexity': 6, 'instance_number': 1,
+        AMALAN = False
+        if AMALAN:
+
+            args = {'algorithm': 'hs', 'test_percentage': 0.15, 'test_complexity': 6, 'instance_number': 1,
                 'val_percentage': 0.15, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 600, 'desicions':a_des, 'is_multi': 1}
+        else:
+
+            args = {'algorithm': 'hs', 'test_percentage': 0, 'test_complexity': 2, 'instance_number': 1,
+                'val_percentage': 0, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 600, 'desicions': a_des,
+                'is_multi': False, 'grad_est': False, 'non_sig_prints':True, 'model_types': [[0]], 'run_bootstrap':0}
         # Fit the model with metacountregressor
         # Step 5: Transform the dataset based on the configuration
         #data_new = helperprocess.transform_dataframe(dataset, config)
