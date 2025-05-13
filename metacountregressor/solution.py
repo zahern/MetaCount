@@ -6881,7 +6881,7 @@ class ObjectiveFunction(object):
             if len(initial_params) < num_coefficients:
                 initial_params = np.concatenate([
                     initial_params,
-                np.random.uniform(-0.01, 0.02, size=num_coefficients - len(initial_params))
+                np.random.uniform(-0.01, 0.03, size=num_coefficients - len(initial_params))
             ])
 
             else:
