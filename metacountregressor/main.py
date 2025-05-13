@@ -195,12 +195,12 @@ def main(args, **kwargs):
 
             args = {'algorithm': 'hs', 'test_percentage': 0, 'test_complexity': 2, 'instance_number': 1,
                 'val_percentage': 0, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 600, 'desicions': a_des,
-                'is_multi': False, 'grad_est': False, 'non_sig_prints':True, 'model_types': [[0]], 'run_bootstrap':0}
+                'is_multi': False, 'grad_est': True, 'non_sig_prints':True, 'model_types': [[0]], 'run_bootstrap':0, 'r_nu_hess':0, '_transformations': ["no", "no", "nil", 'log']}
         # Fit the model with metacountregressor
         # Step 5: Transform the dataset based on the configuration
         #data_new = helperprocess.transform_dataframe(dataset, config)
         y = df[['Y']]
-        X = df.drop(columns=['Y'])
+        X = df.drop(columns=['Y', 'ID', 'TRAIN', 'MXMEDSH', 'DECLANES', 'DOUBLE', 'INTECHAG', 'MINRAD', 'PEAKHR', 'AVESNOW', 'FC', 'SINGLE', 'WIDTH', 'MEDWIDTH', 'CURVES', 'URB', 'ADTLANE', 'GRADEBR', 'SLOPE', 'MIMEDSH', 'TANGENT', 'AVEPRE', 'ACCESS'])
         obj_fun = ObjectiveFunction(X, y, **args)
         # replace with other metaheuristics if desired
         results = harmony_search(obj_fun)

@@ -38,7 +38,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type='text/markdown',  # Specify Markdown content
     url='https://github.com/zahern/CountDataEstimation',
-    author='Zeke Ahern',
+    author='Zeke Ahern, Alexander Paz',
     author_email='z.ahern@qut.edu.au',
     license='MIT',
     packages=['metacountregressor'],

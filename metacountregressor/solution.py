@@ -128,7 +128,7 @@ class ObjectiveFunction(object):
         self.run_numerical_hessian = kwargs.get('r_nu_hess', False)
         self.run_bootstrap = kwargs.get('run_bootstrap', False)
         self.linear_regression = kwargs.get('linear_model', False)
-        self.reg_penalty = kwargs.get('reg_penalty', 1)
+        self.reg_penalty = kwargs.get('reg_penalty', 0)
         self.power_up_ll = False
         self.nb_parma = 1
         self.bic = None
@@ -435,7 +435,7 @@ class ObjectiveFunction(object):
         self.pvalue_sig_value = kwargs.get('pvalue_sig_value', .1)
         self.observations = self._x_data.shape[0]
         self.minimize_scaler = 1 / self.observations  # scale the minimization function to the observations
-
+        self.minimize_scaler =1
         self.batch_size = None
         # open the file in the write mode
         self.grab_transforms = 0
@@ -3610,68 +3610,7 @@ class ObjectiveFunction(object):
             print(exc_type, fname, exc_tb.tb_lineno)
             raise Exception
 
-    def NB_score_lindley(self, params, y, mu, X, Q=0, obs_specific=False):
-        """
-        Calculate the score (gradient) vector of the Negative Binomial-Lindley log-likelihood
-        Parameters
-        ----------
-        params : array_like
-            The parameters of the model
-            params[-1]: is the dispersion parameter
-        y: array_like
-            Vector of true counts N long
-        mu: array_like
-            Vector of predicted counts N long
-        X: array_like
-            Matrix of explanatory variables len N* (D-1)
-        a: float or None, optional
-            Optional parameter, if not None the function calculates the score for the NB-Lindley model with Lindley parameter a,
-            otherwise, it calculates the score for the Negative Binomial model.
-        Returns
-        -------
-        score : ndarray, 1-D
-            The score vector of the model, i.e. the first derivative of the
-            loglikelihood function, evaluated at `params`
-        """
 
-        alpha = params[-1]
-        a = params[-2]
-        a1 = 1 / alpha * mu
-        prob = a1 / (a1 + mu)
-        exog = X
-
-        # Calculate the score of the Negative Binomial model
-        dgpart = sc.digamma(y + alpha * mu) - sc.digamma(alpha * mu)
-        dparams = exog * alpha * (np.log(prob) + dgpart)
-        dalpha = ((alpha * (y - mu * np.log(prob) -
-                            mu * (dgpart + 1)) -
-                   mu * (np.log(prob) +
-                         dgpart)) /
-                  (alpha ** 2 * (alpha + 1)))
-
-        # If a is not None, calculate the score of the NB-Lindley model
-        if a is not None:
-            a1 = (1 + a) / (alpha + a + mu)
-            prob = a1 / (a1 + mu)
-            dgpart = sc.digamma(y + alpha * mu + a) - \
-                     sc.digamma(alpha * mu + a)
-            dparams_lindley = exog * (alpha + a) * (np.log(prob) + dgpart)
-            dalpha_lindley = (((alpha + a) * (y - mu * np.log(prob) -
-                                              mu * (dgpart + 1)) -
-                               mu * (np.log(prob) +
-                                     dgpart)) /
-                              ((alpha + a) ** 2 * (alpha + a + 1)))
-
-            if obs_specific is False:
-                return np.r_[dparams.sum(0), dalpha_lindley.sum(), dalpha.sum()]
-                # return np.r_[dparams.sum(0) + dparams_lindley.sum(0), dalpha_lindley.sum(), dalpha.sum()]
-            else:
-                return np.concatenate((dparams, dalpha_lindley, dalpha), axis=1)
-                # return np.concatenate((dparams + dparams_lindley, dalpha_lindley, dalpha), axis=1)
-            # return np.r_[dparams.sum(0), dalpha, dparams_lindley.sum(0), dalpha_lindley]
-
-        else:
-            return np.r_[dparams.sum(0), dalpha]
 
     def PoissonNegLogLikelihood(self, lam, y, penalty=0, X=None):
         """computers the negative log-likelihood for a poisson random variable"""
@@ -3763,71 +3702,7 @@ class ObjectiveFunction(object):
         p = np.exp(-ltheta)
         return r, p
 
-    def negative_binomial_lindley_pmf(self, y, r, theta2, mu):
-        """
-        Calculate the probability mass function (PMF) of the Negative Binomial Lindley (NB-L) distribution
-        for a given count y, mean lambda, dispersion r, shape alpha, and scale beta.
 
-        Parameters:
-        y (int or array-like): The count(s) of interest.
-        mu (float): The mean parameter of the Negative Binomial distribution.
-        r (float): The dispersion parameter of the Negative Binomial distribution.
-        theta2: The shape parameter of the Lindley distribution.
-
-
-        Returns:
-        pmf (float or ndarray): The probability mass function evaluated at the count(s) y.
-        """
-
-        theta = self.my_lindley(y, theta2)
-        mu1 = mu * theta
-
-        var = mu1 + 1 / r * mu1 ** 2
-        p = (var - mu1) / var
-        numerator = math.comb(r + y.ravel() - 1.0, y.ravel()
-                              ) * ((theta ** 2) / (theta + 1))
-        denominator = 0
-        for j in range(y + 1):
-            denominator += math.comb(y, j) * ((-1) ** j) * \
-                           ((theta + r + j + 1) / ((theta + r + j) ** 2))
-
-        please = numerator / denominator * p ** y * (1 - p) ** r
-        return please
-
-    def negative_binomial_lindley_pmf_gradient(self, y, r, theta2, mu):
-        """
-        Calculate the gradient of the probability mass function (PMF) of the Negative Binomial Lindley (NB-L) 
-        distribution for a given count y, mean lambda, dispersion r, shape alpha, and scale beta.
-
-        Parameters:
-        y (int or array-like): The count(s) of interest.
-        mu (float): The mean parameter of the Negative Binomial distribution.
-        r (float): The dispersion parameter of the Negative Binomial distribution.
-        theta2: The shape parameter of the Lindley distribution.
-
-
-        Returns:
-        gradient (ndarray): The gradient of the probability mass function evaluated at the count(s) y.
-        """
-
-        theta = self.my_lindley(y, theta2)
-        mu = mu * mu + theta
-        var = mu + 1 / r * mu ** 2
-        p = (var - mu) / var
-        numerator = math.comb(r + y - 1, y) * ((theta ** 2) / (theta + 1))
-        denominator = 0
-        for j in range(y + 1):
-            denominator += math.comb(y, j) * ((-1) ** j) * \
-                           ((theta + r + j + 1) / ((theta + r + j) ** 2))
-
-        dtheta = numerator * (y * (2 * theta + 1) - theta * (theta + 1)) / denominator ** 2
-        dmu = (y - mu) * p / (1 - p)
-        dr = -r ** 2 / var + r / var * (y - r * mu / (1 - p))
-        dtheta2 = theta * (y * (theta + 1) / (theta + 1 + mu) -
-                           (theta2 + 1) / (theta2 + mu)) / denominator
-
-        gradient = np.array([dtheta2, dmu, dr])
-        return gradient
 
     def dnbl(self, x, r, theta):
 
@@ -4754,6 +4629,43 @@ class ObjectiveFunction(object):
         pch[pch == 0] = 0.00001
         return pch
 
+
+
+
+
+
+    def compute_gradient_central(self, betas, Xd, y, draws=None, Xf=None, Xr=None, batch_size=None, return_gradient=False,
+                                  return_gradient_n=False, dispersion=0, test_set=0, return_EV=False, verbose=0,
+                                  corr_list=None, zi_list=None, exog_infl=None, draws_grouped=None, Xgroup=None,
+                                  model_nature=None, kwarg=None, **kwargs)->np.ndarray:
+    # {
+        params = np.array(betas)
+
+        delta = np.ones_like(params) * 1e-5  #
+        gradient = np.zeros_like(params) # create an array
+        for i in range(len(params)):
+        # {
+            orig = params[i]
+            params[i] = orig + delta[i]
+            case_1 = self._loglik_gradient(
+                params, Xd, y, draws=draws, Xf=Xf, Xr=Xr, batch_size=batch_size, return_gradient=return_gradient,
+                return_gradient_n=return_gradient_n, dispersion=dispersion, test_set=test_set, return_EV=return_EV,
+                verbose=verbose, corr_list=corr_list, zi_list=zi_list, exog_infl=exog_infl, draws_grouped=draws_grouped,
+                Xgroup=Xgroup, model_nature=model_nature, kwarg=kwarg, **kwargs
+            )
+            params[i] = orig - delta[i]
+            case_2 = self._loglik_gradient(
+                params, Xd, y, draws=draws, Xf=Xf, Xr=Xr, batch_size=batch_size, return_gradient=return_gradient,
+                return_gradient_n=return_gradient_n, dispersion=dispersion, test_set=test_set, return_EV=return_EV,
+                verbose=verbose, corr_list=corr_list, zi_list=zi_list, exog_infl=exog_infl, draws_grouped=draws_grouped,
+                Xgroup=Xgroup, model_nature=model_nature, kwarg=kwarg, **kwargs
+            )
+            params[i] = orig # restore value
+            gradient[i] = (case_1 - case_2) / (2.0 * delta[i])
+        # }
+        return gradient
+
+
     def gradient_calc_est(self, N, Kf, Kr, Kchol, dispersion, proba_n, eVd, br, brstd, draws_, Xdf, Xdr, y, R, lik,
                           alpha=0.5, betas=None, Br=None, panels=None, model_nature=None, br_h=None, br_hs=None):
 
@@ -5000,7 +4912,7 @@ class ObjectiveFunction(object):
                     (self._group_Y[key].ravel() - sub_eVd[i].ravel())[:, None] * Xd[key])
 
             # todo make dummies with grouped
-            grad = np.concatenate(der_list, axis=0)
+            grad_g = np.concatenate(der_list, axis=0)
             grad_n = np.concatenate(der_n, axis=1)
             grad = grad_n.sum(axis=0)
             # grad = grad_n.sum(axis = 1)
@@ -5016,17 +4928,22 @@ class ObjectiveFunction(object):
                 der = grad_n.sum(axis=0)
                 # to do prob product arcross panel
 
-                return np.nan_to_num(der, nan=200000, posinf=200000, neginf=-200000), np.nan_to_num(grad_n, nan=200000,
-                                                                                                    posinf=200000,
-                                                                                                    neginf=-200000)
+                return np.nan_to_num(der, nan=200, posinf=200, neginf=-200), np.nan_to_num(grad_n, nan=200,
+                                                                                                    posinf=200,
+                                                                                                    neginf=-200)
 
             if obs_specific:
                 grad_n_p = (y - eVd)[:, :, :] * Xd
                 grad_n = self._prob_product_across_panels(grad_n_p, self.panel_info)
                 der = grad_n.sum(axis=0)
-                return np.nan_to_num(der, nan=200000, posinf=200000, neginf=-200000)
+                return np.nan_to_num(der, nan=200, posinf=200, neginf=-200)
             else:
+                n, p, k = Xd.shape
                 grad_n_p = (y - eVd)[:, :, :] * Xd
+                #residual = (y - eVd).squeeze(axis = -1)
+               # grad = np.zeros(k)
+                #for j in range(p):
+                #    grad += Xd[:, j, :].T @ residual[:, j]  # Shape: (k,)
                 grad_n = self._prob_product_across_panels(grad_n_p, self.panel_info)
                 der = grad_n.sum(axis=0)
 
@@ -5046,11 +4963,7 @@ class ObjectiveFunction(object):
                                             y, eVd, Xd, obs_specific=True)
                 return np.nan_to_num(der, nan=200, posinf=200, neginf=-200), np.nan_to_num(grad_n, nan=140, posinf=140,
                                                                                            neginf=-140)
-        elif dispersion == 3:
 
-            der, grad_n = self.poisson_lindley_gradient(betas, Xd, y)
-
-            return der, grad_n
 
         
         elif dispersion == 'poisson_lognormal':
@@ -5058,7 +4971,7 @@ class ObjectiveFunction(object):
             der, grad_n = self.poisson_lognormal_glm_score(betas, y, Xd, sig)
             return der, grad_n
 
-        return np.nan_to_num(der, nan=200000, posinf=2000000, neginf=-20000)
+        return np.nan_to_num(der, nan=200, posinf=200, neginf=-200)
 
     def prob_obs_draws(self, eVi, y, disp, dispersion=0.0, disp2=0):
 
@@ -5072,12 +4985,10 @@ class ObjectiveFunction(object):
 
             proba_r = self.general_poisson_pmf(eVi, y, disp)
 
-        elif dispersion == 3:
-            proba_r = self.poisson_lindley_pmf(eVi, disp2, y)
+
         # proba_r = self.dpoisl(y, eVi)
 
-        elif dispersion == 4:
-            proba_r = self.dnegbimonli(y, eVi, disp)
+
 
         else:
             raise Exception
@@ -5359,13 +5270,13 @@ class ObjectiveFunction(object):
                 if self.is_dispersion(dispersion):
                     penalty, main_disper = self._penalty_dispersion(dispersion, main_disper, eVd, y, penalty,
                                                                     model_nature)
-                    b_pen = self.custom_betas_to_penalise(betas, dispersion)
-                    penalty =  self.regularise_l2(betas) + self.regularise_l1(betas)
-                    penalty = self.custom_penalty(betas, penalty)
+                    #b_pen = self.custom_betas_to_penalise(betas, dispersion)
+                    #penalty =  self.regularise_l2(betas) + self.regularise_l1(betas)
+                    #penalty = self.custom_penalty(betas, penalty)
 
                     betas[-1] = main_disper
 
-                b_pen = self.custom_betas_to_penalise(betas, dispersion)
+                #b_pen = self.custom_betas_to_penalise(betas, dispersion)
                 penalty =  self.regularise_l2(betas) + self.regularise_l1(betas)
                 penalty = self.custom_penalty(betas, penalty)
 
@@ -5390,7 +5301,7 @@ class ObjectiveFunction(object):
                     loglik += 2*loglik
                     print('am i powering up')
                 
-                b_pen = self.custom_betas_to_penalise(betas, dispersion)
+                #b_pen = self.custom_betas_to_penalise(betas, dispersion)
                 penalty =  self.regularise_l2(betas) + self.regularise_l1(betas)
                 penalty = self.custom_penalty(betas, penalty)
 
@@ -5404,13 +5315,26 @@ class ObjectiveFunction(object):
                         der, grad_n = self.simple_score_grad(
                             betas, y, eVd, Xd, dispersion, both=True)
                         #return (-loglik + penalty, -der, grad_n)*self.minimize_scaler
-                        scaled_tuple = tuple(x * self.minimize_scaler for x in (-loglik + penalty, -der.ravel(), grad_n))
+                        scaled_tuple = tuple(x * self.minimize_scaler for x in (-loglik + penalty, der.ravel(), grad_n))
+
                         return scaled_tuple
                     else:
                         der = self.simple_score_grad(
                             betas, y, eVd, Xd, dispersion, both=False)
+                        #arguments = locals()  # Capture all current arguments
+                        #arguments["return_gradient"] = False  # Change `dispersion` to 1
+                        #del arguments["self"]  # Remove `self` from arguments (not needed in the call)
+                        '''
+                        der_alt = self.compute_gradient_central(betas, Xd, y, draws=draws, Xf=Xf, Xr=Xr, batch_size=batch_size, return_gradient=False,
+                         return_gradient_n=False, dispersion=dispersion, test_set=test_set, return_EV=return_EV, verbose=verbose, corr_list=corr_list,
+                         zi_list=zi_list, exog_infl=exog_infl, draws_grouped=draws_grouped, Xgroup=Xgroup, model_nature=model_nature, kwarg=kwarg,
+                         **kwargs)
+                        '''
                         scaled_tuple = tuple(
                             x * self.minimize_scaler for x in (-loglik + penalty, -der.ravel()))
+
+
+
                         return scaled_tuple
                         #return (-loglik + penalty, -der.ravel())*self.minimize_scaler
                 else:
@@ -5752,9 +5676,7 @@ class ObjectiveFunction(object):
             traceback.print_exc()
             print(e, 'where loglik')
 
-    def minimize_function(self, loglike):
-        r'Takes the logliklihood function and tranforms it to a more handed minimization function'
-        return loglike/self.n_obs
+
     def print_chol_mat(self, betas):
         print(self.chol_mat)
         self.get_br_and_bstd(betas)
@@ -6623,6 +6545,12 @@ class ObjectiveFunction(object):
             tol=tol.get('ftol', 1e-6),  # Use 'ftol' as the default tolerance
             options=options
         )
+
+        #print(result.summary())
+
+
+        #i want to compare this to stats model.s
+
         if optimization_result.message == 'NaN result encountered.':
             optimization_result = self._minimize(self._loglik_gradient,
             initial_params,
@@ -6930,7 +6858,7 @@ class ObjectiveFunction(object):
         total = sum(self.get_num_params()) + dispersion_param
         return total
        
-    def _build_initial_params(self, num_coefficients, dispersion):
+    def _build_initial_params(self, num_coefficients, dispersion, XX, y):
         """
         Build the initial parameter array for optimization.
 
@@ -6942,7 +6870,27 @@ class ObjectiveFunction(object):
             Initial parameter array.
         """
         # Generate random initial coefficients
-        initial_params = np.random.uniform(0.0000, 0.01, size=num_coefficients)
+        # call in statsmodels
+        try:
+            if dispersion ==0:
+                model = sm.GLM(y.squeeze(axis=-1), XX.squeeze(axis=1), family=sm.families.Poisson())
+            else:
+                model = sm.NegativeBinomial(y.squeeze(axis=-1), XX.squeeze(axis=1))
+            result = model.fit()
+            initial_params = result.params # then exten to num_coefficients
+            if len(initial_params) < num_coefficients:
+                initial_params = np.concatenate([
+                    initial_params,
+                np.random.uniform(-0.01, 0.01, size=num_coefficients - len(initial_params))
+            ])
+
+            else:
+                initial_params = np.random.uniform(-0.01, 0.01, size=num_coefficients)
+        except:
+            print('pre fit failes')
+            initial_params = np.random.uniform(-0.01, 0.01, size=num_coefficients)
+
+
         parma_sum = sum(self.get_num_params()[:2])
        
                        
@@ -6972,7 +6920,7 @@ class ObjectiveFunction(object):
         try:
             dispersion = mod.get('dispersion', dispersion)
             # Preprocessing
-            tol = {'ftol': 1e-6, 'gtol': 1e-6, 'xtol': 1e-6}
+            tol = {'ftol': 1e-10, 'gtol': 1e-6, 'xtol': 1e-7}
             y, X, Xr, XG, XH = mod.get('y'), mod.get('X'), mod.get('Xr'), mod.get('XG'), mod.get('XH')
 
             # Validate input data
@@ -6987,7 +6935,7 @@ class ObjectiveFunction(object):
             num_coefficients = self._calculate_num_coefficients(mod, dispersion)
 
             # Build initial parameters and bounds
-            initial_params = self._build_initial_params(num_coefficients, dispersion)
+            initial_params = self._build_initial_params(num_coefficients, dispersion, XX, y)
             bounds = self._set_bounds(initial_params, dispersion)
 
        
