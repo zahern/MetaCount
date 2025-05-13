@@ -6885,7 +6885,7 @@ class ObjectiveFunction(object):
             ])
 
             else:
-                initial_params = np.random.uniform(-0.01, 0.02, size=num_coefficients)
+                initial_params = np.random.uniform(-0.01, 0.3, size=num_coefficients)
         except:
             print('pre fit failed')
             initial_params = np.random.uniform(-0.01, 0.01, size=num_coefficients)
