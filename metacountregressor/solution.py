@@ -227,6 +227,11 @@ class ObjectiveFunction(object):
                     print(
                         'Making a Directory, if you want to stop from storing the files to this directory set argumet: make_directory:False')
                     os.makedirs(self.instance_name)
+            else:
+                if not kwargs.get('delete_directory', False):
+                    print('to clear the directory clear')
+                    os.d
+
         else:
             self.save_state = False
         if not hasattr(self, '_obj_1'):
@@ -574,7 +579,7 @@ class ObjectiveFunction(object):
         # Harmony search parameters
         self.algorithm = kwargs.get('algorithm', 'hs')
         self._hms = 20
-        self._max_time = kwargs.get('_max_time', 0.8 * 60 * 60 * 24)
+       # self._max_time = kwargs.get('_max_time', 0.8 * 60 * 60 * 24)
         self._hmcr = kwargs.get('_hmcr', 0.5)
         self._par = 0.3
         self._mpai = 1
@@ -724,7 +729,7 @@ class ObjectiveFunction(object):
         # defalt paramaters for hs #TODO unpack into harmony search class
         self.algorithm = kwargs.get('algorithm', 'hs')  # 'sa' 'de' also avialable
         self._hms = 20
-        self._max_time = self._max_time = kwargs.get('_max_time', kwargs.get('MAX_TIME', 0.8 * 60 * 60 * 24))
+        self._max_time  = kwargs.get('_max_time', kwargs.get('MAX_TIME', 0.8 * 60 * 60 * 24))
         self._hmcr = kwargs.get('_hmcr', .5)
         self._par = 0.3 #dont think this gets useted
         self._mpai = 1
@@ -2083,6 +2088,7 @@ class ObjectiveFunction(object):
 
         # Calculate dispersion
             dispersion = residual_deviance / degrees_of_freedom
+
         except:
             dispersion =1 
 
@@ -6897,6 +6903,13 @@ class ObjectiveFunction(object):
         initial_params[parma_sum:-dispersion] =0.0001
 
         # Add dispersion parameter if applicable
+        if dispersion == 1:
+            print('checking for dispersion')
+            calculated_dispersion = self.poisson_mean_get_dispersion(initial_params[:-1], XX, y)
+            print('calculated dispersion', calculated_dispersion)
+            print('estimated dispersion', initial_params[-1])
+
+
         if dispersion > 0:
             initial_params[-1] =  0.0
             #initial_params[0] =3
