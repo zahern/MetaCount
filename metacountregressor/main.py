@@ -188,7 +188,7 @@ def main(args, **kwargs):
         # some example argument, these are defualt so the following line is just for claritity
         AMALAN = False
         if AMALAN:
-
+            print('testing code')
             args = {'algorithm': 'hs', 'test_percentage': 0.15, 'test_complexity': 6, 'instance_number': 1,
                 'val_percentage': 0.15, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 600, 'desicions':a_des, 'is_multi': 1}
         else:
