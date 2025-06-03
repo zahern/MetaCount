@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import psutil
 import scipy.special as sc
-
+import shutil
 import statsmodels.api as sm
 from scipy.integrate import quad
 from scipy.optimize import minimize
@@ -123,6 +123,14 @@ class ObjectiveFunction(object):
     """
 
     def __init__(self, x_data, y_data, **kwargs):
+        """
+        Initialie with dynatmic kwargs
+        Keyword Args:
+
+        """
+
+
+
         self.gbl_best = 1e5
         self.non_sig_prints = kwargs.get('non_sig_prints', False)
         self.run_numerical_hessian = kwargs.get('r_nu_hess', False)
@@ -228,9 +236,14 @@ class ObjectiveFunction(object):
                         'Making a Directory, if you want to stop from storing the files to this directory set argumet: make_directory:False')
                     os.makedirs(self.instance_name)
             else:
-                if not kwargs.get('delete_directory', False):
-                    print('to clear the directory clear')
-                    os.d
+                if kwargs.get('delete_directory', False):
+                    print('Clearing the directory...')
+                    # Remove all contents of the directory
+                    shutil.rmtree(self.instance_name)
+                    # Recreate the directory
+                    os.makedirs(self.instance_name)
+                else:
+                    print('Directory exists. To clear it, set the argument: delete_directory=True')
 
         else:
             self.save_state = False
@@ -1477,7 +1490,12 @@ class ObjectiveFunction(object):
         if dispersion == 0:
             return None
         if dispersion == 1:
-            return np.clip(np.exp(betas[-1]),None, 2)
+            if betas[-1] <0:
+                #transforming
+                return np.clip(np.exp(betas[-1]-1),None, 600)
+            else: #transforming
+                return np.clip(betas[-1],None, 600)
+
             
 
         elif dispersion == 2 or dispersion == 1:
@@ -1794,7 +1812,10 @@ class ObjectiveFunction(object):
             signif_list = self.pvalue_asterix_add(self.pvalues)
             if model == 1:
                 # raise to the exponential
-                self.coeff_[-1] = np.maximum(np.exp(self.coeff_[-1]),5)
+                if self.coeff_[-1] < 0:
+                    #transform if negative
+                    self.coeff_[-1] = np.maximum(np.exp(self.coeff_[-1]-1),600)
+
                 if self.no_extra_param:
                     self.coeff_ = np.append(self.coeff_, self.nb_parma)
                     self.stderr = np.append(self.stderr, 0.00001)
@@ -2098,7 +2119,7 @@ class ObjectiveFunction(object):
         #disp = sm.OLS(ab.ravel(), bb.ravel()).fit()
         #gamma = disp.params[0]
         #print(f'dispersion is {gamma}')
-        gamma = np.min([dispersion,1])
+        gamma = np.min([dispersion,1000])
         if gamma < 0.05:
             gamma = 0.05
         return gamma
@@ -4251,11 +4272,15 @@ class ObjectiveFunction(object):
         '''
         alpha = gamma
         size = 1.0 / alpha * mu ** Q
-
+        r = 1/gamma
+        p = gamma/(gamma+lam)
+        pmf = nbinom.pmf(y, r, p)
+        #pmf = self.nbinom_pmf(y, lam, gamma)
+        #p = lam/(lam+r)
         prob = size/(size+mu)
 
-
-
+        #binom_coeff = math.comb(int(y +r - 1), y)
+        #ff = binom_coeff * ((1 - p) ** r) * (p ** y)
         '''test'''
 
 
@@ -4289,7 +4314,7 @@ class ObjectiveFunction(object):
                         y + alpha) * np.log(mu + alpha))
             gg[np.isnan(gg)] = 1
             '''
-            gg_alt = nbinom.pmf(y ,1/alpha, prob)
+            gg_alt = nbinom.pmf(y ,alpha, prob)
             #gg_alt_2 = (gammaln(size + y) - gammaln(y + 1) -
              #gammaln(size)) + size * np.log(prob) + y * np.log(1 - prob)
             #print('check theses')
@@ -4299,7 +4324,8 @@ class ObjectiveFunction(object):
 
         except Exception as e:
             print("Neg Binom error.")
-        return gg_alt
+        return pmf
+        #return gg_alt
 
     def lindley_pmf(self, x, r, theta, k=50):
         """
@@ -6410,6 +6436,7 @@ class ObjectiveFunction(object):
                                                         0, False, 0, None, None, None, None, None, mod),
                                                   method=method2, tol=tol['ftol'], options={'gtol': tol['gtol']})
 
+
                 if initial_beta is not None and not np.isnan(initial_beta['fun']):
                     self._no_random_paramaters = 1
                     if initial_beta['success'] != 0:
@@ -6881,19 +6908,46 @@ class ObjectiveFunction(object):
             if dispersion ==0:
                 model = sm.GLM(y.squeeze(axis=-1), XX.squeeze(axis=1), family=sm.families.Poisson())
             else:
-                model = sm.NegativeBinomial(y.squeeze(axis=-1), XX.squeeze(axis=1))
+                model = sm.GLM(y.squeeze(axis=-1), XX.squeeze(axis=1), family =sm.families.NegativeBinomial())
+                #model = sm.NegativeBinomial(y.squeeze(axis=-1), XX.squeeze(axis=1))
             result = model.fit()
-            initial_params = result.params # then exten to num_coefficients
+            #initial_params = result.params # then exten to num_coefficients
+            if result.converged:
+                initial_params = result.params
+
+                if len(initial_params) < num_coefficients:
+                    pearson_residuals = result.resid_pearson
+                    alpha = (pearson_residuals ** 2).sum() / result.df_resid
+                    if alpha > 0:
+                        alpha = np.log(alpha)
+                    initial_params = np.concatenate([
+                        initial_params.ravel(), np.array([alpha])])
+                    '''
+                    initial_params = np.concatenate([
+                        initial_params,
+                    np.random.uniform(-0.01, 0.03, size=num_coefficients - len(initial_params))
+                    ])
+                    '''
             if len(initial_params) < num_coefficients:
-                initial_params = np.concatenate([
-                    initial_params,
-                np.random.uniform(-0.01, 0.03, size=num_coefficients - len(initial_params))
-            ])
+
+                #how to insert this into the second last position
+
+                # Assuming initial_params and num_coefficients are already defined
+                new_elements = np.random.uniform(-0.01, 0.03, size=num_coefficients - len(initial_params))
+
+                # Second-to-last position is at index `-1` in NumPy
+                initial_params = np.insert(initial_params, -dispersion, new_elements)
+
+
+
+
+
 
             else:
+                #print('failed taking random fit')
                 initial_params = np.random.uniform(-0.01, 0.3, size=num_coefficients)
         except:
-            print('pre fit failed, continie')
+            #print('pre fit failed, continue')
             initial_params = np.random.uniform(-0.01, 0.01, size=num_coefficients)
 
 
@@ -6904,14 +6958,16 @@ class ObjectiveFunction(object):
 
         # Add dispersion parameter if applicable
         if dispersion == 1:
-            print('checking for dispersion')
+            #print('checking for dispersion')
             calculated_dispersion = self.poisson_mean_get_dispersion(initial_params[:-1], XX, y)
-            print('calculated dispersion', calculated_dispersion)
-            print('estimated dispersion', initial_params[-1])
+            #print('init', initial_params)
+            #print('calculated dispersion', calculated_dispersion)
+            #print('alpha ', 1/calculated_dispersion)
+            #print('estimated dispersion', initial_params[-1])
 
 
         if dispersion > 0:
-            initial_params[-1] =  0.0
+            initial_params[-1] =  calculated_dispersion
             #initial_params[0] =3
 
         return initial_params
@@ -6953,6 +7009,7 @@ class ObjectiveFunction(object):
 
        
             # Run optimization
+            #initial_params = [2.82, 1.11]
             optimization_result = self._run_optimization(
                 XX, y, dispersion, initial_params, bounds, tol, mod, maxiter=maxiter
             )

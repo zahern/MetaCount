@@ -177,6 +177,7 @@ def main(args, **kwargs):
         df['Offset'] = np.log(df['AADT'])
         # Drop Y, selected offset term and  ID as there are no panels
         X = df.drop(columns=['FREQ', 'ID', 'AADT'])
+
         # Step 0: Process Data
         model_terms = {
             'Y': 'FREQ',  # Replace 'FREQ' with the name of your dependent variable
@@ -187,10 +188,35 @@ def main(args, **kwargs):
         a_des, df = helperprocess.set_up_analyst_constraints(df, model_terms)
         # some example argument, these are defualt so the following line is just for claritity
         AMALAN = False
+        ZEKE = True
         if AMALAN:
             print('testing code')
-            args = {'algorithm': 'hs', 'test_percentage': 0.15, 'test_complexity': 6, 'instance_number': 1,
-                'val_percentage': 0.15, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 600, 'desicions':a_des, 'is_multi': 1}
+            args = {'algorithm': 'hs', 'test_percentage': 0, 'test_complexity': 6, 'instance_number': 1,
+                'val_percentage': 0, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 600, 'desicions':a_des, 'is_multi': 1}
+        elif ZEKE:
+            X = X.drop(columns=['Offset'])
+            manual_fit_spec = {
+                'fixed_terms': ['const', 'FC', 'SLOPE', 'AVESNOW'],
+                'rdm_terms': ['URB:normal'],
+                'rdm_cor_terms': [],
+                'grouped_rdm': [],
+                'hetro_in_means': [],
+                'transformations': ['no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no'],
+                'dispersion': 1
+            }
+
+            # Search Arguments
+            arguments = {
+                'algorithm': 'hs',
+                'test_percentage': 0,
+                'test_complexity': 6,
+                'instance_name': 'name',
+                'Manual_Fit': manual_fit_spec
+            }
+            obj_fun = ObjectiveFunction(X, y, **arguments)
+            print('completed')
+
+
         else:
 
             args = {'algorithm': 'hs', 'test_percentage': 0, 'test_complexity': 2, 'instance_number': 1,
