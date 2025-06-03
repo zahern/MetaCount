@@ -188,7 +188,7 @@ def main(args, **kwargs):
         a_des, df = helperprocess.set_up_analyst_constraints(df, model_terms)
         # some example argument, these are defualt so the following line is just for claritity
         AMALAN = False
-        ZEKE = True
+        ZEKE = False
         if AMALAN:
             print('testing code')
             args = {'algorithm': 'hs', 'test_percentage': 0, 'test_complexity': 6, 'instance_number': 1,
