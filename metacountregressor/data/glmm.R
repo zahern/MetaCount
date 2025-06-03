@@ -379,7 +379,7 @@ dd <- ggplot(gravity_gc) +
 dd
 
 long_data <- gravity_gc %>%
-  select(Ticket, predicted, predicted_sqrt, predicted_mm, pred_o, pred_p, pred_q, pred_r, pred_s) %>%
+  select(Ticket, predicted, predicted_sqrt, predicted_mm, pred_o, pred_p, pred_q, pred_r, pred_s, SA2_NAME21, Type, Sport) %>%
   pivot_longer(
     cols = starts_with("pred"),  # Columns to pivot (predicted model columns)
     names_to = "Model",          # New column for model names
@@ -476,10 +476,18 @@ for (model in facet_models) {
     width = 6, height = 4, dpi = 300
   )
 }
+write.csv(
+  all_models_data, 
+  file = file.path(output_dir, "predicted_vs_actual.csv"), 
+  row.names = FALSE
+)
 
 
-
-
+write.csv(
+  long_data %>% select(Ticket, Predicted, Model, SA2_NAME21, Type, Sport),
+  file = file.path("facets", "predicted_vs_actual_with_labels.csv"),
+  row.names = FALSE
+)
 
 
 

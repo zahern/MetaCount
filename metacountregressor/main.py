@@ -171,6 +171,9 @@ def main(args, **kwargs):
         # Read data from CSV file
         df: TextFileReader | DataFrame | Any = pd.read_csv(
             "https://raw.githubusercontent.com/zahern/data/main/Ex-16-3.csv")
+        print('df')
+        df = pd.read_csv('data/ex163.csv'
+        )
         X = df
         y = df['FREQ']  # Frequency of crashes
         X['Offset'] = np.log(df['AADT'])  # Explicitley define how to offset the data, no offset otherwise
@@ -188,7 +191,7 @@ def main(args, **kwargs):
         a_des, df = helperprocess.set_up_analyst_constraints(df, model_terms)
         # some example argument, these are defualt so the following line is just for claritity
         AMALAN = False
-        ZEKE = False
+        ZEKE = True
         if AMALAN:
             print('testing code')
             args = {'algorithm': 'hs', 'test_percentage': 0, 'test_complexity': 6, 'instance_number': 1,
@@ -204,6 +207,17 @@ def main(args, **kwargs):
                 'transformations': ['no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no'],
                 'dispersion': 1
             }
+            manual_fit_spec = {
+                'fixed_terms': ['FRICTION', 'LOWPRE', 'HISNOW', 'EXPOSE', 'CPM', 'INTPM', 'GBRPM', 'const'],
+                'rdm_terms': [],
+                'rdm_cor_terms': [],
+                'grouped_rdm': [],
+                'hetro_in_means': [],
+                'transformations': ['no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no'],
+                'dispersion': 1
+            }
+            
+
 
             # Search Arguments
             arguments = {

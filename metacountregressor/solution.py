@@ -153,7 +153,7 @@ class ObjectiveFunction(object):
         self.verbose_safe = kwargs.get('verbose', 0)
         self.please_print = kwargs.get('please_print', 0)
         self.group_halton = None
-        self.grad_yes = kwargs.get('grad_est', False)
+        self.grad_yes = kwargs.get('grad_est', True)
         self.hess_yes = False
         self.group_halton_test = None
         self.panels = None
@@ -574,7 +574,7 @@ class ObjectiveFunction(object):
         self.negative_binomial_value = 1
         self.verbose_safe = kwargs.get('verbose', 0)
         self.please_print = kwargs.get('please_print', 0)
-        self.grad_yes = kwargs.get('grad_est', False)
+        self.grad_yes = kwargs.get('grad_est', True)
         self.hess_yes = False
         self.rounding_point = kwargs.get('decimals_in_coeff', 4)
         self.best_obj_1 = 1e6
@@ -743,6 +743,7 @@ class ObjectiveFunction(object):
         self.algorithm = kwargs.get('algorithm', 'hs')  # 'sa' 'de' also avialable
         self._hms = 20
         self._max_time  = kwargs.get('_max_time', kwargs.get('MAX_TIME', 0.8 * 60 * 60 * 24))
+        print(f'the maximum etimation time is {self._max_time}')
         self._hmcr = kwargs.get('_hmcr', .5)
         self._par = 0.3 #dont think this gets useted
         self._mpai = 1
@@ -1252,7 +1253,8 @@ class ObjectiveFunction(object):
         modified_fit = self.modify_initial_fit(manual_fit)  # Modify the initial fit based on manual_fit
         self.significant = 1
         #self.define_selfs_fixed_rdm_cor(modified_fit)
-        self.makeRegression(modified_fit)  # Perform regression with the modified fit
+        self.makeRegression(modified_fit)  # Perform regression with the modified fit'
+        self.summary_alternative()
 
 
     def process_fit_specifications(self, find_constant, hard_code):
@@ -1492,9 +1494,9 @@ class ObjectiveFunction(object):
         if dispersion == 1:
             if betas[-1] <0:
                 #transforming
-                return np.clip(np.exp(betas[-1]-1),None, 600)
+                return np.clip(betas[-1],0.0000001, 600)
             else: #transforming
-                return np.clip(betas[-1],None, 600)
+                return np.clip(betas[-1],0.0000001, 600)
 
             
 
@@ -1793,7 +1795,7 @@ class ObjectiveFunction(object):
 
         if self.please_print or save_state:
 
-            if self.convergance is not None:
+            if self.convergence is not None:
                 print("-" * 80)
 
                 print('Log-Likelihood: ', self.log_lik)
@@ -1814,7 +1816,8 @@ class ObjectiveFunction(object):
                 # raise to the exponential
                 if self.coeff_[-1] < 0:
                     #transform if negative
-                    self.coeff_[-1] = np.maximum(np.exp(self.coeff_[-1]-1),600)
+                    self.coeff_[-1] = np.exp(self.coeff_[-1])
+                    #self.coeff_[-1] = 0.0000001
 
                 if self.no_extra_param:
                     self.coeff_ = np.append(self.coeff_, self.nb_parma)
@@ -1929,7 +1932,7 @@ class ObjectiveFunction(object):
                 print("-" * 50)
                 print("WARNING: Convergence was not reached during estimation. "
                       "The given estimates may not be reliable")
-            if self.convergance is not None:
+            if self.convergence is not None:
                 print("-" * 85)
                 print('BIC: ', self.bic)
                 if solution is not None:
@@ -2120,8 +2123,11 @@ class ObjectiveFunction(object):
         #gamma = disp.params[0]
         #print(f'dispersion is {gamma}')
         gamma = np.min([dispersion,1000])
+        if gamma > 1:
+            gamma = np.log(gamma)
         if gamma < 0.05:
             gamma = 0.05
+        gamma = 1
         return gamma
 
     def validation(self, betas, y, X, Xr=None, dispersion=0, rdm_cor_fit=None, zi_list=None, exog_infl=None,
@@ -3586,9 +3592,16 @@ class ObjectiveFunction(object):
 
         try:
             if alpha is None:
-                alpha = np.exp(params[-1])
+                if params[-1] <0:
+                    alpha = 0.0000001
+                else:
+                    alpha = params[-1]
+
             else:
-                alpha = np.exp(params[-1])
+                if params[-1] < 0:
+                    alpha = 0.0000001
+                else:
+                    alpha = params[-1]
             a1 = 1 / alpha * mu ** Q
             prob = a1 / (a1 + mu)
             exog = X
@@ -3603,6 +3616,39 @@ class ObjectiveFunction(object):
                                  dgpart)) /
                           (alpha ** 2 * (alpha + 1))).sum()
             elif Q == 0:  # nb2
+                ### delete this if it falls over
+
+                '''
+                var = mu + alpha * (mu ** 2)
+
+                # Residuals
+                residual = y - mu
+
+                # Weights (scaling factor for gradient)
+                weights = 1 / var  # 1/Var(Y)
+
+                # Gradient for beta (coefficients)
+                grad_beta_per_panel = residual[:, :, None] * weights[:, :, None] * X  # (n, p, K)
+                panel_info = None
+                if panel_info is not None:
+                    grad_beta = self._prob_product_across_panels(grad_beta_per_panel, panel_info).sum(
+                        axis=0)  # Aggregate across panels
+                else:
+                    grad_beta = grad_beta_per_panel.sum(axis=(0, 1))  # Sum across observations and panels
+
+                # Gradient for alpha (dispersion)
+                grad_alpha_per_panel = -0.5 * ((residual ** 2 - var) / var ** 2) * (mu ** 2)  # (n, p)
+                if panel_info is not None:
+                    grad_alpha = self._prob_product_across_panels(grad_alpha_per_panel, panel_info).sum()
+                else:
+                    grad_alpha = grad_alpha_per_panel.sum()
+
+                return np.append(grad_beta.ravel(), grad_alpha)
+                '''
+                ## check
+
+
+
                 dgpart = sc.digamma(y + a1) - sc.digamma(a1)
                 dparams = exog * a1[:, :, :] * (y[:, :, :] - mu[:, :, :]) / (mu[:, :, :] + a1[:, :, :])
                 # dparams2 = exog[:,0,:] * np.atleast_2d(a1[:,0] * (y[:,0] - mu[:,0]) / (mu[:,0] + a1[:,0])).transpose()
@@ -4483,17 +4529,7 @@ class ObjectiveFunction(object):
                 # if b_gam < 0.03:
                 penalty += min(1, np.abs(b_gam), 0)
 
-                #b_gam = 0.001
-                #
-            
-            #if b_gam >= 10:
-               # penalty+= b_gam
-                
-           # if b_gam == 0:
-                #b_gam = min_comp_val
-            #b_gam = 0.03
 
-           # b_gam = abs(b_gam)
             
 
 
@@ -5003,7 +5039,7 @@ class ObjectiveFunction(object):
             der, grad_n = self.poisson_lognormal_glm_score(betas, y, Xd, sig)
             return der, grad_n
 
-        return np.nan_to_num(der, nan=200, posinf=200, neginf=-200)
+        return np.nan_to_num(der, nan = np.exp(500))
 
     def prob_obs_draws(self, eVi, y, disp, dispersion=0.0, disp2=0):
 
@@ -6440,9 +6476,9 @@ class ObjectiveFunction(object):
                 if initial_beta is not None and not np.isnan(initial_beta['fun']):
                     self._no_random_paramaters = 1
                     if initial_beta['success'] != 0:
-                        self.convergance = 0
+                        self.convergence = 0
                     else:
-                        self.convergance = 1
+                        self.convergence = 1
                 print('TODO NEED TO RETURN THE THINGS I CARE ABOUT')
             else:
                 
@@ -6972,7 +7008,7 @@ class ObjectiveFunction(object):
 
         return initial_params
     
-    def fitRegression(self, mod, dispersion=0, maxiter=20, batch_size=None, num_hess=False, **kwargs):
+    def fitRegression(self, mod, dispersion=0, maxiter=2000, batch_size=None, num_hess=False, **kwargs):
         """
         Fits a Poisson regression, NB regression (dispersion=1), or GP regression (dispersion=2).
 
@@ -7042,7 +7078,7 @@ class ObjectiveFunction(object):
             paramNum = len(betas_est['x'])
 
             # Naming for printing (optional, for formatting or debugging purposes)
-            self.convergance = not is_delete
+            self.convergence = not is_delete
             self.naming_for_printing(betas_est['x'], 0, dispersion, model_nature=mod)
 
             # Add metrics to solution object
@@ -7285,9 +7321,9 @@ class ObjectiveFunction(object):
                 if initial_beta is not None and not np.isnan(initial_beta['fun']):
                     self._no_random_paramaters = 1
                     if initial_beta['success'] != 0:
-                        self.convergance = 0
+                        self.convergence = 0
                     else:
-                        self.convergance = 1
+                        self.convergence = 1
                     log_ll_fixed = -initial_beta['fun']
 
                     # old
@@ -7349,7 +7385,7 @@ class ObjectiveFunction(object):
                         # return obj_1, log_ll_fixed, initial_beta.x, stderr_fixed, pvalue_alt_fixed, zvalues_fixed, is_halton, is_delete_init
                 elif initial_beta is None:
 
-                    self.convergance = None
+                    self.convergence = None
                     print('why does it do this, this should not happen')
                     return sol, None, initial_beta['x'], None, None, None, 0, 1
                 else:
@@ -7565,16 +7601,16 @@ class ObjectiveFunction(object):
                     if bb_hess is not None:
                         betas_est['hess_inv'] = bb_hess
                 if betas_est['hess_inv'] is None:
-                    self.convergance = 1
+                    self.convergence = 1
                     print('no hessian, bic fixed is ', bic_fixed)
                     is_halton = 0
 
                     return sol, log_ll_fixed, initial_beta[
                         'x'], stderr_fixed, pvalue_alt_fixed, zvalues_fixed, is_halton, is_delete_init
                 if betas_est['success'] != 0:
-                    self.convergance = 0
+                    self.convergence = 0
                 else:
-                    self.convergance = 1
+                    self.convergence = 1
 
                 log_ll, aic, bic, stderr, zvalues, pvalue_alt, other_measures = self._post_fit_ll_aic_bic(
                     betas_est, simple_fit=False, is_dispersion=dispersion)
