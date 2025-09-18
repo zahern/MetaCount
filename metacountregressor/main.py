@@ -374,7 +374,7 @@ def main(args, **kwargs):
             'dispersion': 0
         }
     elif dataset == 8:
-        print('Main County')
+        print('Main County Dataset')
         df = pd.read_csv('./data/rural_int.csv')  # read in the data
         y_df = df[['crashes']].copy()  # only consider crashes
         y_df.rename(columns={"crashes": "Y"}, inplace=True)
@@ -408,6 +408,7 @@ def main(args, **kwargs):
         }
 
     elif dataset == 9:
+        print('synthetic data')
         df = pd.read_csv('panel_synth.csv')  # read in the data
         y_df = df[['Y']].copy()  # only consider crashes
         y_df.rename(columns={"crashes": "Y"}, inplace=True)
