@@ -1300,15 +1300,15 @@ class HarmonySearch(object):
         self._harmony_trace_best = list()
         self._harmony_trace_incumbent = list()
         if self._obj_fun.is_multi:  # TODO Define more specific objectives in the intialiser
-            self.obj_1 = objective_function._obj_1
-            self.obj_2 = objective_function._obj_2
+            self.obj_1 = objective_function._get_obj1()
+            self.obj_2 = objective_function._get_obj2()
 
             self.pf = Pareto(self.obj_1, self.obj_2, True)
             self._pareto_harmony_memory = self._harmony_memory.copy()
 
         else:
-            self.obj_1 = objective_function._obj_1
-            self.obj_2 = objective_function._obj_2
+            self.obj_1 = objective_function._get_obj1()
+            self.obj_2 = objective_function._get_obj2()
 
             self.pf = Pareto(self.obj_1, self.obj_2, False)
 
@@ -1515,7 +1515,7 @@ class HarmonySearch(object):
         x2 = list();
         y = list();
         z = list()
-        print('best_re', self._harmony_trace_best)
+        print('best_results in harmony trace', self._harmony_trace_best)
         for dic_item in self._harmony_trace_best:
             for key in dic_item:
                 if key == 'gen':
@@ -1792,9 +1792,11 @@ class HarmonySearch(object):
             self._harmony_memory = self.pf.non_dominant_sorting(self._harmony_memory)
         else:
             if self._obj_fun.maximize():
-                self._harmony_memory.sort(key=lambda x: x[self._obj_fun._obj_1], reverse=True)
+                self._harmony_memory.sort(key=lambda x: x[self._obj_fun._get_obj1()], reverse=True)
             else:
-                self._harmony_memory.sort(key=lambda x: x[self._obj_fun._obj_1])
+                self._harmony_memory.sort(key=lambda x: x[self._obj_fun._get_obj1()])
+
+
 
     def _get_best_feature(self, j):
         self._sort_memory()
@@ -1982,7 +1984,9 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
                     best_fitness = fitness[self.obj_1]
             # self._plot_harmony_history()
             iterations_for_plotting, incumbent_for_plotting, best_for_plotting = self._retrieve_results()
+            print('I Belive this falls over')
             print('best harmony', best_harmony)
+            print('best_fitness,', best_fitness)
             self._obj_fun.get_fitness(best_harmony, verbose=True)
         if self.pf.get_objective_is_multi():
 

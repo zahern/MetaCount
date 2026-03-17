@@ -25,7 +25,7 @@ class Device():
             raise Exception("CuPy not found. Verify it is properly installed")
         cupy.cuda.Device(device_id).use()
     def disable_gpu_acceleration(self):
-        self.np = numpy
+        self.np = np
         self._using_gpu = False
     @property
     def using_gpu(self):
@@ -57,7 +57,7 @@ class Device():
         else:
             return arr
     def nan_safe_sum(self, arr, axis=0):
-        arr[numpy.isnan(arr)] = 0
+        arr[np.isnan(arr)] = 0
         return arr.sum(axis=axis)
     def get_device_count(self):
         if _gpu_available:

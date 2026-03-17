@@ -1,0 +1,143 @@
+======================================================
+EXPERIMENT SUMMARY
+======================================================
+Algorithm: hs
+Seed: 0
+Config ID: 0
+Timestamp: 20260307_132031
+======================================================
+
+
+================ BEST MODEL STRUCTURE ================
+
+INCLANES     → Grouped                | Dist: normal
+DECLANES     → Random Independent     | Dist: normal
+WIDTH        → Fixed                  | Dist: normal
+SPEED        → Fixed                  | Dist: uniform
+URB          → Random Correlated      | Dist: uniform
+FC           → Fixed                  | Dist: uniform
+AADT         → Fixed                  | Dist: normal
+SINGLE       → Grouped                | Dist: uniform
+DOUBLE       → Grouped                | Dist: normal
+TRAIN        → Random Correlated      | Dist: uniform
+PEAKHR       → Random Independent     | Dist: normal
+GRADEBR      → Random Independent     | Dist: uniform
+TANGENT      → Random Independent     | Dist: uniform
+CURVES       → Fixed                  | Dist: normal
+MINRAD       → Excluded               | Dist: uniform
+ACCESS       → Fixed                  | Dist: normal
+MEDWIDTH     → Random Independent     | Dist: uniform
+SLOPE        → Fixed                  | Dist: normal
+INTECHAG     → Grouped                | Dist: normal
+AVEPRE       → Excluded               | Dist: normal
+AVESNOW      → Random Correlated      | Dist: normal
+LOWPRE       → Fixed                  | Dist: normal
+GBRPM        → Fixed                  | Dist: uniform
+EXPOSE       → Excluded               | Dist: normal
+INTPM        → Fixed                  | Dist: uniform
+CPM          → Excluded               | Dist: uniform
+HISNOW       → Random Correlated      | Dist: uniform
+FRICTION     → Fixed                  | Dist: triangular
+MIMEDSH      → Random Correlated      | Dist: normal
+
+======================================================
+
+
+================ MODEL SUMMARY ================
+
+================ FIXED EFFECTS ================
+
+Parameter  Estimate      Std.Err       z-value      p-value
+    WIDTH -0.018052 5.259796e-09 -3.432112e+06 0.000000e+00
+    SPEED -0.000992 4.242646e-09 -2.337007e+05 0.000000e+00
+       FC -0.022631 2.919434e-10 -7.751693e+07 0.000000e+00
+     AADT -0.000036 5.305488e-06 -6.727860e+00 1.721756e-11
+   CURVES  0.713157 1.653272e-10  4.313608e+09 0.000000e+00
+   ACCESS -0.012358 1.405722e-10 -8.791277e+07 0.000000e+00
+    SLOPE  0.016225 6.688837e-11  2.425688e+08 0.000000e+00
+   LOWPRE -0.006064 1.043728e-11 -5.810292e+08 0.000000e+00
+    GBRPM -0.048999 1.431119e-10 -3.423793e+08 0.000000e+00
+    INTPM -0.008971 4.653525e-11 -1.927865e+08 0.000000e+00
+ FRICTION -0.144103 3.627149e-09 -3.972900e+07 0.000000e+00
+
+================ CORRELATED RANDOM MEANS ================
+
+        Parameter  Estimate      Std.Err      z-value  p-value
+    cor_mean(URB) -0.008477 5.019076e-11 -168895936.0      0.0
+  cor_mean(TRAIN)  0.062684 1.331529e-10  470770464.0      0.0
+cor_mean(AVESNOW)  0.006193 7.428485e-11   83374544.0      0.0
+ cor_mean(HISNOW) -0.010299 2.072861e-11 -496826432.0      0.0
+cor_mean(MIMEDSH) -0.021053 3.685071e-10  -57131324.0      0.0
+
+================ INDEPENDENT RANDOM MEANS ================
+
+     Parameter  Estimate      Std.Err      z-value  p-value
+mean(DECLANES) -0.008141 1.979184e-10  -41131664.0      0.0
+  mean(PEAKHR) -0.284173 7.344870e-10 -386900448.0      0.0
+ mean(GRADEBR)  0.801717 2.757970e-10 2906911232.0      0.0
+ mean(TANGENT)  0.072898 4.308351e-11 1692021504.0      0.0
+mean(MEDWIDTH)  0.081928 2.819318e-10  290596800.0      0.0
+
+================ INDEPENDENT RANDOM SDs ================
+
+   Parameter  Estimate      Std.Err       z-value  p-value
+sd(DECLANES) -0.032634 5.312274e-11 -6.143086e+08      0.0
+  sd(PEAKHR) -2.446133 3.390948e-12 -7.213714e+11      0.0
+ sd(GRADEBR) -0.064849 3.793118e-11 -1.709651e+09      0.0
+ sd(TANGENT) -0.030026 1.784220e-11 -1.682875e+09      0.0
+sd(MEDWIDTH) -0.032911 1.205312e-11 -2.730531e+09      0.0
+
+================ GROUPED RANDOM EFFECTS ================
+
+           Parameter  Estimate      Std.Err       z-value  p-value
+group_mean(INCLANES)  0.001544 1.946036e-10  7.932730e+06      0.0
+  group_mean(SINGLE)  0.024438 2.820075e-10  8.665740e+07      0.0
+  group_mean(DOUBLE)  0.148492 4.677726e-10  3.174443e+08      0.0
+group_mean(INTECHAG)  0.224594 9.905954e-11  2.267266e+09      0.0
+  group_sd(INCLANES) -0.011064 1.289248e-10 -8.581504e+07      0.0
+    group_sd(SINGLE) -0.073089 2.285432e-12 -3.198048e+10      0.0
+    group_sd(DOUBLE) -1.319475 5.440168e-12 -2.425431e+11      0.0
+  group_sd(INTECHAG) -0.041060 5.342301e-12 -7.685828e+09      0.0
+
+================ DISPERSION ================
+
+ Parameter  Estimate      Std.Err      z-value  p-value
+dispersion  0.070117 3.207040e-11 2186335744.0      0.0
+
+================ CORRELATED RANDOM VAR-COV ================
+
+Var(URB) = 0.000058
+Var(TRAIN) = 0.005449
+Var(AVESNOW) = 0.130018
+Var(HISNOW) = 0.000926
+Var(MIMEDSH) = 0.719373
+Cov(TRAIN,URB) = 0.000293
+Cov(AVESNOW,URB) = -0.000961
+Cov(AVESNOW,TRAIN) = 0.006392
+Cov(HISNOW,URB) = 0.000047
+Cov(HISNOW,TRAIN) = 0.002057
+Cov(HISNOW,AVESNOW) = 0.002469
+Cov(MIMEDSH,URB) = 0.000882
+Cov(MIMEDSH,TRAIN) = 0.022788
+Cov(MIMEDSH,AVESNOW) = 0.161825
+Cov(MIMEDSH,HISNOW) = 0.005925
+
+================ CORRELATION MATRIX ================
+
+Corr(TRAIN,URB) = 0.521640
+Corr(AVESNOW,URB) = -0.349869
+Corr(AVESNOW,TRAIN) = 0.240154
+Corr(HISNOW,URB) = 0.202289
+Corr(HISNOW,TRAIN) = 0.915899
+Corr(HISNOW,AVESNOW) = 0.225014
+Corr(MIMEDSH,URB) = 0.136460
+Corr(MIMEDSH,TRAIN) = 0.363974
+Corr(MIMEDSH,AVESNOW) = 0.529135
+Corr(MIMEDSH,HISNOW) = 0.229603
+
+------------------------------------------------
+Log-Likelihood: -1431.0026
+AIC: 2962.0051
+BIC: 3142.8438
+================================================
+

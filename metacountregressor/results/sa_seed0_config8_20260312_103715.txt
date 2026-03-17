@@ -1,0 +1,69 @@
+======================================================
+EXPERIMENT SUMMARY
+======================================================
+Algorithm: sa
+Seed: 0
+Config ID: 8
+Timestamp: 20260312_103715
+======================================================
+
+
+================ BEST MODEL STRUCTURE ================
+
+INCLANES     → Excluded               | Dist: normal
+DECLANES     → Excluded               | Dist: normal
+WIDTH        → Excluded               | Dist: normal
+SPEED        → Random Correlated      | Dist: normal
+URB          → Excluded               | Dist: normal
+FC           → Excluded               | Dist: normal
+SINGLE       → Excluded               | Dist: normal
+DOUBLE       → Excluded               | Dist: normal
+TRAIN        → Excluded               | Dist: normal
+PEAKHR       → Excluded               | Dist: normal
+GRADEBR      → Excluded               | Dist: normal
+TANGENT      → Random Independent     | Dist: normal
+CURVES       → Excluded               | Dist: normal
+MINRAD       → Excluded               | Dist: normal
+ACCESS       → Excluded               | Dist: normal
+MEDWIDTH     → Excluded               | Dist: normal
+SLOPE        → Excluded               | Dist: normal
+INTECHAG     → Excluded               | Dist: normal
+AVEPRE       → Excluded               | Dist: normal
+AVESNOW      → Excluded               | Dist: normal
+LOWPRE       → Excluded               | Dist: normal
+GBRPM        → Excluded               | Dist: normal
+EXPOSE       → Fixed                  | Dist: normal
+INTPM        → Excluded               | Dist: normal
+CPM          → Excluded               | Dist: normal
+HISNOW       → Excluded               | Dist: normal
+FRICTION     → Excluded               | Dist: normal
+
+======================================================
+
+
+================ MODEL SUMMARY ================
+
+================ FIXED EFFECTS ================
+
+    Parameter  Estimate  Std.Err    z-value  p-value
+__INTERCEPT__  2.675349 0.003507 762.810120      0.0
+       EXPOSE  1.915910 0.061672  31.066242      0.0
+
+================ INDEPENDENT RANDOM MEANS ================
+
+    Parameter  Estimate  Std.Err    z-value  p-value
+mean(TANGENT)  0.044583 0.026106   1.707741 0.087684
+  mean(SPEED) -0.015895 0.001241 -12.813029 0.000000
+
+================ INDEPENDENT RANDOM SDs ================
+
+  Parameter   Estimate      Std.Err       z-value  p-value
+sd(TANGENT) -23.455996 8.984809e-13 -2.610628e+13      0.0
+  sd(SPEED)  -4.214878 3.722131e-02 -1.132383e+02      0.0
+
+------------------------------------------------
+Log-Likelihood: -1005.3491
+AIC: 2022.6982
+BIC: 2044.3989
+================================================
+

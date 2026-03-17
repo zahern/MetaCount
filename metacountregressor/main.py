@@ -28,65 +28,12 @@ def convert_df_columns_to_binary_and_wide(df):
     return df
 
 
-
-
-
-
-def process_arguments(**kwargs):
+def process_arguments():
     '''
     TRYING TO TURN THE CSV FILES INTO RELEVANT ARGS
     '''
-    #dataset
-    '''
-    if kwargs.get('dataset_file', False
-    ):
-        dataset = pd.read_csv(kwargs.get('dataset_file'))
-        named_data_headers = dataset.columns.tolist()
-        decision_constants = {name: list(range(7)) for name in named_data_headers}
-        data_info = {
-
-
-            'AADT': {
-                'type': 'continuous',
-                'bounds': [0.0, np.infty],
-                'discrete': False,
-                'apply_func': (lambda x: np.log(x + 1)),
-            },
-            'SPEED': {
-                'type': 'continuous',
-                'bounds': [0, 100],
-                'enforce_bounds': True,
-                'discrete': True
-            },
-            'TIME': {
-                'type': 'continuous',
-                'bounds': [0, 23.999],
-                'discrete': False
-            }
-        }
-        #remove ID CoLUMNS from dataset
-        dataset = dataset.drop(columns = [
-            'ID'
-        ])
-        for c in dataset.columns:
-            if c not in data_info.keys():
-                data_info[c] = {'type': 'categorical'}
-
-        data_new  =helperprocess.transform_dataframe(dataset,data_info)
-
-        update_constant = kwargs.get('analyst_constraints')
-        #update the decision_constraints
-    '''
-    data_characteristic = pd.read_csv(kwargs.get('problem_data', 'problem_data.csv'))
-    # Extract the column as a list of characteristic names
-    #name_data_characteristics = data_characteristic.columns.tolist()
-
-    # Create the dictionary
-    #decision_constraints = {name: list(range(7)) for name in name_data_characteristics}
-
-    #print('this gets all the features, I need to remove...')
-
-    analyst_d = pd.read_csv(kwargs.get('decison_constraints', 'decisions.csv'))
+    data_characteristic = pd.read_csv('problem_data.csv')
+    analyst_d = pd.read_csv('decisions.csv')
     hyper = pd.read_csv('setup_hyper.csv')
 
     new_data = {'data': data_characteristic,
@@ -94,14 +41,15 @@ def process_arguments(**kwargs):
                 'hyper': hyper}
     return new_data
 
-def process_package_arguments():
+def process_package_argumemnts():
 
     new_data = {}
+    print('setup decisions')
+
     pass
 
 
 def main(args, **kwargs):
-
     '''METACOUNT REGRESSOR TESTING ENVIRONMENT'''
 
     '''
@@ -171,76 +119,16 @@ def main(args, **kwargs):
         # Read data from CSV file
         df: TextFileReader | DataFrame | Any = pd.read_csv(
             "https://raw.githubusercontent.com/zahern/data/main/Ex-16-3.csv")
-        print('df')
-        df = pd.read_csv('data/ex163.csv'
-        )
         X = df
         y = df['FREQ']  # Frequency of crashes
         X['Offset'] = np.log(df['AADT'])  # Explicitley define how to offset the data, no offset otherwise
-        df['Offset'] = np.log(df['AADT'])
         # Drop Y, selected offset term and  ID as there are no panels
         X = df.drop(columns=['FREQ', 'ID', 'AADT'])
 
-        # Step 0: Process Data
-        model_terms = {
-            'Y': 'FREQ',  # Replace 'FREQ' with the name of your dependent variable
-            'group': None,  # Replace 'group_column' with the name of your grouping column (or None if not used)
-            'panels': None,  # Replace 'panel_column' with the name of your panel column (or None if not used)
-            'Offset': 'Offset'  # Replace None with the name of your offset column if using one
-        }
-        a_des, df = helperprocess.set_up_analyst_constraints(df, model_terms)
         # some example argument, these are defualt so the following line is just for claritity
-        AMALAN = False
-        ZEKE = True
-        if AMALAN:
-            print('testing code')
-            args = {'algorithm': 'hs', 'test_percentage': 0, 'test_complexity': 6, 'instance_number': 1,
-                'val_percentage': 0, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 600, 'desicions':a_des, 'is_multi': 1}
-        elif ZEKE:
-            X = X.drop(columns=['Offset'])
-            manual_fit_spec = {
-                'fixed_terms': ['const', 'FC', 'SLOPE', 'AVESNOW'],
-                'rdm_terms': ['URB:normal'],
-                'rdm_cor_terms': [],
-                'grouped_rdm': [],
-                'hetro_in_means': [],
-                'transformations': ['no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no'],
-                'dispersion': 1
-            }
-            manual_fit_spec = {
-                'fixed_terms': ['FRICTION', 'LOWPRE', 'HISNOW', 'EXPOSE', 'CPM', 'INTPM', 'GBRPM', 'const'],
-                'rdm_terms': [],
-                'rdm_cor_terms': [],
-                'grouped_rdm': [],
-                'hetro_in_means': [],
-                'transformations': ['no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no', 'no'],
-                'dispersion': 1
-            }
-            
-
-
-            # Search Arguments
-            arguments = {
-                'algorithm': 'hs',
-                'test_percentage': 0,
-                'test_complexity': 6,
-                'instance_name': 'name',
-                'Manual_Fit': manual_fit_spec
-            }
-            obj_fun = ObjectiveFunction(X, y, **arguments)
-            print('completed')
-
-
-        else:
-
-            args = {'algorithm': 'hs', 'test_percentage': 0, 'test_complexity': 2, 'instance_number': 1,
-                'val_percentage': 0, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 600, 'desicions': a_des,
-                'is_multi': False, 'grad_est': True, 'non_sig_prints':True, 'model_types': [[0]], 'run_bootstrap':0, 'r_nu_hess':0, '_transformations': ["no", "no", "nil", 'log']}
+        args = {'algorithm': 'hs', 'test_percentage': 0.15, 'test_complexity': 6, 'instance_number': 1,
+                'val_percentage': 0.15, 'obj_1': 'bic', '_obj_2': 'RMSE_TEST', "MAX_TIME": 6}
         # Fit the model with metacountregressor
-        # Step 5: Transform the dataset based on the configuration
-        #data_new = helperprocess.transform_dataframe(dataset, config)
-        y = df[['Y']]
-        X = df.drop(columns=['Y', 'ID', 'TRAIN', 'MXMEDSH', 'DECLANES', 'DOUBLE', 'INTECHAG', 'MINRAD', 'PEAKHR', 'AVESNOW', 'FC', 'SINGLE', 'WIDTH', 'MEDWIDTH', 'CURVES', 'URB', 'ADTLANE', 'GRADEBR', 'SLOPE', 'MIMEDSH', 'TANGENT', 'AVEPRE', 'ACCESS'])
         obj_fun = ObjectiveFunction(X, y, **args)
         # replace with other metaheuristics if desired
         results = harmony_search(obj_fun)
@@ -374,7 +262,7 @@ def main(args, **kwargs):
             'dispersion': 0
         }
     elif dataset == 8:
-        print('Main County Dataset')
+        print('Main County')
         df = pd.read_csv('./data/rural_int.csv')  # read in the data
         y_df = df[['crashes']].copy()  # only consider crashes
         y_df.rename(columns={"crashes": "Y"}, inplace=True)
@@ -408,7 +296,6 @@ def main(args, **kwargs):
         }
 
     elif dataset == 9:
-        print('synthetic data')
         df = pd.read_csv('panel_synth.csv')  # read in the data
         y_df = df[['Y']].copy()  # only consider crashes
         y_df.rename(columns={"crashes": "Y"}, inplace=True)
@@ -432,21 +319,24 @@ def main(args, **kwargs):
         keep = ['group', 'constant', 'element_ID']
 
         x_df = helperprocess.interactions(x_df, keep)
+    elif dataset == 'META':
+        kwargs.get('Y')
+        
+        data_info = process_package_argumemnts()
 
-
-    elif dataset ==10:  # the dataset has been selected in the program as something else
-        data_info = process_arguments(**args)
+    else:  # the dataset has been selected in the program as something else
+        data_info = process_arguments()
         data_info['hyper']
         data_info['analyst']
         data_info['data']['Y']
         #data_info['data']['Group'][0]
         #data_info['data']['Panel'][0]
         args['decisions'] = data_info['analyst']
-        print('check the args of the decions')
-        if type(data_info['data']['Grouped'][0]) == str and len(data_info['data']['Grouped'][0]) >1:
+
+        if not np.isnan(data_info['data']['Grouped'][0]):
             args['group'] = data_info['data']['Grouped'][0]
             args['ID'] = data_info['data']['Grouped'][0]
-        if type(data_info['data']['Panel'][0]) == str and len(data_info['data']['Panel'][0])>1:
+        if not np.isnan(data_info['data']['Panel'][0]):
             args['panels'] = data_info['data']['Panel'][0]
 
         df = pd.read_csv(str(data_info['data']['Problem'][0]))
@@ -454,10 +344,6 @@ def main(args, **kwargs):
         y_df = df[[data_info['data']['Y'][0]]]
         y_df.rename(columns={data_info['data']['Y'][0]: "Y"}, inplace=True)
         print('test') #FIXME
-    else:
-        print('PROCESS THE PACKAGE ARGUMENTS SIMULIAR TO HOW ONE WOULD DEFINE THE ENVIRONMENT')
-        data_info =process_package_arguments()
-
 
     if args['Keep_Fit'] == str(2) or args['Keep_Fit'] == 2:
         if manual_fit_spec is None:
@@ -563,63 +449,55 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='main',
                                      epilog=main.__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter, conflict_handler='resolve')
-    
-    
-    BATCH_JOB = False
 
-    if BATCH_JOB:
-        parser.add_argument('-dataset_file', default='data/Ex-16-3.csv', help='supply the path to the dataset')
+    parser.add_argument('-line', type=int, default=1,
+                        help='line to read in csv to pass in argument')
 
-        parser.add_argument('-line', type=int, default=1,
-                            help='line to read in csv to pass in argument')
+    if vars(parser.parse_args())['line'] is not None:
+        reader = csv.DictReader(open('set_data.csv', 'r'))
+        args = list()
+        line_number_obs = 0
+        for dictionary in reader:  # TODO find a way to handle multiple args
+            args = dictionary
+            if line_number_obs == int(vars(parser.parse_args())['line']):
+                break
+            line_number_obs += 1
+        args = dict(args)
 
-        if vars(parser.parse_args())['line'] is not None:
-            reader = csv.DictReader(open('set_data.csv', 'r'))
-            args = list()
-            line_number_obs = 0
-            for dictionary in reader:  # TODO find a way to handle multiple args
-                args = dictionary
-                if line_number_obs == int(vars(parser.parse_args())['line']):
-                    break
-                line_number_obs += 1
-            args = dict(args)
+        for key, value in args.items():
+            try:
+                # Attempt to parse the string value to a Python literal if value is a string.
+                if isinstance(value, str):
+                    value = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                # If there's a parsing error, value remains as the original string.
+                pass
 
+            # Add the argument to the parser with the potentially updated value.
+            parser.add_argument(f'-{key}', default=value)
 
-            for key, value in args.items():
-                try:
-                    # Attempt to parse the string value to a Python literal if value is a string.
-                    if isinstance(value, str):
-                        value = ast.literal_eval(value)
-                except (ValueError, SyntaxError):
-                    # If there's a parsing error, value remains as the original string.
-                    pass
+        for i, action in enumerate(parser._optionals._actions):
+            if "-algorithm" in action.option_strings:
+                parser._optionals._actions[i].help = "optimization algorithm"
 
-                # Add the argument to the parser with the potentially updated value.
-                parser.add_argument(f'-{key}', default=value)
+        override = False
+        if override:
+            print('WARNING: TESTING ENVIRONMENT, TURN OFF FOR RELEASE')
+            parser.add_argument('-problem_number', default='10')
 
-            for i, action in enumerate(parser._optionals._actions):
-                if "-algorithm" in action.option_strings:
-                    parser._optionals._actions[i].help = "optimization algorithm"
+        if 'algorithm' not in args:
+            parser.add_argument('-algorithm', type=str, default='hs',
+                                help='optimization algorithm')
+        elif 'Manual_Fit' not in args:
+            parser.add_argument('-Manual_Fit', action='store_false', default=None,
+                                help='To fit a model manually if desired.')
 
-            override = True
-            if override:
-                print('WARNING: TESTING ENVIRONMENT, TURN OFF FOR RELEASE')
-                parser.add_argument('-problem_number', default='10')
-
-            if 'algorithm' not in args:
-                parser.add_argument('-algorithm', type=str, default='hs',
-                                    help='optimization algorithm')
-            elif 'Manual_Fit' not in args:
-                parser.add_argument('-Manual_Fit', action='store_false', default=None,
-                                    help='To fit a model manually if desired.')
-
-            parser.add_argument('-seperate_out_factors', action='store_false', default=False,
-                                help='Trie of wanting to split data that is potentially categorical as binary'
-                                    ' we want to split the data for processing')
-            parser.add_argument('-supply_csv', type = str, help = 'enter the name of the csv, please include it as a full directories')
+        parser.add_argument('-seperate_out_factors', action='store_false', default=False,
+                            help='Trie of wanting to split data that is potentially categorical as binary'
+                                 ' we want to split the data for processing')
+        parser.add_argument('-supply_csv', type = str, help = 'enter the name of the csv, please include it as a full directorys')
 
     else:  # DIDN"T SPECIFY LINES TRY EACH ONE MANNUALY
-        print("RUNNING WITH ARGS")
         parser.add_argument('-com', type=str, default='MetaCode',
                             help='line to read csv')
 

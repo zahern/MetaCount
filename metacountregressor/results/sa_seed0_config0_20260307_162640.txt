@@ -1,0 +1,73 @@
+======================================================
+EXPERIMENT SUMMARY
+======================================================
+Algorithm: sa
+Seed: 0
+Config ID: 0
+Timestamp: 20260307_162640
+======================================================
+
+
+================ BEST MODEL STRUCTURE ================
+
+INCLANES     → Excluded               | Dist: normal
+DECLANES     → Excluded               | Dist: normal
+WIDTH        → Excluded               | Dist: normal
+SPEED        → Random Independent     | Dist: normal
+URB          → Excluded               | Dist: normal
+FC           → Excluded               | Dist: normal
+AADT         → Excluded               | Dist: uniform
+SINGLE       → Excluded               | Dist: normal
+DOUBLE       → Excluded               | Dist: normal
+TRAIN        → Excluded               | Dist: normal
+PEAKHR       → Excluded               | Dist: normal
+GRADEBR      → Excluded               | Dist: normal
+TANGENT      → Excluded               | Dist: normal
+CURVES       → Excluded               | Dist: normal
+MINRAD       → Excluded               | Dist: uniform
+ACCESS       → Excluded               | Dist: normal
+MEDWIDTH     → Excluded               | Dist: normal
+SLOPE        → Excluded               | Dist: normal
+INTECHAG     → Excluded               | Dist: normal
+AVEPRE       → Excluded               | Dist: normal
+AVESNOW      → Fixed                  | Dist: normal
+LOWPRE       → Excluded               | Dist: normal
+GBRPM        → Excluded               | Dist: normal
+EXPOSE       → Excluded               | Dist: normal
+INTPM        → Excluded               | Dist: normal
+CPM          → Excluded               | Dist: normal
+HISNOW       → Heterogeneity          | Dist: normal
+FRICTION     → Excluded               | Dist: normal
+MIMEDSH      → Excluded               | Dist: normal
+
+======================================================
+
+
+================ MODEL SUMMARY ================
+
+================ FIXED EFFECTS ================
+
+Parameter  Estimate  Std.Err   z-value  p-value
+  AVESNOW -0.018131 0.025312 -0.716312 0.473798
+
+================ INDEPENDENT RANDOM MEANS ================
+
+  Parameter  Estimate  Std.Err    z-value  p-value
+mean(SPEED) -0.067386  0.00152 -44.339695      0.0
+
+================ INDEPENDENT RANDOM SDs ================
+
+Parameter  Estimate  Std.Err    z-value  p-value
+sd(SPEED) -2.063879 0.011043 -186.89743      0.0
+
+================ HETEROGENEITY IN MEANS ================
+
+          Parameter  Estimate  Std.Err    z-value  p-value
+hetro(SPEED|HISNOW) -0.029772  0.00294 -10.126671      0.0
+
+------------------------------------------------
+Log-Likelihood: -1487.6619
+AIC: 2983.3237
+BIC: 2997.7908
+================================================
+

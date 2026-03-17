@@ -269,6 +269,68 @@ def null_handler(vari):
         return None
 
 
+def drop_high_corr(df, threshold=0.8):
+    corr = df.corr().abs()
+
+    # Upper triangle (no duplicates)
+    upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+
+    # Find features to drop
+    to_drop = [
+        col for col in upper.columns
+        if any(upper[col] > threshold)
+    ]
+    return df.drop(columns=to_drop), to_drop
+
+def drop_corr_second_only(df, threshold=0.8, must_keep=None):
+    """
+    Drops only the *second* variable in each correlated pair.
+    Protected variables in `must_keep` are never dropped.
+    """
+    if must_keep is None:
+        must_keep = []
+    must_keep = set(must_keep)
+
+    corr = df.corr().abs()
+    cols = corr.columns
+    n = len(cols)
+
+    to_drop = set()
+
+    # Only scan upper triangle, i < j
+    for i in range(n):
+        for j in range(i+1, n):   # j is *second* variable
+            v1 = cols[i]
+            v2 = cols[j]
+            r = corr.iloc[i, j]
+
+            if r > threshold:
+                # Both protected → drop none
+                if v1 in must_keep and v2 in must_keep:
+                    continue
+
+                # v2 protected → cannot drop it
+                if v2 in must_keep:
+                    continue
+
+                # Normal behavior → drop second (v2)
+                to_drop.add(v2)
+
+    df_clean = df.drop(columns=to_drop)
+    return df_clean, sorted(to_drop)
+
+def drop_second_in_corrpair(df, threshold=0.8):
+    corr = df.corr().abs()
+    to_drop = set()
+
+    for i in range(len(corr.columns)):
+        for j in range(i+1, len(corr.columns)):
+            if corr.iloc[i, j] > threshold:
+                col_j = corr.columns[j]
+                to_drop.add(col_j)
+
+    return df.drop(columns=list(to_drop)), list(to_drop)
+
 def set_up_analyst_constraints(data_characteristic, model_terms,  variable_decisions_alt = None):
 
 
@@ -285,6 +347,9 @@ def set_up_analyst_constraints(data_characteristic, model_terms,  variable_decis
         MAKE_ALL_4_FALSE = True
     else:
         MAKE_ALL_4_FALSE = False
+
+
+
 
     variable_decisions = {
         name: {

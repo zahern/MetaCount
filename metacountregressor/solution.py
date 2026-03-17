@@ -12,7 +12,7 @@ import sys
 import warnings
 from collections import Counter
 from functools import wraps
-
+import logging
 import traceback
 import latextable
 import numpy as np
@@ -28,12 +28,13 @@ from scipy.stats import boxcox, gamma, lognorm, nbinom, norm, poisson, t
 from sklearn import preprocessing
 from scipy.special import gammaln
 from sklearn.metrics import mean_absolute_error as MAE
-from sklearn.metrics import mean_squared_error as MSPE
+from sklearn.metrics import mean_squared_error as MSPEjax 
 from statsmodels.tools.numdiff import approx_fprime, approx_hess
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from texttable import Texttable
 import time
+import jax.numpy as jnp
 
 try:
     from ._device_cust import device as dev
@@ -136,7 +137,7 @@ class ObjectiveFunction(object):
         self.run_numerical_hessian = kwargs.get('r_nu_hess', False)
         self.run_bootstrap = kwargs.get('run_bootstrap', False)
         self.linear_regression = kwargs.get('linear_model', False)
-        self.reg_penalty = kwargs.get('reg_penalty', 0)
+        self.reg_penalty = kwargs.get('reg_penalty', 0.00)
         self.power_up_ll = False
         self.nb_parma = 1
         self.bic = None
@@ -447,13 +448,13 @@ class ObjectiveFunction(object):
             self.pareto_printer = Pareto(self._obj_1, self._obj_2, True)
             self._pareto_population = list()
 
-        self.Ndraws = kwargs.get('Ndraws', 200)
+        self.Ndraws = kwargs.get('Ndraws', 400)
         self.draws1 = None
         self.initial_sig = 1  # pass the test of a single model
         self.pvalue_sig_value = kwargs.get('pvalue_sig_value', .1)
         self.observations = self._x_data.shape[0]
         self.minimize_scaler = 1 / self.observations  # scale the minimization function to the observations
-        self.minimize_scaler =1
+        self.minimize_scaler =1.0
         self.batch_size = None
         # open the file in the write mode
         self.grab_transforms = 0
@@ -471,8 +472,9 @@ class ObjectiveFunction(object):
 
         self._transformations = kwargs.get('_transformations', ["no", "log", "sqrt", "arcsinh", "nil"])
         # self._distribution = ['triangular', 'uniform', 'normal', 'ln_normal', 'tn_normal', 'lindley']
-
-        self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal', 'tn_normal', 'ln_normal'])
+        logging.info('purt back in')
+        #'tn_normal', 'ln_normal'')
+        self._distribution = kwargs.get('_distributions', ['triangular', 'uniform', 'normal'])
 
         if self.G is not None:
             # TODO need to handle this for groups
@@ -555,6 +557,85 @@ class ObjectiveFunction(object):
             self.process_manual_fit(manual_fit)
 
         self.solution_analyst = None
+
+    def _get_obj1(self):
+
+        return self._obj_1
+
+    def _get_obj2(self):
+
+        return self._obj_2
+
+
+    def __init__twin(self, x_data, y_data, **kwargs):
+        # join the data
+        data = np.hstack((x_data, y_data.reshape(-1, 1)))
+        '''Based on Twinning Split data'''
+        import twinning
+        def test():
+            # Example dataset (replace with your actual data)
+            import pandas as pd
+            data = pd.DataFrame({
+                'Feature1': [1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1, 10, 20, 30, 40, 50, 60, 70, 80, 90],
+                'Feature2': [10, 20, 30, 40, 50, 10, 20, 30, 40, 50, 60, 100, 200, 300, 400, 500, 600, 700, 800, 900],
+                'Feature3': [100, 200, 300, 400, 500, 400, 300, 200, 100, 500, 600, 700, 1000, 800, 900, 1100, 1200,
+                             1300, 1400, 1500]
+            })
+            data = data.values
+            '''
+            # Initialize the Twin object
+            #inverse of the ratio 80% of the data is 5
+            smaller_twin = twinning.twin(data, 5)
+            # Create train and test datasets
+            test_data = data[smaller_twin, :]
+            train_data = np.delete(data, smaller_twin, axis=0)
+            total_samples = data.shape[0]
+            print("Train Data Shape:", train_data.shape)
+            print("Test Data Shape:", test_data.shape)
+            print(1)
+            '''
+            total_samples = data.shape[0]
+            train_ratio, test_ratio, val_ratio = 0.7, 0.2, 0.1
+            k = int(1 / min(train_ratio, test_ratio, val_ratio))
+
+            # Perform the multiplet split
+            split_ids = twinning.multiplet(data, k)  # Use strategy 2 for balanced splits
+
+            # Assign data points to train, test, and validation sets based on the ratio
+            train_cutoff = int(train_ratio * total_samples)
+            test_cutoff = train_cutoff + int(test_ratio * total_samples)
+
+            train_data = data[split_ids < train_cutoff // (total_samples // k)]
+            test_data = data[(split_ids >= train_cutoff // (total_samples // k)) &
+                             (split_ids < test_cutoff // (total_samples // k))]
+            val_data = data[split_ids >= test_cutoff // (total_samples // k)]
+            print(train_data)
+            print(test_data)
+            print(val_data)
+            # now multiplet
+
+            # Step 1: Extract unique panels
+            unique_panels = data['panel_id'].unique()
+            panel_count = len(unique_panels)
+
+            # Step 2: Use `multiplet` to split panels into train, test, and validation
+            k = 3  # Number of splits (train, test, validation)
+            panel_indices = twinning.multiplet(unique_panels.reshape(-1, 1), k)  # Strategy 2 ensures balance
+
+            # Step 3: Assign panels to train, test, and validation
+            train_panels = unique_panels[panel_indices == 0]
+            test_panels = unique_panels[panel_indices == 1]
+            val_panels = unique_panels[panel_indices == 2]
+
+            # Step 4: Filter rows in the original data based on panel assignments
+            train_data = data[data['panel_id'].isin(train_panels)]
+            test_data = data[data['panel_id'].isin(test_panels)]
+            val_data = data[data['panel_id'].isin(val_panels)]
+
+            # Output the results
+            print("Train Data Shape:", train_data.shape)
+            print("Test Data Shape:", test_data.shape)
+            print("Validation Data Shape:", val_data.shape)
 
     def __init__v(self, x_data, y_data, **kwargs):
     # Default attributes
@@ -808,7 +889,7 @@ class ObjectiveFunction(object):
         self._maximize = False  # do we maximize or minimize?
 
         x_data = sm.add_constant(x_data)
-        standardize_the_data = 0
+        standardize_the_data = 1
         if standardize_the_data:
             print('we are standardize the data')
             x_data = self.self_standardize_positive(x_data)
@@ -1494,8 +1575,12 @@ class ObjectiveFunction(object):
         if dispersion == 1:
             if betas[-1] <0:
                 #transforming
+                logging.info('debug test betas')
+                return betas
                 return np.clip(betas[-1],0.0000001, 600)
             else: #transforming
+                logging.info('begug test')
+                return betas
                 return np.clip(betas[-1],0.0000001, 600)
 
             
@@ -1745,8 +1830,8 @@ class ObjectiveFunction(object):
 
             names = np.array(names)  # TODO check order
             self.print_transform = self.transform_id_names + \
-                                   [''] * (len(names) - len(self.transform_id_names) - len(hetro_long) - 1) + abct + [
-                                       '']  # this was negative 1
+                                   [''] * (len(names) - len(self.transform_id_names) - len(hetro_long) - 1) + abct
+                                        # this was negative 1
             self.coeff_names = names
         else:
             self.full_model = 0
@@ -1882,6 +1967,14 @@ class ObjectiveFunction(object):
 
             if self.please_print or save_state:
                 print(table.draw())
+                # ---- Print stored Elasticity Summary if available ----
+                if hasattr(self, "elasticity_summary") and self.elasticity_summary is not None:
+                    names = self.elasticity_summary.get("names", [])
+                    values = self.elasticity_summary.get("values", [])
+                    print("\n---- Mean Elasticities (Poisson/NB Log-link) ----")
+                    for name, val in zip(names, values):
+                        print(f"{name:20s}: {val: .4f}")
+                    print("-------------------------------------------------")
 
             if model is not None:
                 caption_parts = []
@@ -4130,63 +4223,47 @@ class ObjectiveFunction(object):
                                varnames if x not in correlation]
             return
 
-    
-
-
     def _chol_mat(self, correlationLength, br, Br_w, correlation):
-        # if correlation = True correlation pos is randpos, if list get correct pos
-        
-        #print(self.rdm_grouped_fit, 'i think this causes the errror')
-        
-        varnames = self.none_handler(self.grouped_rpm)+ self.none_handler(
-                self.rdm_fit) + self.none_handler(self.rdm_cor_fit)
+        """
+        JAX version of the Cholesky-covariance constructor
+        for random parameters, compatible with JIT.
 
-        
-            # Kchol, permutations of specified params in correlation list
-        Kchol = int((len(correlation) *
-                         (len(correlation) + 1)) / 2)
-        
+        Args:
+            correlationLength: length (# of random effects)
+            br: vector of non-correlated random param stds
+            Br_w: concatenated parameter vector (std + corr terms)
+            correlation: list of variables that are correlated
+        Returns:
+            chol_mat: lower-triangular Cholesky matrix
+        """
 
-        # creating cholesky matrix for the variance-covariance matrix
-        # all random variables not included in correlation will only
-        # have their standard deviation computed
-        chol_mat = np.zeros((correlationLength, correlationLength))
-        indices = np.tril_indices(correlationLength)
-        if dev.using_gpu:
-            Kchol = dev.to_cpu(Kchol)
-            chol_mat[indices] = Kchol  # TODO? Better
-        else:
-            chol_mat[indices] = Kchol
+        # Combine all variable names relevant to random parameters
+        varnames = (
+                self.none_handler(self.grouped_rpm)
+                + self.none_handler(self.rdm_fit)
+                + self.none_handler(self.rdm_cor_fit)
+        )
 
-        # chol  = np.abs(Br_w[-Kchol:]) this was abs, but i don't need it
+        Kchol = int((len(correlation) * (len(correlation) + 1)) / 2)
+
+        # Extract correlation (chol) and uncorrelated parts
         chol = Br_w[-Kchol:]
         br_w = Br_w[:-Kchol]
 
-        chol_mat_temp = np.zeros((len(br), len(br)))  # number of kr
+        chol_mat_temp = jnp.zeros((len(br), len(br)))
 
-        # new naminging TODO: probably broken
         rv_count = 0
         rv_count_all = 0
         corr_indices = []
         chol_count = 0
-        for ii, var in enumerate(varnames):  # TODO: BUGFIX
-            if var in self.none_handler(self.rdm_cor_fit):
-                is_correlated = True
-            else:
-                is_correlated = False
-            try:
-                rv_val = chol[chol_count] if is_correlated else br_w[rv_count]
-            except:
-                print('exception here start') 
-                print(self.rdm_cor_fit, 'rdm_cor_fit')
-                print(self.rdm_fit, 'rdm_fit')
-                print('varnames', varnames)
-                print('br', br, 'br')
-                print(Br_w, 'Br_w')
-                print(chol, 'chol')
-                print(br_w, 'br_w')
-                print('exception here end')
-            chol_mat_temp[rv_count_all, rv_count_all] = rv_val
+
+        # NOTE: small loop — fine outside jit; can be replaced with vmap if needed
+        for ii, var in enumerate(varnames):
+            is_correlated = var in self.none_handler(self.rdm_cor_fit)
+
+            rv_val = chol[chol_count] if is_correlated else br_w[rv_count]
+            chol_mat_temp = chol_mat_temp.at[rv_count_all, rv_count_all].set(rv_val)
+
             rv_count_all += 1
             if is_correlated:
                 chol_count += 1
@@ -4194,37 +4271,28 @@ class ObjectiveFunction(object):
                 rv_count += 1
 
             if var in self.rdm_cor_fit:
-                corr_indices.append(rv_count_all - 1)  # TODO: what does tis do
+                corr_indices.append(rv_count_all - 1)
 
-        # TODO i think
-        if self.rdm_cor_fit is None:  # TODO when all_corralted or nonee
+        # Determine correlation pairs
+        if self.rdm_cor_fit is None:
             corr_pairs = list(itertools.combinations(self.Kr, 2))
         else:
             corr_pairs = list(itertools.combinations(corr_indices, 2))
 
-
-        for ii, corr_pair in enumerate(corr_pairs):
-            # lower cholesky matrix
-            chol_mat_temp[tuple(reversed(corr_pair))] = chol[chol_count]
+        # Fill off-diagonal lower triangle with correlation coefficients
+        for corr_pair in corr_pairs:
+            chol_mat_temp = chol_mat_temp.at[corr_pair[::-1]].set(chol[chol_count])
             chol_count += 1
 
-        chol_mat = chol_mat_temp
+        # Compute omega = L * L^T
+        omega = chol_mat_temp @ chol_mat_temp.T
 
-        if dev.using_gpu:
-            chol_mat = dev.to_gpu(chol_mat)
+        # Compute correlation matrix and standard deviations
+        standard_devs = jnp.sqrt(jnp.abs(jnp.diag(omega)))
+        outer_prod = jnp.outer(standard_devs, standard_devs)
+        corr_mat = omega / outer_prod
 
-        omega = np.matmul(chol_mat, np.transpose(chol_mat))
-        corr_mat = np.zeros_like(chol_mat)
-        standard_devs = np.sqrt(np.diag(np.abs(omega)))
-        K = len(standard_devs)
-        for i in range(K):
-            for j in range(K):
-                corr_mat[i, j] = omega[i, j] / \
-                                 (standard_devs[i] * standard_devs[j])
-
-        stdevs = standard_devs
-
-        return chol_mat
+        return chol_mat_temp, corr_mat, standard_devs
 
     def _transform_hetro_betas(self, betas_hetro, betas_hetro_sd, draws_hetro, list_sizes):
         a = 0
@@ -4550,7 +4618,7 @@ class ObjectiveFunction(object):
 
     def eXB_calc(self, params_main, Xd, offset, dispersion, linear = False):
 
-        
+
         if dispersion:
             sigma = dispersion
             eta=  np.dot(Xd, params_main)[:, :, None] + np.array(offset[:, :, :])
@@ -5093,7 +5161,7 @@ class ObjectiveFunction(object):
 
     def _penalty_betas(self, betas, dispersion, penalty, penalty_ap=100.0):
         penalty_val = 0.1
-        penalty_val_max = 130
+        penalty_val_max = 10
 
         # print('change_later')
         if dispersion != 0:
@@ -5106,7 +5174,7 @@ class ObjectiveFunction(object):
         #    penalty += np.nan_to_num(1/np.max((0.01, abs(i))), nan=10000)
         for i in a:
             if abs(i) > penalty_val_max:
-                penalty += abs(i)
+                penalty += abs(i)/10
 
         #if abs(i) < penalty_val:
         #    penalty += 5
@@ -5375,6 +5443,8 @@ class ObjectiveFunction(object):
 
                 if not np.isreal(loglik):
                     loglik = - 1e5
+                elif np.isnan(loglik):
+                    loglik = -1e5
 
                 output = (-loglik + penalty,)
                 if return_gradient:
@@ -5648,7 +5718,7 @@ class ObjectiveFunction(object):
             else:
                 self.lam = eVd
             '''
-            if return_EV is True:
+            if return_EV:
                 return eVd.mean(axis=2)
                 #    return eVd.mean(axis=(1, 2))
 
@@ -5687,7 +5757,7 @@ class ObjectiveFunction(object):
             lik = np.clip(lik, min_comp_val, max_comp_val)
             # lik = np.nan_to_num(lik, )
             loglik = np.log(lik)
-            llf_main = loglik
+            #llf_main = loglik
 
 
             loglik = loglik.sum()
@@ -6029,6 +6099,7 @@ class ObjectiveFunction(object):
 
             return minimize(loglik_fn, x, args=args, jac=args[6], hess=args[7], method='L-BFGS-B', bounds=bounds,
                             tol=tol, options=options)
+
         else:
             raise ValueError(f"Unknown optimization method: {method}")
 
@@ -6234,12 +6305,18 @@ class ObjectiveFunction(object):
                 hessian[i, j] = (f_ij_plus - 2 * f_original + f_ij_minus) / (epsilon ** 2)
         return hessian
 
+    def _clean(self, x):
+        if x is None:
+            return None
+        arr = np.asarray(x, dtype=float)
+        # Replace NaN with 0, and infinities with 0
+        return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
 
     def _post_fit_ll_aic_bic(self, optim_res, verbose=1, robust=False, simple_fit=True, is_dispersion=0):
         # sample_size = len(self._x_data) - len(optim_res['x']) -1
         sample_size = len(self._x_data)
         convergence = optim_res['success']
-        coeff_ = optim_res['x']
+        coeff_ = self._clean(optim_res['x'])
         penalty = 0
         stderr_opg = None
         if self.run_bootstrap:
@@ -6258,7 +6335,7 @@ class ObjectiveFunction(object):
         else:
             covariance = np.diag(np.ones(len(optim_res.x)))
         covariance = self.handle_covariance(covariance)
-        self
+
         covariance = np.clip(covariance, 0, self.N)
         stderr = np.sqrt(np.diag(covariance))
         if stderr_opg is not None:
@@ -6271,7 +6348,7 @@ class ObjectiveFunction(object):
         
 
         if np.isnan(stderr).any():
-            raise ValueError("Error: Matrix contains NaN values")
+            stderr = np.clip(stderr, 1000)
         zvalues = coeff_ / stderr
         zvalues = np.nan_to_num(zvalues, nan=50)
         zvalues = [z if z < 50 else 50 for z in zvalues]
@@ -6865,6 +6942,7 @@ class ObjectiveFunction(object):
     def _set_bounds(self, initial_params, dispersion):
         """Set bounds for optimization based on the dispersion type."""
         return None
+        '''
         if dispersion == 0:
             return [(-30, 30) for _ in initial_params]
         elif dispersion == 1:
@@ -6879,6 +6957,7 @@ class ObjectiveFunction(object):
             return [(-5, 5) for _ in initial_params[:-1]] + [(0.1, 0.99)]
         else:
             return None
+            '''
     def _build_test_matrix(self, mod):
         """
         Build the test matrix `XX_test` by combining `X_test`, `Xr_test`, and `XH_test`.
@@ -6983,7 +7062,7 @@ class ObjectiveFunction(object):
                 #print('failed taking random fit')
                 initial_params = np.random.uniform(-0.01, 0.3, size=num_coefficients)
         except:
-            #print('pre fit failed, continue')
+            print('pre fit failed, continue')
             initial_params = np.random.uniform(-0.01, 0.01, size=num_coefficients)
 
 
@@ -7094,6 +7173,8 @@ class ObjectiveFunction(object):
                 num_parm=paramNum,
                 GOF=other_measures
             )
+
+
 
 
             return (
@@ -7284,7 +7365,7 @@ class ObjectiveFunction(object):
 
 
 
-                # intial_beta = minimize(self._loglik_gradient, bb, args =(XX, y, None, None, None, None, calc_gradient, hess_est, dispersion, 0, False, 0, None, sub_zi, exog_infl, None, None, mod), method = 'nelder-mead', options={'gtol': 1e-7*len(XX)})
+                #intial_beta = minimize(self._loglik_gradient, bb, args =(XX, y, None, None, None, None, calc_gradient, hess_est, dispersion, 0, False, 0, None, sub_zi, exog_infl, None, None, mod), method = 'nelder-mead', options={'gtol': 1e-7*len(XX)})
                 hess_est = False if method2 in ['L-BFGS-B', 'BFGS_2', 'Nelder-Mead-BFGS'] else True
                 
                 if self.no_extra_param:
@@ -7868,6 +7949,8 @@ class ObjectiveFunction(object):
 
     def self_standardize_positive(self, X):
         scaler = MinMaxScaler()
+        self.feature_min_ = {}
+        self.feature_max_ = {}
         if type(X) == list:
             return X
 
@@ -7880,6 +7963,10 @@ class ObjectiveFunction(object):
             #df_tf_scaled = df_tf_scaled - df_tf_scaled.min()
             # Reshape back to original 3D shape if necessary
             df_tf = df_tf_scaled.reshape(original_shape)
+            # Save per‑column min, max for later back‑transformation
+
+            self.feature_min_['array'] = scaler.data_min_
+            self.feature_max_['array'] = scaler.data_max_
             return df_tf
         else:
             # Initialize the MinMaxScaler
@@ -7894,6 +7981,10 @@ class ObjectiveFunction(object):
 
             # Convert the result back to a DataFrame
             #scaled_df = pd.DataFrame(scaled_data, columns=X.columns)
+            # Save per‑column min, max for later back‑transformation
+            for i, col in enumerate(float_columns):
+                self.feature_min_[col] = scaler.data_min_[i]
+                self.feature_max_[col] = scaler.data_max_[i]
 
 
             return X
@@ -8057,7 +8148,7 @@ class ObjectiveFunction(object):
         else:
             Xr_test = None
         model_nature['Xr_test'] = Xr_test
-        if (Xr.ndim <= 1) or (Xr.shape[0] <= 11) or np.isin(Xr, [np.inf, -np.inf, None, np.nan]).any():
+        if (Xr.ndim <= 1) or (Xr.shape[0] <= 15) or np.isin(Xr, [np.inf, -np.inf, None, np.nan]).any():
             print('Not Possible')
             raise Exception
         if Xr.size == 0:
