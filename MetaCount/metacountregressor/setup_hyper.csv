@@ -1,2 +1,0 @@
-Model Types,Objective Type,Primary Objective Metric,Secondary Objective Metric,MAXTIME,Iterations,Train Split,Validation Split,Test Split
-['Negative Binomial'],Single,BIC,,240000,100.0,80,0,100
