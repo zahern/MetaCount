@@ -51,7 +51,6 @@ jobs:
 
       # Build the package
       - name: Build the package
-        working-directory: ./metacountregressor
         run: python -m build
 
       # Upload the package to PyPI
