@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name            = "metajax-regression"
+version         = "0.1.0"
+description     = "JAX-accelerated automated structure search for mixed count-data regression models"
+readme          = "../README.md"
+license         = { text = "MIT" }
+requires-python = ">=3.10"
+
+keywords = [
+    "count regression",
+    "mixed models",
+    "latent class",
+    "negative binomial",
+    "poisson",
+    "random effects",
+    "zero inflation",
+    "metaheuristic",
+    "structure search",
+    "JAX",
+    "traffic safety",
+    "accident prediction",
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "jax>=0.4.20",
+    "jaxlib>=0.4.20",
+    "jaxopt>=0.8",
+    "optax>=0.2",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.11",
+    "scikit-learn>=1.3",
+    "statsmodels>=0.14",
+    "joblib>=1.3",
+    "psutil>=5.9",
+    "texttable>=1.7",
+    "latextable>=1.0.1",
+    "matplotlib>=3.7",
+    "addicty>=2023.9.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "jupyter>=1.0",
+    "matplotlib>=3.7",
+    "ipykernel",
+]
+gpu = [
+    "jax[cuda12_pip]",
+]
+
+[project.urls]
+Homepage      = "https://github.com/your-org/metajax-regression"
+Documentation = "https://metajax-regression.readthedocs.io"
+"Bug Tracker" = "https://github.com/your-org/metajax-regression/issues"
+
+[tool.setuptools]
+packages = ["metacountregressor"]
+
+[tool.setuptools.package-dir]
+metacountregressor = ".."
+
+[tool.setuptools.package-data]
+metacountregressor = ["py.typed"]

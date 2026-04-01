@@ -36,6 +36,21 @@ DIST_MAP = {
     
 }
 
+def lognormal_loglik(y, eta, sigma):
+
+    sigma = jax.nn.softplus(sigma)
+
+    log_y = jnp.log(jnp.clip(y, 1e-12, 1e12))
+
+    ll = (
+        -0.5 * jnp.log(2 * jnp.pi * sigma**2)
+        - (log_y - eta)**2 / (2 * sigma**2)
+        - log_y
+    )
+
+    return ll
+
+
 
 def check_structure_recovery(
     pareto_solutions,
@@ -443,6 +458,7 @@ class ModelSpec:
     random_ind_dists: tuple
     random_cor_dists: tuple
     grouped_dists: tuple
+    latent_classes: int =1
     @property
     def K_random_total(self):
         return self.Kr_cor + self.Kr_ind
@@ -727,47 +743,54 @@ def transform_draws(draws, mean, scale, dist_codes):
 # LOG LIKELIHOOD
 # =========================================================
 
-@partial(jax.jit, static_argnames=("spec",))
-def mixed_model_lofglik(params, data, spec: ModelSpec):
-
-    blocks = unpack_params(params, spec)
-
-    eta = build_eta(params, data, spec)
-    mu = jnp.exp(jnp.clip(eta, -15, 15))
-    #eta = jnp.clip(eta, -20, 20)
-
-    if mu.ndim == 2:
-        mu = mu[..., None]
-
-    y = ensure_3d(data["y"])
-    mask = ensure_3d(data["mask"])
-
-    R = mu.shape[-1]
-
-    if spec.model == "poisson":
-        ll = poisson_loglik(y, mu)
-
-    elif spec.model == "nb":
-        alpha = blocks["alpha"]
-        ll = nb_loglik(y, mu, alpha)
-
-    else:
-        raise ValueError("Unknown model")
-
-    ll = ll * mask
-    ll_panel = jnp.sum(ll, axis=1)
-
-    if R > 1:
-        ll_ind = jsp.special.logsumexp(ll_panel, axis=-1) - jnp.log(R)
-    else:
-        ll_ind = ll_panel.squeeze(-1)
-
-    return -jnp.sum(ll_ind)
 
 
 
-@partial(jax.jit, static_argnames=("spec",))
-def mixed_model_loglik(params, data, spec: ModelSpec):
+
+@partial(jax.jit, static_argnames=("spec", "indivi"))
+def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
+    
+    # ==========================================================
+    # ✅ LATENT CLASS WRAPPER (NEW)
+    # ==========================================================
+    if spec.latent_classes > 1:
+
+        C = spec.latent_classes
+        base_spec = replace(spec, latent_classes=1)
+
+        # Build base index once
+        base_index = build_param_index(base_spec)
+        K_base = base_index["total_params"]
+
+        # Split parameters
+        theta_all = params[:C * K_base].reshape(C, K_base)
+        logits = params[C * K_base:]
+
+        logits_full = jnp.concatenate([jnp.array([0.0]), logits])
+        pi = jax.nn.softmax(logits_full)
+
+        ll_classes = []
+
+        for c in range(C):
+
+            ll_c = -mixed_model_loglik(
+                theta_all[c],
+                data,
+                base_spec,
+                indivi = True           
+            )
+
+            ll_classes.append(ll_c + jnp.log(pi[c]))
+
+        ll_stack = jnp.stack(ll_classes, axis = 1)
+        ll_ind = jsp.special.logsumexp(ll_stack, axis=1)
+
+        if indivi:
+            return ll_ind
+
+        return -jnp.sum(ll_ind)
+
+        #return -jsp.special.logsumexp(ll_stack)
 
     blocks = unpack_params(params, spec)
 
@@ -797,6 +820,9 @@ def mixed_model_loglik(params, data, spec: ModelSpec):
     elif spec.model == "nb":
         alpha = blocks["alpha"]
         ll_count = nb2_loglik(y, eta, alpha)
+    elif spec.model == "lognormal":
+        sigma = blocks["sigma"]
+        ll_count = lognormal_loglik(y, eta, sigma)
 
     else:
         raise ValueError("Unknown model")
@@ -852,8 +878,15 @@ def mixed_model_loglik(params, data, spec: ModelSpec):
     else:
         ll_ind = ll_panel.squeeze(-1)
 
+    if indivi:
+        return ll_ind
     return -jnp.sum(ll_ind)
 
+
+
+@partial(jax.jit, static_argnames=("spec",))
+def mixed_model_loglik_individual(params, data, spec: ModelSpec):
+    return mixed_model_loglik(params, data, spec, indivi = True)
 
 def nb1_loglik(y, mu, alpha):
 
@@ -897,6 +930,8 @@ def nb2_loglik(y, eta, alpha):
     term5 = y * (log_mu - log_denom)
 
     return term1 + term2 + term3 + term4 + term5
+
+
 
 def parse_manual_spec(manual_spec):
 
@@ -1156,17 +1191,14 @@ def build_jax_data(
     return data, spec
 
 
-
-
-#=======================================
-# PARAM INDEX
-# =========================================================
-
-def build_param_index(spec: ModelSpec):
+def build_base_index(spec):
+    
 
     idx = 0
     index = {}
 
+
+    
     index["fixed"] = (idx, idx + spec.Kf)
     idx += spec.Kf
     
@@ -1211,10 +1243,46 @@ def build_param_index(spec: ModelSpec):
     if spec.model == "nb":
         index["dispersion"] = idx
         idx += 1
+    
+    if spec.model == "lognormal":
+        index["sigma"] = idx
+        idx += 1
 
     index["total_params"] = idx
 
     return index
+
+
+    # ← your current build_param_index body
+
+#=======================================
+# PARAM INDEX
+# =========================================================
+def build_param_index(spec: ModelSpec):
+
+    if spec.latent_classes == 1:
+        return build_base_index(spec)
+    base_spec = replace(spec, latent_classes=1)
+    base_index = build_base_index(base_spec)
+
+    K_base = base_index["total_params"]
+    C = spec.latent_classes
+
+    idx = 0
+    index = {}
+
+    index["class_params"] = (0, C * K_base)
+    idx = C * K_base
+
+    index["class_logits"] = (idx, idx + C - 1)
+    idx += C - 1
+
+    index["K_base"] = K_base
+    index["total_params"] = idx
+
+    return index
+
+
 
 def compute_predictions(params, data, spec):
         eta = build_eta(params, data, spec)
@@ -1489,11 +1557,67 @@ def generate_configs(param_grid):
 
     return configs
 
+
+class DummyResult:
+    def __init__(self, params):
+        self.params = params
+
 def print_summary(result, objective, data, spec, param_index):
 
     import numpy as np
     import pandas as pd
     from scipy import stats
+    
+    if spec.latent_classes > 1:
+
+        C = spec.latent_classes
+
+        base_spec = replace(spec, latent_classes=1)
+        base_index = build_base_index(base_spec)
+        K_base = base_index["total_params"]
+
+        params = np.asarray(result.params)
+
+        theta_all = params[:C * K_base].reshape(C, K_base)
+
+        logits = params[C * K_base:]
+        logits_full = np.concatenate(([0.0], logits))
+        pi = np.exp(logits_full) / np.sum(np.exp(logits_full))
+
+        print("\n====================================================")
+        print("        LATENT CLASS MIXED MODEL SUMMARY")
+        print("====================================================")
+
+        # ---------------------------------------------
+        # Print each class separately
+        # ---------------------------------------------
+        for c in range(C):
+
+            print(f"\n################ CLASS {c+1} ################\n")
+
+            class_result = DummyResult(theta_all[c])
+            class_result.params = theta_all[c]
+
+            print_summary(
+                result=class_result,
+                objective=None,
+                data=data,
+                spec=base_spec,
+                param_index=base_index
+            )
+
+        # ---------------------------------------------
+        # Print class probabilities
+        # ---------------------------------------------
+        print("\n================ CLASS PROBABILITIES ================\n")
+
+        for c in range(C):
+            print(f"pi_{c+1}: {pi[c]:.6f}")
+
+        print("\n====================================================\n")
+
+        return
+    
 
     params = result.params
     se = compute_standard_errors(params, objective)
@@ -2133,6 +2257,158 @@ def run_full_synthetic_recovery_experiment(R=300, seed=42):
     print("SD Lanes:", sd_lanes)
     print("Correlation:", rho)
     print("Dispersion:", alpha_true)
+    
+    
+
+
+
+def estimate_latent_class_mixed_example():
+
+    from functools import partial
+    from dataclasses import replace
+    import numpy as np
+
+    print("\n==============================================")
+    print(" ESTIMATING 2-CLASS MIXED NEGATIVE BINOMIAL (EM)")
+    print("==============================================\n")
+
+    # --------------------------------------------------
+    # 1️⃣ Generate synthetic panel data
+    # --------------------------------------------------
+
+    df, _ = generate_panel_data(
+        N_ids=800,
+        T=3,
+        seed=0
+    )
+
+    # --------------------------------------------------
+    # 2️⃣ Model specification
+    # --------------------------------------------------
+
+    manual_spec = {
+        "fixed_terms": ["shoulder", "log_aadt", "length"],
+        "rdm_terms": [],
+        "rdm_cor_terms": [
+            "speed:normal",
+            "lanes:normal"
+        ],
+        "grouped_terms": [],
+        "hetro_in_means": [],
+        "zi_terms": [],
+        "dispersion": 1
+    }
+
+    # --------------------------------------------------
+    # 3️⃣ Halton draws
+    # --------------------------------------------------
+
+    draws_cor = generate_halton_normal(
+        N=df["ID"].nunique(),
+        K=2,
+        R=200,
+        seed=0
+    )
+
+    # --------------------------------------------------
+    # 4️⃣ Build data + spec
+    # --------------------------------------------------
+
+    data, spec = build_model_from_manual_spec(
+        df=df,
+        manual_spec=manual_spec,
+        id_col="ID",
+        y_col="Y",
+        draws_cor=draws_cor,
+        R=200
+    )
+
+    spec = replace(spec, model="nb", latent_classes=2)
+
+    # --------------------------------------------------
+    # 5️⃣ Build parameter structure
+    # --------------------------------------------------
+
+    base_spec = replace(spec, latent_classes=1)
+    base_index = build_param_index(base_spec)
+    K_base = base_index["total_params"]
+
+    C = spec.latent_classes
+
+    print("Parameters per class:", K_base)
+    print("Total parameters (EM structure):", C * K_base + (C - 1))
+
+    # --------------------------------------------------
+    # 6️⃣ INITIALIZATION
+    # --------------------------------------------------
+
+    print("\n🔹 Estimating pooled single-class model for initialization...\n")
+
+    # Estimate single class first
+    model_single = CountModel(base_spec, data)
+    result_single = model_single.fit()
+
+    theta_single = result_single.params
+
+    # Create two slightly perturbed classes
+    theta_init = np.concatenate([
+        theta_single,
+        theta_single + np.random.normal(0, 0.05, size=K_base)
+    ])
+
+    logits_init = np.zeros(C - 1)  # equal class shares
+
+    init_params = np.concatenate([theta_init, logits_init])
+
+    # --------------------------------------------------
+    # 7️⃣ EM ESTIMATION
+    # --------------------------------------------------
+
+    print("\n🚀 Running EM algorithm...\n")
+
+    params_em = fit_em(
+        init_params=init_params,
+        data=data,
+        spec=spec,
+        max_iter=50,
+        tol=1e-5,
+        verbose=True
+    )
+
+    print("\n✅ EM Estimation complete.\n")
+
+    # --------------------------------------------------
+    # 8️⃣ OPTIONAL: Full MLE polish
+    # --------------------------------------------------
+
+    print("🔹 Polishing with full MLE...\n")
+
+    from scipy.optimize import minimize
+
+    result_final = minimize(
+        lambda p: mixed_model_loglik(p, data, spec),
+        params_em,
+        method="L-BFGS-B"
+    )
+
+    print("Final log-likelihood:", -result_final.fun)
+
+    # --------------------------------------------------
+    # 9️⃣ Print summary
+    # --------------------------------------------------
+
+    objective = partial(mixed_model_loglik, data=data, spec=spec)
+
+    print_summary(
+        result=result_final,
+        objective=objective,
+        data=data,
+        spec=spec,
+        param_index=build_param_index(spec)
+    )
+
+
+
 
 def print_summary(result, objective, data, spec, param_index):
 
@@ -2352,11 +2628,73 @@ def print_summary(result, objective, data, spec, param_index):
     print("================================================\n")
 
 
-def print_summary(result, objective, data, spec, param_index, return_df = None):
+def print_summary(result, objective, data, spec, param_index, se = None, return_df = None):
 
     import numpy as np
     import pandas as pd
     from scipy import stats
+    
+    import numpy as np
+    import pandas as pd
+    from scipy import stats
+    
+    if spec.latent_classes > 1:
+
+        C = spec.latent_classes
+
+        base_spec = replace(spec, latent_classes=1)
+        base_index = build_base_index(base_spec)
+        K_base = base_index["total_params"]
+
+        params = np.asarray(result.x)
+        if se is None:
+            se = compute_standard_errors(params, objective)
+        se_all = se[:C * K_base].reshape(C, K_base)
+        logit_se = se[C * K_base:]
+
+        theta_all = params[:C * K_base].reshape(C, K_base)
+
+        logits = params[C * K_base:]
+        logits_full = np.concatenate(([0.0], logits))
+        pi = np.exp(logits_full) / np.sum(np.exp(logits_full))
+
+        print("\n====================================================")
+        print("        LATENT CLASS MIXED MODEL SUMMARY")
+        print("====================================================")
+
+        # ---------------------------------------------
+        # Print each class separately
+        # ---------------------------------------------
+        for c in range(C):
+
+            print(f"\n################ CLASS {c+1} ################\n")
+
+            class_result = DummyResult(theta_all[c])
+            class_result.params = theta_all[c]
+
+            print_summary(
+                result=class_result,
+                objective=None,
+                data=data,
+                spec=base_spec,
+                param_index=base_index,
+                se=se_all[c] 
+            )
+
+        # ---------------------------------------------
+        # Print class probabilities
+        # ---------------------------------------------
+        print("\n================ CLASS PROBABILITIES ================\n")
+
+        for c in range(C):
+            print(f"pi_{c+1}: {pi[c]:.6f}")
+
+        print("\n====================================================\n")
+        for c in range(C - 1):
+            print(f"logit_{c+2}  SE: {logit_se[c]:.6f}")
+
+        return
+    
 
     def softplus(x):
         return np.log1p(np.exp(x))
@@ -2365,10 +2703,13 @@ def print_summary(result, objective, data, spec, param_index, return_df = None):
         return 1 / (1 + np.exp(-x))
 
     params_raw = np.asarray(result.params, dtype=np.float64)
-    se_raw = np.asarray(
-        compute_standard_errors(result.params, objective),
-        dtype=np.float64
-    )
+    if se is None:
+        se_raw = np.asarray(
+            compute_standard_errors(result.params, objective),
+            dtype=np.float64
+        )
+    else:
+        se_raw = se
 
     names = []
 
@@ -2414,6 +2755,8 @@ def print_summary(result, objective, data, spec, param_index, return_df = None):
 
     if spec.model == "nb":
         names.append("dispersion")
+    elif spec.model == 'lognormal':
+        names.append('lognormal')
 
     df = pd.DataFrame({
         "Parameter": names,
@@ -2465,8 +2808,8 @@ def print_summary(result, objective, data, spec, param_index, return_df = None):
             phi = theta
             deriv = 1.0
 
-        df.at[i, "Estimate"] = phi
-        df.at[i, "Std.Err"] = se_theta * abs(deriv)
+        df.at[i, "Estimate"] = float(phi)
+        df.at[i, "Std.Err"] = float(se_theta * abs(deriv))
 
     # Recompute z and p
     df["z-value"] = df["Estimate"] / df["Std.Err"]
@@ -2526,21 +2869,22 @@ def print_summary(result, objective, data, spec, param_index, return_df = None):
     # ==========================================================
     # Fit stats
     # ==========================================================
+    if objective is not None:
 
-    final_ll = -objective(result.params)
-    k = len(result.params)
-    n = data["y"].shape[0]
+        final_ll = -objective(result.params)
+        k = len(result.params)
+        n = data["y"].shape[0]
 
-    aic = 2*k - 2*final_ll
-    bic = k * np.log(n) - 2*final_ll
+        aic = 2*k - 2*final_ll
+        bic = k * np.log(n) - 2*final_ll
 
-    print("\n------------------------------------------------")
-    print(f"Log-Likelihood: {float(final_ll):.4f}")
-    print(f"AIC: {float(aic):.4f}")
-    print(f"BIC: {float(bic):.4f}")
-    print("================================================\n")
-    if return_df is not None and return_df:
-        return df
+        print("\n------------------------------------------------")
+        print(f"Log-Likelihood: {float(final_ll):.4f}")
+        print(f"AIC: {float(aic):.4f}")
+        print(f"BIC: {float(bic):.4f}")
+        print("================================================\n")
+        if return_df is not None and return_df:
+            return df
 
 def compute_mean_prediction(params, data, spec):
 
@@ -3216,6 +3560,9 @@ def unpack_params(params, spec: ModelSpec):
         # NB DISPERSION
         if spec.model == "nb":
             out["alpha"] = params[idx]
+            idx += 1
+        elif spec.model == "lognormal":
+            out["sigma"] = params[idx]
             idx += 1
         else:
             out["alpha"] = None
@@ -4769,7 +5116,767 @@ def build_master_grid(seeds):
 
     return master
 
+
+def e_step(params, data, spec):
+
+    C = spec.latent_classes
+    base_spec = replace(spec, latent_classes=1)
+
+    base_index = build_base_index(base_spec)
+    K = base_index["total_params"]
+
+    params = np.asarray(params)
+
+    theta_all = params[:C*K].reshape(C, K)
+
+    logits = params[C*K:]
+    logits_full = np.concatenate(([0.0], logits))
+    pi = np.exp(logits_full) / np.sum(np.exp(logits_full))
+
+    N = data["N_ids"]
+
+    logL = np.zeros((N, C))
+
+    for c in range(C):
+
+        logL[:, c] = mixed_model_loglik_individual(
+            theta_all[c],
+            data,
+            base_spec
+        )
+
+    # log posterior numerator
+    log_num = logL + np.log(pi)
+
+    # stabilize
+    max_log = log_num.max(axis=1, keepdims=True)
+    w = np.exp(log_num - max_log)
+    w /= w.sum(axis=1, keepdims=True)
+
+    return w, pi
+
+def weighted_objective(theta, data, spec, weights):
+
+    logL_i = mixed_model_loglik_individual(theta, data, spec)
+
+    return -np.sum(weights * logL_i)
+
+import numpy as np
+from scipy.optimize import minimize
+import jax
+import jax.numpy as jnp
+import jax.scipy as jsp
+from dataclasses import replace
+
+
+def fit_em(init_params, data, spec, max_iter=100, tol=1e-6, verbose=True):
+
+    assert spec.latent_classes > 1, "EM only needed for latent classes"
+
+    C = spec.latent_classes
+    base_spec = replace(spec, latent_classes=1)
+
+    # Build param index once
+    base_index = build_param_index(base_spec)
+    K_base = base_index["total_params"]
+
+    params = np.array(init_params)
+    test_ll = mixed_model_loglik(
+    params[:K_base],
+    data,
+    base_spec,
+    indivi=True
+    )
+    
+    N = test_ll.shape[0]
+
+    for iteration in range(max_iter):
+
+        params_old = params.copy()
+
+        # ==========================================================
+        # E-STEP
+        # ==========================================================
+
+        theta_all = params[:C * K_base].reshape(C, K_base)
+        logits = params[C * K_base:]
+
+        logits_full = np.concatenate(([0.0], logits))
+        pi = np.exp(logits_full)
+        pi /= pi.sum()
+
+        logL = np.zeros((N, C))
+
+        for c in range(C):
+
+            ll_ind = mixed_model_loglik(
+                theta_all[c],
+                data,
+                base_spec,
+                indivi=True
+            )
+
+            logL[:, c] = np.array(ll_ind)
+        #todo bug here, in FIT_EM
+        log_num = logL + np.log(pi)
+
+        # stabilize
+        max_log = log_num.max(axis=1, keepdims=True)
+        w = np.exp(log_num - max_log)
+        w /= w.sum(axis=1, keepdims=True)
+
+        # ==========================================================
+        # M-STEP
+        # ==========================================================
+
+        # ✅ Update class probabilities
+        pi_new = w.mean(axis=0)
+
+        logits_new = np.log(pi_new[1:] / pi_new[0])
+
+        # ✅ Update class-specific parameters
+        theta_new = []
+
+        for c in range(C):
+
+            weights_c = w[:, c]
+
+            def weighted_objective(theta_c):
+
+                ll_ind = mixed_model_loglik(
+                    theta_c,
+                    data,
+                    base_spec,
+                    indivi=True
+                )
+
+                return -np.sum(weights_c * np.array(ll_ind))
+
+            result = minimize(
+                weighted_objective,
+                theta_all[c],
+                method="L-BFGS-B"
+            )
+
+            theta_new.append(result.x)
+
+        theta_new = np.concatenate(theta_new)
+
+        params = np.concatenate([theta_new, logits_new])
+
+        # ==========================================================
+        # Convergence Check
+        # ==========================================================
+
+        diff = np.max(np.abs(params - params_old))
+
+        if verbose:
+            total_ll = mixed_model_loglik(params, data, spec)
+            print(f"EM iter {iteration:3d} | max Δ = {diff:.3e} | LL = {-total_ll:.6f}")
+
+        if diff < tol:
+            if verbose:
+                print(f"\n✅ EM converged in {iteration} iterations\n")
+            break
+
+    return params
+
+def evaluate_true_spec_synthetic(
+    N_ids=1000,
+    T=4,
+    R=200,
+    seed=0
+):
+    """
+    1) Generate synthetic data from true DGP
+    2) Perform panel-level train/test split
+    3) Estimate TRUE model specification on train
+    4) Compute:
+        - Train BIC
+        - Test RMSE
+    """
+
+    from functools import partial
+    from dataclasses import replace
+    import numpy as np
+
+    print("\n===================================================")
+    print(" TRUE SPEC EVALUATION (SYNTHETIC DATA)")
+    print("===================================================\n")
+
+    # ==========================================================
+    # 1️⃣ Generate synthetic panel data
+    # ==========================================================
+
+    df, true_params = generate_panel_data(
+        N_ids=N_ids,
+        T=T,
+        seed=seed
+    )
+
+    print("Generated data shape:", df.shape)
+    print("Unique individuals:", df["ID"].nunique())
+
+    # ==========================================================
+    # 2️⃣ Panel train/test split (stratified)
+    # ==========================================================
+
+    df_train, df_test, df_val = build_datasets(
+        df,
+        id_col="ID",
+        y_col="Y"
+    )
+
+    print("\nSplit sizes:")
+    print("Train IDs:", df_train["ID"].nunique())
+    print("Test IDs :", df_test["ID"].nunique())
+    print("Val IDs  :", df_val["ID"].nunique())
+
+    # ==========================================================
+    # 3️⃣ TRUE SPECIFICATION
+    # ==========================================================
+
+    manual_spec = {
+        "fixed_terms": [
+            "shoulder",
+            "log_aadt",
+            "length",
+            "rural"
+        ],
+        "rdm_terms": [],
+        "rdm_cor_terms": [
+            "speed:normal",
+            "lanes:normal"
+        ],
+        "grouped_terms": [],
+        "hetro_in_means": [],
+        "zi_terms": [],
+        "dispersion": 1
+    }
+
+    # ==========================================================
+    # 4️⃣ Generate Halton draws
+    # ==========================================================
+
+    N_train = df_train["ID"].nunique()
+    N_test  = df_test["ID"].nunique()
+
+    draws_train = generate_halton_normal(
+        N=N_train,
+        K=2,
+        R=R,
+        seed=seed
+    )
+
+    draws_test = generate_halton_normal(
+        N=N_test,
+        K=2,
+        R=R,
+        seed=seed
+    )
+
+    # ==========================================================
+    # 5️⃣ Build training model
+    # ==========================================================
+
+    data_train, spec = build_model_from_manual_spec(
+        df=df_train,
+        manual_spec=manual_spec,
+        id_col="ID",
+        y_col="Y",
+        draws_cor=draws_train,
+        R=R
+    )
+
+    spec = replace(spec, model="nb")
+
+    model = CountModel(spec, data_train)
+
+    print("\nEstimating TRUE model on training data...\n")
+
+    result = model.fit()
+    param_index = build_param_index(spec)
+    
+   
+    # ==========================================================
+    # 6️⃣ Compute Train BIC
+    # ==========================================================
+
+    objective = partial(mixed_model_loglik, data=data_train, spec=spec)
+    print_summary(
+    result=result,
+    objective=objective,
+    data=data_train,
+    spec=spec,
+    param_index=param_index
+    )  
+    
+    
+    train_ll = -objective(result.params)
+    k = len(result.params)
+    n_train = data_train["y"].shape[0]
+
+    train_bic = float(k * np.log(n_train) - 2 * train_ll)
+
+    print("Train LogLik:", float(train_ll))
+    print("Train BIC:", train_bic)
+
+    # ==========================================================
+    # 7️⃣ Test Evaluation
+    # ==========================================================
+
+    data_test, _ = build_model_from_manual_spec(
+        df=df_test,
+        manual_spec=manual_spec,
+        id_col="ID",
+        y_col="Y",
+        draws_cor=draws_test,
+        R=R
+    )
+     
+
+    model_test = CountModel(spec, data_test)
+    model_test.params = result.params
+
+    preds = model_test.predict()
+    y_true = np.array(data_test["y"]).squeeze()
+
+    test_rmse = float(np.sqrt(np.mean((preds - y_true)**2)))
+
+    print("Test RMSE:", test_rmse)
+
+    print("\n===================================================")
+    print(" FINAL RESULTS")
+    print("===================================================")
+    print("Train BIC :", train_bic)
+    print("Test RMSE :", test_rmse)
+    print("===================================================\n")
+    print("\n===================================================")
+    print(" FINAL RESULTS")
+    print("===================================================")
+    print("Train BIC :", train_bic)
+    print("Test RMSE :", test_rmse)
+    print("===================================================\n")
+
+    # ==========================================================
+    # 9️⃣ Print TRUE parameter values for comparison
+    # ==========================================================
+
+    print("\n================ TRUE PARAMETERS ================\n")
+    for k, v in true_params.items():
+        print(f"{k:20s}: {v}")
+
+    print("\n=================================================\n")
+    
+    
+    return {
+        "train_bic": train_bic,
+        "test_rmse": test_rmse,
+        "train_loglik": float(train_ll)
+    }
+
+
+def run_lognormal_duration_full_demo(
+    N_ids=800,
+    T=3,
+    R=200,
+    seed=0
+):
+    """
+    FULLY INTEGRATED PIPELINE
+
+    1) Generate synthetic duration panel data
+    2) Build mixed lognormal model
+    3) Estimate model
+    4) Compute predictions
+    5) Print fit statistics
+    6) Plot Actual vs Predicted
+    """
+
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import jax
+    import jax.numpy as jnp
+    from functools import partial
+    from dataclasses import replace
+
+    np.random.seed(seed)
+
+    print("\n===================================================")
+    print("   MIXED LOGNORMAL DURATION MODEL - FULL DEMO")
+    print("===================================================\n")
+
+    # ==========================================================
+    # 1️⃣ DATA GENERATION
+    # ==========================================================
+
+    def generate_data():
+
+        beta_0 = 1.0
+        beta_income = 0.03
+        beta_distance = -0.15
+
+        mu_speed = 0.02
+        sd_speed = 0.05
+
+        sigma_true = 0.4
+
+        rows = []
+
+        for i in range(N_ids):
+
+            beta_speed_i = np.random.normal(mu_speed, sd_speed)
+
+            income = np.random.normal(50, 10)
+            distance = np.random.uniform(1, 20)
+
+            for t in range(T):
+
+                speed = np.random.uniform(30, 80)
+
+                eta = (
+                    beta_0
+                    + beta_income * income
+                    + beta_distance * distance
+                    + beta_speed_i * speed
+                )
+
+                duration = np.exp(
+                    np.random.normal(eta, sigma_true)
+                )
+
+                rows.append([
+                    i,
+                    duration,
+                    income,
+                    distance,
+                    speed
+                ])
+
+        df = pd.DataFrame(rows, columns=[
+            "ID",
+            "DURATION",
+            "income",
+            "distance",
+            "speed"
+        ])
+
+        true_params = {
+            "Intercept": beta_0,
+            "Income": beta_income,
+            "Distance": beta_distance,
+            "Mean Speed": mu_speed,
+            "SD Speed": sd_speed,
+            "Sigma": sigma_true
+        }
+
+        return df, true_params
+
+    df, true_params = generate_data()
+
+    print("Generated data shape:", df.shape)
+
+    # ==========================================================
+    # 2️⃣ MODEL SPECIFICATION
+    # ==========================================================
+
+    manual_spec = {
+        "fixed_terms": ["income", "distance"],
+        "rdm_terms": ["speed:normal"],
+        "rdm_cor_terms": [],
+        "grouped_terms": [],
+        "hetro_in_means": [],
+        "zi_terms": [],
+        "dispersion": 0
+    }
+
+    draws_ind = generate_halton_normal(
+        N=N_ids,
+        K=1,
+        R=R,
+        seed=seed
+    )
+
+    data, spec = build_model_from_manual_spec(
+        df=df,
+        manual_spec=manual_spec,
+        id_col="ID",
+        y_col="DURATION",
+        draws_ind=draws_ind,
+        R=R
+    )
+
+    spec = replace(spec, model="lognormal")
+
+    # ==========================================================
+    # 3️⃣ ESTIMATE MODEL
+    # ==========================================================
+
+    model = CountModel(spec, data)
+    result = model.fit()
+
+    objective = partial(mixed_model_loglik, data=data, spec=spec)
+    param_index = build_param_index(spec)
+
+    print_summary(
+        result=result,
+        objective=objective,
+        data=data,
+        spec=spec,
+        param_index=param_index
+    )
+
+    # ==========================================================
+    # 4️⃣ PREDICTION FUNCTION
+    # ==========================================================
+
+    def compute_predictions(result, data, spec):
+
+        params = result.params
+        blocks = unpack_params(params, spec)
+
+        beta = blocks["beta_f"]
+
+        eta = data["Xf"] @ beta
+
+        # Add mean random component
+        if blocks["mean_ind"] is not None:
+            eta += data["Xr_ind"] @ blocks["mean_ind"]
+
+        if blocks.get("mean_cor") is not None and data.get("Xr_cor") is not None:
+            eta += data["Xr_cor"] @ blocks["ean_cor"]
+        
+        sigma = jax.nn.softplus(blocks["sigma"])
+
+        # ✅ Proper mean of lognormal
+        pred_mean = jnp.exp(eta + 0.5 * sigma**2)
+
+        return np.array(pred_mean)
+
+    # ==========================================================
+    # 5️⃣ EVALUATION
+    # ==========================================================
+
+    y_actual = np.array(data["y"])
+    y_pred = compute_predictions(result, data, spec)[:,:, None]
+
+    rmse = np.sqrt(np.mean((y_actual - y_pred)**2))
+    mae = np.mean(np.abs(y_actual - y_pred))
+    corr = np.corrcoef(y_actual, y_pred)[0, 1]
+
+    print("\n================ MODEL FIT =================\n")
+    print(f"RMSE : {rmse:.4f}")
+    print(f"MAE  : {mae:.4f}")
+    print(f"Corr : {corr:.4f}")
+
+    comparison_df = pd.DataFrame({
+        "Actual": y_actual[:10],
+        "Predicted": y_pred[:10]
+    })
+
+    print("\nFirst 10 Observations:")
+    print(comparison_df)
+
+    # ==========================================================
+    # 6️⃣ PLOT
+    # ==========================================================
+
+    plt.figure(figsize=(6,6))
+    plt.scatter(y_actual, y_pred, alpha=0.4)
+
+    min_val = min(y_actual.min(), y_pred.min())
+    max_val = max(y_actual.max(), y_pred.max())
+
+    plt.plot([min_val, max_val],
+             [min_val, max_val],
+             'r--')
+
+    plt.xlabel("Actual Duration")
+    plt.ylabel("Predicted Duration")
+    plt.title("Actual vs Predicted (Mixed Lognormal)")
+    plt.tight_layout()
+    plt.show()
+
+    # ==========================================================
+    # 7️⃣ TRUE PARAMS PRINT
+    # ==========================================================
+
+    print("\n================ TRUE PARAMETERS ================\n")
+    for k, v in true_params.items():
+        print(f"{k:15s}: {v}")
+
+    print("\n===================================================\n")
+
+    return result, spec, data, y_pred
+
+
+
+
+def run_lognormal_duration_demo(N_ids=800, T=3, R=200, seed=0):
+    """
+    FULL PIPELINE:
+    1) Generate synthetic duration panel data
+    2) Build mixed lognormal duration model
+    3) Estimate
+    4) Print results
+    """
+
+    import numpy as np
+    import pandas as pd
+    from functools import partial
+    from dataclasses import replace
+
+    np.random.seed(seed)
+
+    print("\n==============================================")
+    print("RUNNING LOGNORMAL DURATION MODEL DEMO")
+    print("==============================================\n")
+
+    # ==========================================================
+    # TRUE PARAMETERS
+    # ==========================================================
+
+    beta_0 = 1.0
+    beta_income = 0.03
+    beta_distance = -0.15
+
+    mu_speed = 0.02
+    sd_speed = 0.05
+
+    sigma_true = 0.4   # lognormal variance
+
+    # ==========================================================
+    # GENERATE PANEL DATA
+    # ==========================================================
+
+    rows = []
+
+    for i in range(N_ids):
+
+        # random coefficient per individual
+        beta_speed_i = np.random.normal(mu_speed, sd_speed)
+
+        income = np.random.normal(50, 10)
+        distance = np.random.uniform(1, 20)
+
+        for t in range(T):
+
+            speed = np.random.uniform(30, 80)
+
+            eta = (
+                beta_0
+                + beta_income * income
+                + beta_distance * distance
+                + beta_speed_i * speed
+            )
+
+            # lognormal duration
+            duration = np.exp(
+                np.random.normal(eta, sigma_true)
+            )
+
+            rows.append([
+                i,
+                duration,
+                income,
+                distance,
+                speed
+            ])
+
+    df = pd.DataFrame(rows, columns=[
+        "ID",
+        "DURATION",
+        "income",
+        "distance",
+        "speed"
+    ])
+
+    print("Generated data shape:", df.shape)
+
+    # ==========================================================
+    # MODEL SPECIFICATION
+    # ==========================================================
+
+    manual_spec = {
+        "fixed_terms": ["income", "distance"],
+        "rdm_terms": ["speed:normal"],
+        "rdm_cor_terms": [],
+        "grouped_terms": [],
+        "hetro_in_means": [],
+        "zi_terms": [],
+        "dispersion": 0
+    }
+
+    # ==========================================================
+    # HALTON DRAWS
+    # ==========================================================
+
+    draws_ind = generate_halton_normal(
+        N=N_ids,
+        K=1,
+        R=R,
+        seed=seed
+    )
+
+    # ==========================================================
+    # BUILD MODEL
+    # ==========================================================
+
+    data, spec = build_model_from_manual_spec(
+        df=df,
+        manual_spec=manual_spec,
+        id_col="ID",
+        y_col="DURATION",
+        draws_ind=draws_ind,
+        R=R
+    )
+
+    # 🔥 IMPORTANT: Set model to lognormal
+    spec = replace(spec, model="lognormal")
+
+    # ==========================================================
+    # FIT MODEL
+    # ==========================================================
+
+    model = CountModel(spec, data)
+    result = model.fit()
+
+    # ==========================================================
+    # PRINT SUMMARY
+    # ==========================================================
+
+    objective = partial(mixed_model_loglik, data=data, spec=spec)
+    param_index = build_param_index(spec)
+
+    print_summary(
+        result=result,
+        objective=objective,
+        data=data,
+        spec=spec,
+        param_index=param_index
+    )
+
+    # ==========================================================
+    # PRINT TRUE VALUES
+    # ==========================================================
+
+    print("\n================ TRUE PARAMETERS ================\n")
+    print("Intercept:", beta_0)
+    print("Income:", beta_income)
+    print("Distance:", beta_distance)
+    print("Mean Speed (random):", mu_speed)
+    print("SD Speed:", sd_speed)
+    print("Sigma (lognormal):", sigma_true)
+
+    print("\n==============================================\n")
+
+    return result, spec, data
+
 if __name__ == '__main__':
+    estimate_latent_class_mixed_example()
+    #evaluate_true_spec_synthetic()
+    #run_lognormal_duration_full_demo()
     #benchmarks()
     parser = argparse.ArgumentParser()
     parser.add_argument("--job_index", type=int, default=0)

@@ -17,12 +17,64 @@ from .metaheuristics import (differential_evolution,
                             simulated_annealing)
 print('loaded metaheuristics')
 from .solution import ObjectiveFunction
-print
+from importlib import import_module
+
+__all__ = [
+    "DataProcessor",
+    "ObjectiveFunction",
+    "differential_evolution",
+    "harmony_search",
+    "simulated_annealing",
+    "ExperimentBuilder",
+    "StructureEvaluatorLC",
+    "JAXMLE",
+    "ModelSpec",
+    "build_param_index",
+    "build_jax_data",
+    "mixed_model_loglik",
+    "build_model_from_manual_spec",
+    "print_summary",
+]
+
+_LAZY_EXPORTS = {
+    "ExperimentBuilder": ("experiment_package", "ExperimentBuilder"),
+    "StructureEvaluatorLC": ("experiment_package", "StructureEvaluatorLC"),
+}
+
+_JAX_EXPORTS = {
+    "JAXMLE": ("solvers_meta", "JAXMLE"),
+    "ModelSpec": ("main_hpc_lc_patch", "ModelSpec"),
+    "build_param_index": ("main_hpc_lc_patch", "build_param_index"),
+    "build_jax_data": ("main_hpc_lc_patch", "build_jax_data"),
+    "mixed_model_loglik": ("main_hpc_lc_patch", "mixed_model_loglik"),
+    "build_model_from_manual_spec": ("main_hpc_lc_patch", "build_model_from_manual_spec"),
+    "print_summary": ("main_hpc_lc_patch", "print_summary"),
+}
+
+_LAZY_EXPORTS.update(_JAX_EXPORTS)
 
 
+def __getattr__(name):
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module_name, attr_name = target
+    try:
+        module = import_module(f".{module_name}", __name__)
+    except ImportError as exc:
+        raise ImportError(
+            f"Unable to import {name!r}. Install the package with its JAX "
+            f"dependencies available."
+        ) from exc
+
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value
 
 
-
+def __dir__():
+    return sorted(set(globals()) | set(__all__))
 
 
 # import pandas as pd
