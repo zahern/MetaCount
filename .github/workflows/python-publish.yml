@@ -11,14 +11,36 @@ jobs:
 
     permissions:
       id-token: write
-      contents: read
+      contents: write
 
     steps:
       - uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@v4
         with:
           python-version: "3.10"
+
+      - name: Bump patch version
+        run: |
+          python - <<'EOF'
+          with open("version.txt") as f:
+              v = f.read().strip()
+          major, minor, patch = v.split(".")
+          new_version = f"{major}.{minor}.{int(patch) + 1}"
+          with open("version.txt", "w") as f:
+              f.write(new_version + "\n")
+          print(f"Version bumped: {v} -> {new_version}")
+          EOF
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.txt
+          git commit -m "chore: bump version [skip ci]"
+          git push
 
       - run: |
           python -m pip install --upgrade pip
@@ -30,4 +52,3 @@ jobs:
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
           attestations: false
-          skip-existing: true
