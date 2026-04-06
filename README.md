@@ -434,6 +434,288 @@ obj_fun = ObjectiveFunction(data_exog, data_endog, **arguments)
     +--------+--------+-------+----------+----------+------------+
     
 
+---
+
+# JAX-Accelerated Fitting (Advanced API)
+
+The package includes a JAX-based back-end (`jax_engine`, `jax_engine_n`) that provides fast gradient computation via JIT compilation and automatic differentiation. The high-level `ExperimentBuilder` API wraps this back-end and drives a metaheuristic search over model structure — selecting which variables to include, what role they play, how many latent sub-populations exist, and what distributional assumptions to use.
+
+---
+
+## Quick Setup
+
+```python
+import pandas as pd
+from metacountregressor.experiment_package import ExperimentBuilder
+
+df = pd.read_csv("crash_data.csv")
+
+builder = ExperimentBuilder(
+    df           = df,
+    id_col       = "SITE_ID",    # panel/site identifier column
+    y_col        = "CRASHES",    # count outcome column
+    offset_col   = "EXPOSURE",   # optional log-exposure offset
+    group_id_col = "FC",         # optional grouping column (e.g. road class)
+)
+
+builder.describe()           # prints data summary, outcome stats, variable types
+builder.suggest_config()     # auto-suggests roles and distributions per variable
+```
+
+If you do not have panel data, set `id_col` to any column of unique row identifiers.
+`offset_col` and `group_id_col` are optional.
+
+---
+
+## Role Codes
+
+Each variable in the search is assigned a **role** that determines how it enters the model. The search explores which role best fits each variable.
+
+| Code | Name | Description |
+|------|------|-------------|
+| 0 | Excluded | Not in the model |
+| 1 | Fixed | Single coefficient, constant across all observations |
+| 2 | Random Independent | Individual-specific draws, independent across variables |
+| 3 | Random Correlated | Individual-specific draws with joint covariance (Cholesky) |
+| 4 | Grouped | Coefficient shared within a group (requires `group_id_col`) |
+| 5 | Heterogeneity in means | Shifts the mean of a random-effect distribution |
+| 6 | Zero Inflation | Enters the zero-inflation probability equation |
+| 7 | Membership only | Enters class-membership equation only (latent class models) |
+| 8 | Membership + Fixed | Enters both class-membership and outcome equations |
+
+Roles 7 and 8 are only active when `max_latent_classes > 1`.
+
+---
+
+## Supported Distributions (Random Effects)
+
+When a variable is assigned a random role (2, 3, or 4), the search also selects its mixing distribution:
+
+| Name | Code | Use case |
+|------|------|----------|
+| `normal` | 0 | General-purpose, allows negative and positive values |
+| `lognormal` | 1 | Strictly positive effects (e.g. exposure scaling) |
+| `triangular` | 2 | Bounded symmetric effects |
+
+---
+
+## Complexity Levels
+
+Complexity is controlled implicitly through which roles are allowed. You can restrict the search to simpler structures by limiting `allowed_roles`:
+
+| Complexity | Roles allowed | Description |
+|-----------|--------------|-------------|
+| 1 — Fixed only | `[0, 1]` | Simple fixed-effects Poisson/NB |
+| 2 — Random independent | `[0, 1, 2]` | Adds uncorrelated random parameters |
+| 3 — Random correlated | `[0, 1, 2, 3]` | Adds Cholesky-parameterised covariance |
+| 4 — Grouped | `[0, 1, 2, 3, 4]` | Adds group-level shared effects |
+| 5 — Heterogeneity in means | `[0, 1, 2, 3, 4, 5]` | Adds variables that shift random-effect means |
+| 6 — Latent class | `[0, 1, 2, 3, 5, 7, 8]` | Multiple latent sub-populations |
+
+Pass `allowed_roles` to `build_evaluator()` to limit the search space and reduce runtime.
+
+---
+
+## Building the Evaluator
+
+```python
+evaluator = builder.build_evaluator(
+    variables          = None,          # list of columns to search over; None = all
+    fixed_override     = {"AADT": [1]}, # force specific roles for named variables
+    membership_override= {"URB": [0, 7], "SPEED": [0, 7, 8]},  # latent class roles
+    exclude            = ["ID"],        # always exclude these variables
+    mode               = "single",      # "single" = minimise BIC; "multi" = BIC + test RMSE
+    max_latent_classes = 1,             # set > 1 to enable latent class search
+    R                  = 200,           # Halton simulation draws (higher = more stable)
+    default_roles      = [0, 1, 2, 3],  # default allowed roles for unlisted variables
+)
+```
+
+### `mode` options
+
+- **`"single"`** — minimises BIC. Recommended for exploratory analyses or when a single best model is wanted.
+- **`"multi"`** — minimises BIC and out-of-sample RMSE simultaneously using Pareto-front methods (NSGA-II). Returns multiple non-dominated solutions. Requires more data (20 % is held out for testing).
+
+---
+
+## Running the Search
+
+```python
+result = builder.run(evaluator, algo="sa", max_iter=3000, seed=42)
+```
+
+### Algorithm options
+
+| Key | Algorithm | Best for |
+|-----|-----------|----------|
+| `"sa"` | Simulated Annealing | Single-objective; recommended starting point |
+| `"hc"` | Hill Climbing | Fast, greedy; good for small problems |
+| `"de"` | Adaptive Differential Evolution + NSGA-II | Multi-objective (`mode="multi"`) |
+| `"hs"` | Dynamic Harmony Search + NSGA-II | Multi-objective (`mode="multi"`) |
+
+### SA / HC hyperparameters
+
+```python
+result = builder.run(
+    evaluator,
+    algo          = "sa",
+    max_iter      = 3000,
+    seed          = 0,
+    mutation_rate = 0.3,   # fraction of genes mutated per step
+    alpha         = 0.995, # cooling schedule multiplier (closer to 1 = slower cooling)
+    min_changes   = 1,     # minimum genes to change per neighbour
+    max_changes   = 3,     # maximum genes to change per neighbour
+    n_starts      = 1,     # number of independent restarts
+)
+```
+
+### DE hyperparameters
+
+```python
+result = builder.run(
+    evaluator,
+    algo            = "de",
+    max_iter        = 2000,
+    population_size = 20,  # number of candidate solutions
+    F               = 0.5, # scale factor for difference vectors
+    CR              = 0.7, # crossover probability
+)
+```
+
+### HS hyperparameters
+
+```python
+result = builder.run(
+    evaluator,
+    algo            = "hs",
+    max_iter        = 2000,
+    population_size = 20,
+    hmcr            = 0.9,  # harmony memory consideration rate
+    par_min         = 0.1,  # pitch adjustment rate (minimum)
+    par_max         = 0.9,  # pitch adjustment rate (maximum)
+)
+```
+
+---
+
+## Latent Class Models
+
+Latent class models allow the data to be explained by multiple unobserved sub-populations. The search automatically determines how many classes best fit the data.
+
+```python
+evaluator = builder.build_evaluator(
+    mode               = "single",
+    max_latent_classes = 3,              # search over 1, 2, or 3 classes
+    membership_override= {
+        "URB":   [0, 7],    # can influence class membership only
+        "SPEED": [0, 7, 8], # can influence membership and the outcome equation
+    },
+    R = 150,
+)
+
+result = builder.run(evaluator, algo="sa", max_iter=3000, seed=42)
+```
+
+The EM warm-start is applied automatically when classes > 1: a single-class solution seeds the multi-class initialisation, improving convergence stability.
+
+### What the search controls for latent classes
+
+- **Number of classes** (1 up to `max_latent_classes`) — selected automatically
+- **Class-membership variables** — which variables enter the softmax class-probability equation
+- **Per-class fixed effects** — estimated separately for each latent class
+- **Dispersion** — Poisson (0) or Negative Binomial (1) selected per run
+
+---
+
+## Manual Model Specification (no search)
+
+If you want to fit a specific structure directly without running a metaheuristic:
+
+```python
+from metacountregressor.jax_engine_n import CountModel, build_model_from_manual_spec
+
+manual_spec = {
+    "fixed_terms"   : ["X1", "X2"],
+    "rdm_terms"     : ["X3:normal", "X4:lognormal"],   # independent random
+    "rdm_cor_terms" : ["X5:normal", "X6:triangular"],  # correlated random (Cholesky)
+    "grouped_terms" : [],
+    "hetro_in_means": ["X7"],                           # heterogeneity in means
+    "dispersion"    : 1,                                # 0 = Poisson, 1 = Negative Binomial
+}
+
+data, spec = build_model_from_manual_spec(
+    df         = df,
+    manual_spec= manual_spec,
+    id_col     = "SITE_ID",
+    y_col      = "CRASHES",
+    offset_col = "EXPOSURE",
+    R          = 200,
+)
+
+model = CountModel(spec, data)
+result = model.fit()
+
+print(f"Log-likelihood: {model.loglik():.4f}")
+print(f"BIC:            {model.bic():.4f}")
+model.predict()   # returns mean predictions
+```
+
+---
+
+## Full Example: Crash-Frequency Latent Class Search
+
+```python
+import pandas as pd
+import numpy as np
+from metacountregressor.experiment_package import ExperimentBuilder
+
+# Load data
+df = pd.read_csv("https://raw.githubusercontent.com/zahern/data/main/Ex-16-3.csv")
+df["OFFSET"] = np.log(df["AADT"] * df["LENGTH"] * 365 / 1e8)
+df = df.drop(columns=["AADT"])
+
+builder = ExperimentBuilder(
+    df           = df,
+    id_col       = "ID",
+    y_col        = "FREQ",
+    offset_col   = "OFFSET",
+    group_id_col = "FC",
+)
+
+builder.describe()
+builder.suggest_config(max_latent_classes=2)
+
+evaluator = builder.build_evaluator(
+    mode               = "single",
+    max_latent_classes = 2,
+    membership_override= {"URBAN": [0, 7], "SPEED": [0, 7, 8]},
+    exclude            = ["FC"],   # already used as group_id_col
+    R                  = 150,
+)
+
+result = builder.run(evaluator, algo="sa", max_iter=1000, seed=42)
+
+print("Best BIC:", result["best_score"])
+print("Best structure:", result["best_solution"])
+```
+
+---
+
+## Simulation Draws (Halton)
+
+The JAX engine uses **scrambled Halton sequences** for quasi-Monte Carlo integration over the random-effect distributions. The number of draws `R` controls the trade-off between speed and accuracy:
+
+| R | Accuracy | Speed |
+|---|----------|-------|
+| 50 | Low — suitable for quick screening | Fast |
+| 100 | Moderate — reasonable for search | Moderate |
+| 200 | Good — recommended default | Moderate |
+| 500+ | High — use for final model fitting | Slow |
+
+Draws are pre-generated once per evaluator and reused across all model evaluations, ensuring consistent comparisons.
+
+---
+
 ## Paper
 
 The following tutorial is in conjunction with our latest paper. A link the current paper can be found here [MetaCountRegressor](https://www.overleaf.com/read/mszwpwzcxsng#c5eb0c)
