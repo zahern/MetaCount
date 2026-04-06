@@ -29,10 +29,6 @@ It combines a JAX back-end for fast gradient computation with metaheuristic sear
 pip install MetaCountRegressor
 ```
 
-### GPU support (optional)
-
-pip install "metajax-regression[gpu]"
-
 ### Development / editable install
 
 ```bash

@@ -1,14 +1,14 @@
-# metajax-regression
+# MetaCountRegressor
 
-**JAX-accelerated automated structure search for mixed count-data regression models.**
+**Metaheuristic-guided automated structure search for mixed count-data regression models.**
 
-[![PyPI version](https://badge.fury.io/py/metajax-regression.svg)](https://pypi.org/project/metajax-regression/)
+[![PyPI version](https://badge.fury.io/py/metacountregressor.svg)](https://pypi.org/project/metacountregressor/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
-`metajax-regression` automates the hardest part of applied count-data regression:
+`MetaCountRegressor` automates the hardest part of applied count-data regression:
 **choosing which variables to include, what role they play, and how many latent sub-populations exist in your data.**
 
 It combines a **JAX back-end** (fast autodiff + JIT compilation) with **metaheuristic search** (Simulated Annealing, Differential Evolution, Harmony Search) to explore an exponentially large model space and return the specification with the best BIC — or a full Pareto front of BIC / test-RMSE trade-offs.
@@ -43,13 +43,7 @@ Typical applications include:
 ## Installation
 
 ```bash
-pip install metajax-regression
-```
-
-GPU support:
-
-```bash
-pip install "metajax-regression[gpu]"
+pip install metacountregressor
 ```
 
 ---
@@ -58,7 +52,8 @@ pip install "metajax-regression[gpu]"
 
 ```python
 import pandas as pd
-from metajax_regression import ExperimentBuilder
+from metacountregressor.solution import ObjectiveFunction
+from metacountregressor.metaheuristics import harmony_search, differential_evolution, simulated_annealing
 
 df = pd.read_csv("crash_data.csv")
 df["OFFSET"] = 0          # or log(exposure)
@@ -131,20 +126,19 @@ result = builder.run(evaluator, algo="sa", max_iter=3000)
 
 ## Links
 
-- **Documentation**: https://metajax-regression.readthedocs.io
-- **Source code**: https://github.com/your-org/metajax-regression
-- **Issue tracker**: https://github.com/your-org/metajax-regression/issues
-- **Changelog**: https://github.com/your-org/metajax-regression/blob/main/CHANGELOG.md
+- **Source code**: [github.com/zahern/MetaCount](https://github.com/zahern/MetaCount)
+- **Issue tracker**: [github.com/zahern/MetaCount/issues](https://github.com/zahern/MetaCount/issues)
 
 ---
 
 ## Citation
 
 ```bibtex
-@software{metajax_regression,
-  title  = {metajax-regression: Automated structure search for mixed count-data models},
+@misc{Ahern2024Meta,
+  author = {Zeke Ahern, Paul Corry and Alexander Paz},
+  title  = {MetaCountRegressor: Automated structure search for mixed count-data models},
   year   = {2024},
-  url    = {https://github.com/your-org/metajax-regression},
+  url    = {https://pypi.org/project/metacountregressor/},
 }
 ```
 
