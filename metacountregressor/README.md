@@ -1,48 +1,47 @@
-# metajax-regression
+# metacountregressor
 
-**JAX-accelerated automated structure search for mixed count-data regression models.**
+**JAX-compatable.**
 
-`metajax-regression` lets you automatically discover the best model specification — variable roles, random-effect distributions, dispersion, and latent class structure — for panel count-data problems (crash frequency, health events, demand counts, etc.).  
+`metacountregressor` lets you automatically discover the best model specification — variable roles, random-effect distributions, dispersion, and latent class structure — for panel count-data problems (crash frequency, health events, demand counts, etc.).
 It combines a JAX back-end for fast gradient computation with metaheuristic search (Simulated Annealing, Differential Evolution, Harmony Search + NSGA-II) to explore a combinatorially large model space and return the structure with the best BIC or Pareto-optimal BIC / test-RMSE trade-off.
 
 ---
 
 ## Feature overview
 
-| Feature | Detail |
-|---|---|
-| **Model families** | Poisson · Negative Binomial · Zero-Inflated variants |
-| **Random effects** | Independent · Correlated (Cholesky) · Grouped |
-| **Distributions** | Normal · Log-Normal · Triangular · Uniform |
-| **Heterogeneity in means** | Covariates that shift random-effect means |
-| **Latent classes** | 1–N classes with EM warm-start |
-| **Membership equations** | Variables that explain class membership (roles 7 & 8) |
-| **Optimisers** | Simulated Annealing · Adaptive DE · Dynamic Harmony Search · NSGA-II |
-| **Objective** | Single (BIC) or multi-objective (BIC + test RMSE) |
+
+| Feature                    | Detail                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------- |
+| **Model families**         | Poisson · Negative Binomial · Zero-Inflated variants                  |
+| **Random effects**         | Independent · Correlated (Cholesky) · Grouped                         |
+| **Distributions**          | Normal · Log-Normal · Triangular · Uniform                           |
+| **Heterogeneity in means** | Covariates that shift random-effect means                               |
+| **Latent classes**         | 1–N classes with EM warm-start                                         |
+| **Membership equations**   | Variables that explain class membership (roles 7 & 8)                   |
+| **Optimisers**             | Simulated Annealing · Adaptive DE · Dynamic Harmony Search · NSGA-II |
+| **Objective**              | Single (BIC) or multi-objective (BIC + test RMSE)                       |
 
 ---
 
 ## Installation
 
 ```bash
-pip install metajax-regression
+pip install MetaCountRegressor
 ```
 
 ### GPU support (optional)
 
-```bash
 pip install "metajax-regression[gpu]"
-```
 
 ### Development / editable install
 
 ```bash
-git clone https://github.com/your-org/metajax-regression.git
-cd metajax-regression
+git clone https://github.com/zahern/MetaCount.git
+cd MetaCountRegressor
 pip install -e ".[dev]"
 ```
 
-**Python ≥ 3.10 required.**  
+**Python ≥ 3.10 required.**
 Core dependencies: `jax`, `jaxlib`, `jaxopt`, `numpy`, `pandas`, `scipy`, `joblib`.
 
 ---
@@ -51,7 +50,7 @@ Core dependencies: `jax`, `jaxlib`, `jaxopt`, `numpy`, `pandas`, `scipy`, `jobli
 
 ```python
 import pandas as pd
-from metajax_regression import ExperimentBuilder
+from MetaCountRegressor import ExperimentBuilder
 
 # 1. Load your panel count dataset
 df = pd.read_csv("crash_data.csv")
@@ -84,7 +83,7 @@ evaluator = builder.build_evaluator(
 result = builder.run(evaluator, algo="sa", max_iter=1000, seed=42)
 ```
 
-The best model specification and a full coefficient table are printed automatically.  
+The best model specification and a full coefficient table are printed automatically.
 A `results/` folder is created with a timestamped `.txt` summary.
 
 ---
@@ -95,17 +94,18 @@ A `results/` folder is created with a timestamped `.txt` summary.
 
 Every candidate variable is assigned a **role** that determines how it enters the model.
 
-| Code | Name | Description |
-|---|---|---|
-| `0` | Excluded | Not in the model |
-| `1` | Fixed | Single coefficient, same across all observations |
-| `2` | Random Independent | Per-site coefficient, independent draws |
-| `3` | Random Correlated | Per-site coefficient, jointly estimated covariance |
-| `4` | Grouped | Coefficient shared within a group (e.g. road class) |
-| `5` | Heterogeneity | Shifts the *mean* of random coefficients |
-| `6` | Zero Inflation | Enters the zero-inflation probability equation |
-| `7` | Membership only | Enters the class-probability equation; no direct outcome effect |
-| `8` | Membership + Fixed | Enters *both* the class-probability equation and the outcome equation |
+
+| Code | Name               | Description                                                          |
+| ------ | -------------------- | ---------------------------------------------------------------------- |
+| `0`  | Excluded           | Not in the model                                                     |
+| `1`  | Fixed              | Single coefficient, same across all observations                     |
+| `2`  | Random Independent | Per-site coefficient, independent draws                              |
+| `3`  | Random Correlated  | Per-site coefficient, jointly estimated covariance                   |
+| `4`  | Grouped            | Coefficient shared within a group (e.g. road class)                  |
+| `5`  | Heterogeneity      | Shifts the*mean* of random coefficients                              |
+| `6`  | Zero Inflation     | Enters the zero-inflation probability equation                       |
+| `7`  | Membership only    | Enters the class-probability equation; no direct outcome effect      |
+| `8`  | Membership + Fixed | Enters*both* the class-probability equation and the outcome equation |
 
 Roles 7 and 8 are only meaningful when `max_latent_classes > 1`.
 
@@ -117,18 +117,19 @@ Internally, each candidate model is encoded as an integer array:
 [ roles(D)  |  dist_codes(D)  |  dispersion_bit  |  lc_code ]
 ```
 
-- `roles`: one role code per variable  
-- `dist_codes`: distribution for random/grouped variables  
-- `dispersion_bit`: 0 = Poisson, 1 = Negative Binomial  
+- `roles`: one role code per variable
+- `dist_codes`: distribution for random/grouped variables
+- `dispersion_bit`: 0 = Poisson, 1 = Negative Binomial
 - `lc_code`: `(lc_code % max_latent_classes) + 1` → number of latent classes
 
 ### Algorithms
 
-| `algo=` | When to use |
-|---|---|
-| `"sa"` | **Recommended default.** Single-objective (BIC). Fast, reliable. |
-| `"de"` | Multi-objective (BIC + RMSE). Adaptive Differential Evolution + NSGA-II. |
-| `"hs"` | Multi-objective (BIC + RMSE). Dynamic Harmony Search + NSGA-II. |
+
+| `algo=` | When to use                                                              |
+| --------- | -------------------------------------------------------------------------- |
+| `"sa"`  | **Recommended default.** Single-objective (BIC). Fast, reliable.         |
+| `"de"`  | Multi-objective (BIC + RMSE). Adaptive Differential Evolution + NSGA-II. |
+| `"hs"`  | Multi-objective (BIC + RMSE). Dynamic Harmony Search + NSGA-II.          |
 
 ---
 
@@ -147,9 +148,11 @@ builder = ExperimentBuilder(
 ```
 
 #### `.describe()`
+
 Prints a full data summary: outcome statistics, overdispersion index, variable types, and the role-code guide.
 
 #### `.suggest_config(max_latent_classes=1)`
+
 Prints per-variable recommended roles and distributions based on automatic type inference.
 
 #### `.build_evaluator(...) → StructureEvaluatorLC`
@@ -287,10 +290,11 @@ result = builder.run(evaluator, algo="sa", max_iter=2000)
 
 Every run writes to `results/` (auto-created):
 
-| File | Content |
-|---|---|
+
+| File                                       | Content                                                         |
+| -------------------------------------------- | ----------------------------------------------------------------- |
 | `sa_summary_seed0_config0_<timestamp>.txt` | Full coefficient table, BIC, AIC, train/test/validation metrics |
-| `de_pareto_seed0_config0_<timestamp>.txt` | Pareto-front summary (multi-objective only) |
+| `de_pareto_seed0_config0_<timestamp>.txt`  | Pareto-front summary (multi-objective only)                     |
 
 ---
 
@@ -299,10 +303,10 @@ Every run writes to `results/` (auto-created):
 If you use `metajax-regression` in academic work, please cite:
 
 ```bibtex
-@software{metajax_regression,
-  title   = {metajax-regression: Automated structure search for mixed count-data models},
-  year    = {2024},
-  url     = {https://github.com/your-org/metajax-regression},
+@software{MetaCountRegressor,
+  title   = {metacountregressor: Analyst assisted search for mixed-hetrogeneous count-data models},
+  year    = {2026},
+  url     = {https://github.com/zahern/MetaCount},
 }
 ```
 
@@ -310,7 +314,7 @@ If you use `metajax-regression` in academic work, please cite:
 
 ## Contributing
 
-Pull requests are welcome. Please open an issue first to discuss major changes.  
+Pull requests are welcome. Please open an issue first to discuss major changes.
 See `CONTRIBUTING.md` for development setup, code style, and test instructions.
 
 ---
