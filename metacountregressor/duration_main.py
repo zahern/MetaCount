@@ -50,12 +50,14 @@ def generate_schedule_data(N=300, A=4, seed=0):
     return df
 
 
-def prepare_data(df):
+def prepare_data(df, feature_cols=None, y_col="DURATION", id_col="ID", budget_col="B"):
 
-    X = df[["x1","x2"]].values
-    y = df["DURATION"].values
-    ids = df["ID"].values
-    budgets = df.groupby("ID")["B"].first().values
+    feature_cols = ["x1", "x2"] if feature_cols is None else list(feature_cols)
+
+    X = df[feature_cols].values
+    y = df[y_col].values
+    ids = df[id_col].values
+    budgets = df.groupby(id_col)[budget_col].first().values
 
     return X, y, ids, budgets
 
@@ -72,8 +74,9 @@ def lognormal_ll(y, eta, sigma):
     
 def ll_independent(params, X, y):
 
-    beta = params[:2]
-    sigma = jax.nn.softplus(params[2])
+    k = X.shape[1]
+    beta = params[:k]
+    sigma = jax.nn.softplus(params[k])
 
     eta = X @ beta
 
@@ -84,8 +87,9 @@ def ll_independent(params, X, y):
 
 def ll_with_budget_penalty(params, X, y, ids, budgets, lambda_penalty=10.0):
 
-    beta = params[:2]
-    sigma = jax.nn.softplus(params[2])
+    k = X.shape[1]
+    beta = params[:k]
+    sigma = jax.nn.softplus(params[k])
 
     eta = X @ beta
 
@@ -132,13 +136,14 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-def predict_daily_schedule(params, df):
+def predict_daily_schedule(params, df, feature_cols=None, id_col="ID", budget_col="B"):
 
-    beta = params[:2]
-    sigma = jax.nn.softplus(params[2])
+    feature_cols = ["x1", "x2"] if feature_cols is None else list(feature_cols)
+    k = len(feature_cols)
+    beta = params[:k]
+    sigma = jax.nn.softplus(params[k])
 
-    X = df[["x1","x2"]].values
-    ids = df["ID"].values
+    X = df[feature_cols].values
 
     # Step 1: unconstrained lognormal mean
     eta = X @ beta
@@ -149,11 +154,11 @@ def predict_daily_schedule(params, df):
     predictions = []
 
     # Step 2: rescale per individual
-    for i in df["ID"].unique():
+    for i in df[id_col].unique():
 
-        sub = df[df["ID"] == i]
+        sub = df[df[id_col] == i]
 
-        B = sub["B"].iloc[0]
+        B = sub[budget_col].iloc[0]
 
         total_pred = sub["pred_unscaled"].sum()
 
@@ -163,26 +168,3 @@ def predict_daily_schedule(params, df):
 
     return np.array(predictions)
 
-df = generate_schedule_data()
-
-X, y, ids, budgets = prepare_data(df)
-
-init = np.zeros(3)
-
-
-
-
-df = generate_schedule_data()
-
-X, y, ids, budgets = prepare_data(df)
-
-init = np.zeros(3)
-
-res = estimate_model(
-    lambda p: ll_with_budget_penalty(p, X, y, ids, budgets, lambda_penalty=50),
-    init
-)
-
-pred_durations = predict_daily_schedule(res.x, df)
-
-df["predicted_duration"] = pred_durations

@@ -95,6 +95,18 @@ builder = ExperimentBuilder(
 )
 ```
 
+`ExperimentBuilder` is now explicitly count-first and JAX-first by default:
+
+- default model family: `count`
+- default engine: `jax`
+- alternative families such as `cmf`, `linear`, and `duration` are opt-in only
+
+If you want to be explicit, use:
+
+```python
+evaluator = builder.build_count_evaluator(mode="single", R=200)
+```
+
 ### 3. Inspect the data and suggestions
 
 ```python
@@ -169,6 +181,51 @@ result = builder.run(
     n_jobs=1,
     seed=42,
     population_size=20,
+)
+```
+
+## Switching Search Families
+
+You can now switch the builder into different search families with `model_family=...`.
+
+### CMF family
+
+```python
+search = builder.build_evaluator(
+    model_family="cmf",
+    aadt_col="AADT",
+    baseline_vars=["URB", "HISNOW", "SLOPE"],
+    local_vars=["GBRPM", "EXPOSE", "INTPM", "SPEED"],
+)
+
+result = builder.run_search(search, algo="ga", fit_final=True, R=200, final_R=500)
+```
+
+### Linear family
+
+```python
+search = builder.build_evaluator(
+    model_family="linear",
+    variables=["x1", "x2", "x3"],
+    objective_kwargs={"algorithm": "hs", "_obj_1": "bic"},
+)
+
+result = builder.run_search(search, algo="hs")
+```
+
+### Duration family
+
+```python
+search = builder.build_evaluator(
+    model_family="duration",
+    variables=["x1", "x2"],
+    budget_col="B",
+)
+
+result = builder.run_search(
+    search,
+    objective="budget_penalty",
+    lambda_penalty=10.0,
 )
 ```
 

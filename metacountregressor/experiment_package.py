@@ -51,7 +51,13 @@ import pandas as pd
 from dataclasses import replace
 from functools import partial
 from scipy.optimize import minimize
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union, Any
+
+from family_search import (
+    CMFFamilySearchProblem,
+    DurationSearchProblem,
+    LinearSearchProblem,
+)
 
 from main_hpc import (
     StructureEvaluator,
@@ -327,7 +333,7 @@ class StructureEvaluatorLC(StructureEvaluator):
 
     # ── fitness ─────────────────────────────────────────────────────
 
-    def fitness(self, decision) -> float | np.ndarray:
+    def fitness(self, decision) -> Union[float, np.ndarray]:
         """
         Evaluate a decision vector.
 
@@ -592,13 +598,22 @@ class ExperimentBuilder:
         y_col:        str,
         offset_col:   Optional[str] = None,
         group_id_col: Optional[str] = None,
+        default_model_family: str = "count",
+        default_engine: str = "jax",
     ):
         self.df           = df.copy()
         self.id_col       = id_col
         self.y_col        = y_col
         self.offset_col   = offset_col
         self.group_id_col = group_id_col
+        self.default_model_family = default_model_family.lower()
+        self.default_engine = default_engine.lower()
         self._evaluator: Optional[StructureEvaluatorLC] = None
+
+        if self.default_model_family != "count":
+            raise ValueError("ExperimentBuilder defaults must remain count-first. Use build_search(model_family=...) for alternative families.")
+        if self.default_engine != "jax":
+            raise ValueError("The primary ExperimentBuilder engine is JAX. Use default_engine='jax'.")
 
         reserved = {id_col, y_col}
         if offset_col:   reserved.add(offset_col)
@@ -684,7 +699,10 @@ class ExperimentBuilder:
         max_latent_classes:  int                       = 1,
         R:                   int                       = 200,
         default_roles:       Optional[list]            = None,
-    ) -> StructureEvaluatorLC:
+        model_family:        Optional[str]             = None,
+        engine:              Optional[str]             = None,
+        **family_kwargs: Any,
+    ):
         """
         Build a StructureEvaluatorLC ready for the search.
 
@@ -712,7 +730,32 @@ class ExperimentBuilder:
             Roles available to most variables.
             Defaults to [0,1,2,3,5] when max_latent_classes = 1,
             or [0,1,2,3,5,7,8] when max_latent_classes > 1.
+        model_family
+            Search family to build. One of: "count", "cmf", "linear", "duration".
+        engine
+            Execution engine. Defaults to the builder's primary engine, which is JAX.
         """
+        model_family = (model_family or self.default_model_family).lower()
+        engine = (engine or self.default_engine).lower()
+
+        if engine != "jax":
+            raise ValueError("Only the JAX-first engine is supported through ExperimentBuilder.")
+
+        if model_family != "count":
+            return self.build_search(
+                model_family=model_family,
+                variables=variables,
+                exclude=exclude,
+                mode=mode,
+                max_latent_classes=max_latent_classes,
+                R=R,
+                default_roles=default_roles,
+                fixed_override=fixed_override,
+                membership_override=membership_override,
+                engine=engine,
+                **family_kwargs,
+            )
+
         variables    = variables or self._candidate_vars
         exclude_set  = set(exclude or [])
         variables    = [v for v in variables if v not in exclude_set]
@@ -763,6 +806,84 @@ class ExperimentBuilder:
             print(f"  LC models are warm-started from the single-class solution.\n")
 
         return self._evaluator
+
+    def build_search(
+        self,
+        model_family: Optional[str] = None,
+        variables: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+        engine: Optional[str] = None,
+        **kwargs,
+    ):
+        model_family = (model_family or self.default_model_family).lower()
+        engine = (engine or self.default_engine).lower()
+
+        if engine != "jax":
+            raise ValueError("Only the JAX-first engine is supported through ExperimentBuilder.")
+
+        variables = variables or self._candidate_vars
+        exclude_set = set(exclude or [])
+        variables = [v for v in variables if v not in exclude_set]
+
+        if model_family == "count":
+            return self.build_evaluator(
+                variables=variables,
+                exclude=exclude,
+                model_family="count",
+                engine=engine,
+                **kwargs,
+            )
+
+        if model_family == "linear":
+            return LinearSearchProblem(
+                df=self.df,
+                y_col=self.y_col,
+                variables=variables,
+                objective_kwargs=kwargs.pop("objective_kwargs", {}),
+            )
+
+        if model_family == "duration":
+            budget_col = kwargs.pop("budget_col", "B")
+            if budget_col not in self.df.columns:
+                raise ValueError(f"Duration search requires budget_col='{budget_col}' in the dataframe.")
+            return DurationSearchProblem(
+                df=self.df.copy(),
+                y_col=self.y_col,
+                variables=variables,
+                id_col=self.id_col,
+                budget_col=budget_col,
+            )
+
+        if model_family == "cmf":
+            from cmf_package import CMFExperimentBuilder
+
+            aadt_col = kwargs.pop("aadt_col", None)
+            baseline_vars = kwargs.pop("baseline_vars", None)
+            local_vars = kwargs.pop("local_vars", None)
+
+            if aadt_col is None or baseline_vars is None or local_vars is None:
+                raise ValueError("CMF search requires aadt_col, baseline_vars, and local_vars.")
+
+            cmf_builder = CMFExperimentBuilder(
+                df=self.df,
+                y_col=self.y_col,
+                aadt_col=aadt_col,
+                baseline_vars=baseline_vars,
+                local_vars=local_vars,
+            )
+            return CMFFamilySearchProblem(
+                builder=cmf_builder,
+                id_col=self.id_col,
+                offset_col=self.offset_col,
+                group_id_col=self.group_id_col,
+            )
+
+        raise ValueError("model_family must be one of: count, cmf, linear, duration")
+
+    def build_count_evaluator(self, **kwargs):
+        kwargs.setdefault("model_family", "count")
+        kwargs.setdefault("engine", "jax")
+        return self.build_evaluator(**kwargs)
 
     # ── run ─────────────────────────────────────────────────────────
 
@@ -866,6 +987,19 @@ class ExperimentBuilder:
 
         else:
             raise ValueError(f"Unknown algo '{algo}'. Choose: sa, hc, de, hs")
+
+    def run_search(self, search_problem=None, **kwargs):
+        search_problem = search_problem or self._evaluator
+        if search_problem is None:
+            raise RuntimeError("Call build_evaluator() or build_search() first.")
+
+        if isinstance(search_problem, StructureEvaluatorLC):
+            return self.run(evaluator=search_problem, **kwargs)
+
+        if hasattr(search_problem, "run"):
+            return search_problem.run(**kwargs)
+
+        raise TypeError("Unsupported search problem type.")
 
     # ── helpers ─────────────────────────────────────────────────────
 

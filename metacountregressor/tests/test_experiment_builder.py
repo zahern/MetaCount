@@ -3,6 +3,7 @@ import pandas as pd
 
 from cmf_package import CMFExperimentBuilder
 from experiment_package import ExperimentBuilder
+from family_search import CMFFamilySearchProblem, DurationSearchProblem, LinearSearchProblem
 
 
 def make_panel_df():
@@ -119,3 +120,32 @@ def test_cmf_builder_bridges_to_general_latent_class_search():
     assert isinstance(general_builder, ExperimentBuilder)
     assert evaluator.max_latent_classes == 2
     assert evaluator.vars == ["cmf_a", "AADT", "cmf_b"]
+
+
+def test_model_family_switches_return_specialized_search_problems():
+    df = make_panel_df()
+    builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
+
+    linear_problem = builder.build_evaluator(
+        model_family="linear",
+        variables=["x_fixed", "x_rnd_ind"],
+        objective_kwargs={"algorithm": "hs", "_max_time": 1},
+    )
+    duration_problem = builder.build_evaluator(
+        model_family="duration",
+        variables=["x_fixed", "x_rnd_ind"],
+        budget_col="AADT",
+    )
+    cmf_problem = builder.build_evaluator(
+        model_family="cmf",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+    )
+
+    assert isinstance(linear_problem, LinearSearchProblem)
+    assert linear_problem.family == "linear"
+    assert isinstance(duration_problem, DurationSearchProblem)
+    assert duration_problem.family == "duration"
+    assert isinstance(cmf_problem, CMFFamilySearchProblem)
+    assert cmf_problem.family == "cmf"

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 import pandas as pd
 
-from experiment_package import ExperimentBuilder
+if TYPE_CHECKING:
+    from experiment_package import ExperimentBuilder
 
 
 @dataclass
@@ -149,7 +150,9 @@ class CMFExperimentBuilder:
         id_col: str,
         offset_col: Optional[str] = None,
         group_id_col: Optional[str] = None,
-    ) -> ExperimentBuilder:
+    ) -> "ExperimentBuilder":
+        from experiment_package import ExperimentBuilder
+
         return ExperimentBuilder(
             df=self.df,
             id_col=id_col,
@@ -171,6 +174,8 @@ class CMFExperimentBuilder:
         fixed_override: Optional[dict[str, list[int]]] = None,
         exclude: Optional[list[str]] = None,
     ):
+        from experiment_package import ExperimentBuilder
+
         builder = self.to_experiment_builder(
             id_col=id_col,
             offset_col=offset_col,

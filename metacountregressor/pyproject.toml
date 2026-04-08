@@ -7,7 +7,7 @@ name = "metacountregressor"
 version = "0.1.0"
 description = "Metaheuristic search for mixed and latent-class count regression models."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
   "jax",
   "jaxlib",

@@ -2,8 +2,11 @@ from importlib import import_module
 
 __all__ = [
     "CMFExperimentBuilder",
+    "CMFFamilySearchProblem",
     "DataProcessor",
+    "DurationSearchProblem",
     "ExperimentBuilder",
+    "LinearSearchProblem",
     "ObjectiveFunction",
     "StructureEvaluatorLC",
     "differential_evolution",
@@ -13,8 +16,11 @@ __all__ = [
 
 _EXPORTS = {
     "CMFExperimentBuilder": ("cmf_package", "CMFExperimentBuilder"),
+    "CMFFamilySearchProblem": ("family_search", "CMFFamilySearchProblem"),
     "DataProcessor": ("data_split_helper", "DataProcessor"),
+    "DurationSearchProblem": ("family_search", "DurationSearchProblem"),
     "ExperimentBuilder": ("experiment_package", "ExperimentBuilder"),
+    "LinearSearchProblem": ("family_search", "LinearSearchProblem"),
     "ObjectiveFunction": ("solution", "ObjectiveFunction"),
     "StructureEvaluatorLC": ("experiment_package", "StructureEvaluatorLC"),
     "differential_evolution": ("metaheuristics", "differential_evolution"),

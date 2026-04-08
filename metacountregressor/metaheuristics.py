@@ -18,7 +18,6 @@ import pandas as pd
 try:
     from .pareto_file import Pareto, Solution
 except ImportError:
-    print('Exception relative import')
     from pareto_file import Pareto, Solution
 
 try:
