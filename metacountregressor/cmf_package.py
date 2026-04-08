@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import numpy as np
+import re
 from typing import Any, Optional, TYPE_CHECKING
 
 import pandas as pd
@@ -210,3 +212,115 @@ class CMFExperimentBuilder:
             default_roles=default_roles,
         )
         return builder, evaluator
+
+    @staticmethod
+    def _safe_token(name: str) -> str:
+        return re.sub(r"[^0-9A-Za-z_]+", "_", name).strip("_") or "var"
+
+    def _cmf_term_map(self) -> dict[str, str]:
+        term_map: dict[str, str] = {self.aadt_col: "__cmf_log_aadt"}
+        for var in self.local_vars:
+            term_map[var] = f"__cmf_local__{self._safe_token(var)}"
+        return term_map
+
+    def build_jax_count_evaluator(
+        self,
+        id_col: str,
+        offset_col: Optional[str] = None,
+        group_id_col: Optional[str] = None,
+        variables: Optional[list[str]] = None,
+        fixed_override: Optional[dict[str, list[int]]] = None,
+        membership_override: Optional[dict[str, list[int]]] = None,
+        exclude: Optional[list[str]] = None,
+        mode: str = "single",
+        max_latent_classes: int = 1,
+        R: int = 200,
+        default_roles: Optional[list[int]] = None,
+        force_aadt_term: bool = True,
+    ):
+        try:
+            from .experiment_package import ExperimentBuilder
+        except ImportError:
+            from experiment_package import ExperimentBuilder
+
+        if (self.df[self.aadt_col] <= 0).any():
+            raise ValueError(
+                f"CMF search requires strictly positive values in aadt_col='{self.aadt_col}'."
+            )
+
+        df = self.df.copy()
+        term_map = self._cmf_term_map()
+        log_aadt_col = term_map[self.aadt_col]
+        df[log_aadt_col] = np.log(df[self.aadt_col].astype(float))
+
+        interaction_cols: list[str] = []
+        for var in self.local_vars:
+            interaction_col = term_map[var]
+            df[interaction_col] = df[var].astype(float) * df[log_aadt_col]
+            interaction_cols.append(interaction_col)
+
+        auxiliary_vars = []
+        for var in variables or []:
+            mapped = term_map.get(var, var)
+            if mapped not in auxiliary_vars:
+                auxiliary_vars.append(mapped)
+
+        search_vars = list(dict.fromkeys([
+            *self.baseline_vars,
+            log_aadt_col,
+            *interaction_cols,
+            *auxiliary_vars,
+        ]))
+
+        translated_fixed: dict[str, list[int]] = {}
+        for mapping in (fixed_override or {}).items():
+            key, allowed = mapping
+            translated_fixed[term_map.get(key, key)] = allowed
+
+        translated_membership: dict[str, list[int]] = {}
+        for mapping in (membership_override or {}).items():
+            key, allowed = mapping
+            translated_membership[term_map.get(key, key)] = allowed
+
+        translated_exclude = [term_map.get(name, name) for name in (exclude or [])]
+
+        if force_aadt_term:
+            translated_fixed.setdefault(log_aadt_col, [1])
+            translated_exclude = [name for name in translated_exclude if name != log_aadt_col]
+
+        if default_roles is None:
+            default_roles = [0, 1, 2, 3, 4, 5, 6]
+            if max_latent_classes > 1:
+                default_roles.extend([7, 8])
+
+        builder = ExperimentBuilder(
+            df=df,
+            id_col=id_col,
+            y_col=self.y_col,
+            offset_col=offset_col,
+            group_id_col=group_id_col,
+        )
+        evaluator = builder.build_count_evaluator(
+            variables=search_vars,
+            fixed_override=translated_fixed,
+            membership_override=translated_membership,
+            exclude=translated_exclude,
+            mode=mode,
+            max_latent_classes=max_latent_classes,
+            R=R,
+            default_roles=default_roles,
+        )
+
+        metadata = {
+            "family": "cmf",
+            "driver": "jax_count",
+            "aadt_col": self.aadt_col,
+            "log_aadt_col": log_aadt_col,
+            "baseline_vars": list(self.baseline_vars),
+            "local_vars": list(self.local_vars),
+            "interaction_cols": interaction_cols,
+            "term_map": term_map,
+            "search_vars": search_vars,
+        }
+        setattr(evaluator, "cmf_metadata", metadata)
+        return builder, evaluator, metadata

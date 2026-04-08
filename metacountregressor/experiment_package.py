@@ -46,8 +46,14 @@ from __future__ import annotations
 # ── Apply patches FIRST ─────────────────────────────────────────────────
 try:
     from . import main_hpc_lc_patch as _patch  # type: ignore[attr-defined]
-except ImportError:
-    import main_hpc_lc_patch as _patch   # patches main_hpc in-place
+except ImportError as exc:
+    if "attempted relative import with no known parent package" in str(exc):
+        import main_hpc_lc_patch as _patch   # patches main_hpc in-place
+    else:
+        raise ImportError(
+            "Unable to import the JAX backend for metacountregressor. "
+            "Install package dependencies including 'jax' and 'jaxlib'."
+        ) from exc
 
 import numpy as np
 import pandas as pd
@@ -61,6 +67,7 @@ try:
         CMFFamilySearchProblem,
         DurationSearchProblem,
         LinearSearchProblem,
+        UnifiedCMFSearchProblem,
     )
 
     from .main_hpc import (
@@ -92,6 +99,7 @@ except ImportError:
         CMFFamilySearchProblem,
         DurationSearchProblem,
         LinearSearchProblem,
+        UnifiedCMFSearchProblem,
     )
 
     from main_hpc import (
@@ -855,6 +863,7 @@ class ExperimentBuilder:
     ):
         model_family = (model_family or self.default_model_family).lower()
         engine = (engine or self.default_engine).lower()
+        explicit_variables = variables
 
         if engine != "jax":
             raise ValueError("Only the JAX-first engine is supported through ExperimentBuilder.")
@@ -898,6 +907,7 @@ class ExperimentBuilder:
             except ImportError:
                 from cmf_package import CMFExperimentBuilder
 
+            cmf_driver = str(kwargs.pop("cmf_driver", "jax_count")).lower()
             aadt_col = kwargs.pop("aadt_col", None)
             baseline_vars = kwargs.pop("baseline_vars", None)
             local_vars = kwargs.pop("local_vars", None)
@@ -912,6 +922,30 @@ class ExperimentBuilder:
                 baseline_vars=baseline_vars,
                 local_vars=local_vars,
             )
+            if cmf_driver in {"jax", "jax_count", "count", "main"}:
+                general_builder, evaluator, metadata = cmf_builder.build_jax_count_evaluator(
+                    id_col=self.id_col,
+                    offset_col=self.offset_col,
+                    group_id_col=self.group_id_col,
+                    variables=explicit_variables,
+                    fixed_override=kwargs.pop("fixed_override", None),
+                    membership_override=kwargs.pop("membership_override", None),
+                    exclude=exclude,
+                    mode=kwargs.pop("mode", "single"),
+                    max_latent_classes=kwargs.pop("max_latent_classes", 1),
+                    R=kwargs.pop("R", 200),
+                    default_roles=kwargs.pop("default_roles", None),
+                )
+                return UnifiedCMFSearchProblem(
+                    builder=general_builder,
+                    evaluator=evaluator,
+                    metadata=metadata,
+                )
+
+            if cmf_driver not in {"ga", "legacy_ga", "metaheuristic"}:
+                raise ValueError(
+                    "cmf_driver must be one of: 'jax_count' (default), 'ga', 'legacy_ga', 'metaheuristic'."
+                )
             return CMFFamilySearchProblem(
                 builder=cmf_builder,
                 id_col=self.id_col,

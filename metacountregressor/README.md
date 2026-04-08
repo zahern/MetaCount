@@ -1,30 +1,76 @@
 # metacountregressor
 
-`metacountregressor` searches count-model structure for you. It can explore fixed effects, random effects, grouped effects, heterogeneity in means, zero inflation, and latent classes, then score candidate models with BIC or a multi-objective criterion.
+`metacountregressor` is a JAX-first package for model-structure search.
 
-The package now exposes a stable package import path:
+The package has one main architecture:
+
+- the default engine is JAX
+- the default search family is the standard count-model search
+- CMF search now defaults to the same main JAX count-search architecture, using a CMF design transformation
+- the legacy GA-CMF routine is still available, but it is no longer the primary path
+
+The main entry point is:
 
 ```python
 from metacountregressor.experiment_package import ExperimentBuilder
+```
+
+There is also a lower-level CMF helper:
+
+```python
 from metacountregressor.cmf_package import CMFExperimentBuilder
 ```
 
-## Installation
+## What The Package Searches
 
-### Install from a local clone
+There are three core model families:
+
+1. Standard count search
+   This is the default workflow. It searches Poisson and Negative Binomial count models with fixed effects, random effects, grouped effects, heterogeneity in means, zero inflation, and latent classes.
+2. CMF search
+   This uses the CMF-style functional form
+   `log(mu) = baseline block + local block * log(AADT)`
+   but now runs through the same main JAX count-search architecture by default, so it can use the broader structural search machinery.
+3. Duration search
+   This uses the duration-model workflow.
+
+## Install
+
+### Local editable install
 
 ```bash
-git clone https://github.com/zahern/MetaCount.git
-cd metacountregressor
-pip install -e ".[dev]"
+python -m pip install -e .
 ```
 
-### Build a wheel
+### Required runtime stack
+
+```bash
+python -m pip install jax jaxlib jaxopt
+```
+
+The package metadata requires these JAX packages at install time.
+
+### Build and inspect a wheel
 
 ```bash
 python -m build
-pip install dist/metacountregressor-0.1.0-py3-none-any.whl
+python - <<'PY'
+import glob, zipfile
+wheel = glob.glob("dist/*.whl")[-1]
+with zipfile.ZipFile(wheel) as zf:
+    metadata = [n for n in zf.namelist() if n.endswith("METADATA")][0]
+    text = zf.read(metadata).decode("utf-8")
+    for line in text.splitlines():
+        if line.startswith("Requires-Dist:"):
+            print(line)
+PY
 ```
+
+Make sure the wheel lists:
+
+- `Requires-Dist: jax`
+- `Requires-Dist: jaxlib`
+- `Requires-Dist: jaxopt`
 
 ### Quick import check
 
@@ -32,59 +78,26 @@ pip install dist/metacountregressor-0.1.0-py3-none-any.whl
 python -c "from metacountregressor.experiment_package import ExperimentBuilder; print(ExperimentBuilder)"
 ```
 
-## What The Search Can Explore
+## Workflow Order
 
-### Role codes
+The easiest way to use the package is:
 
-| Code | Meaning |
-| --- | --- |
-| `0` | Excluded |
-| `1` | Fixed effect |
-| `2` | Random independent effect |
-| `3` | Random correlated effect |
-| `4` | Grouped random effect |
-| `5` | Heterogeneity in random-effect means |
-| `6` | Zero-inflation equation |
-| `7` | Latent-class membership only |
-| `8` | Latent-class membership plus fixed outcome effect |
+1. create an `ExperimentBuilder`
+2. choose the model family
+3. build the evaluator or search problem
+4. run the search
+5. inspect the best structure and refit output
 
-### Model dimensions covered by the search
-
-- Poisson and Negative Binomial
-- Fixed-only models
-- Linear mixed count models with independent random effects
-- Linear mixed count models with correlated random effects
-- Grouped random effects
-- Heterogeneity in means
-- Zero-inflated specifications
-- Latent-class specifications with membership equations
-
-## Running A General Experiment
-
-### 1. Prepare a dataframe
-
-You need:
-
-- an ID column
-- a count outcome column
-- optional offset column
-- optional group column for grouped random effects
-
-Example:
+## 1. Build The Main ExperimentBuilder
 
 ```python
 import numpy as np
 import pandas as pd
+from metacountregressor.experiment_package import ExperimentBuilder
 
 df = pd.read_csv("crash_data.csv")
 df["OFFSET"] = np.log(np.clip(df["AADT"] * df["LENGTH"] * 365 / 1e8, 1e-12, None))
 df = df.rename(columns={"FREQ": "Y"})
-```
-
-### 2. Create the experiment builder
-
-```python
-from metacountregressor.experiment_package import ExperimentBuilder
 
 builder = ExperimentBuilder(
     df=df,
@@ -95,305 +108,286 @@ builder = ExperimentBuilder(
 )
 ```
 
-`ExperimentBuilder` is now explicitly count-first and JAX-first by default:
-
-- default model family: `count`
-- default engine: `jax`
-- alternative families such as `cmf`, `linear`, and `duration` are opt-in only
-
-If you want to be explicit, use:
-
-```python
-evaluator = builder.build_count_evaluator(mode="single", R=200)
-```
-
-### 3. Inspect the data and suggestions
+Helpful inspection steps:
 
 ```python
 builder.describe()
 builder.suggest_config(max_latent_classes=2)
 ```
 
-This prints:
+## 2. Standard Count Search
 
-- outcome diagnostics
-- candidate variable summaries
-- suggested roles
-- suggested random-effect distributions
+This is the default model family.
 
-### 4. Build the evaluator
+It searches over count-model structures such as:
 
-#### Standard mixed-model search
+- Poisson
+- Negative Binomial
+- fixed effects
+- random independent effects
+- random correlated effects
+- grouped random effects
+- heterogeneity in means
+- zero inflation
+- latent classes
+- membership equations
+
+### Count role codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Excluded |
+| `1` | Fixed |
+| `2` | Random independent |
+| `3` | Random correlated |
+| `4` | Grouped random |
+| `5` | Heterogeneity in means |
+| `6` | Zero inflation |
+| `7` | Latent-class membership only |
+| `8` | Latent-class membership plus fixed outcome |
+
+### Standard count example
 
 ```python
-evaluator = builder.build_evaluator(
+evaluator = builder.build_count_evaluator(
+    variables=[
+        "SPEED",
+        "LANES",
+        "SHOULDER",
+        "MEDIAN",
+        "URBAN",
+        "RAIN",
+        "ZERO_FLAG",
+        "MEMB_URBAN",
+    ],
     mode="single",
+    max_latent_classes=2,
     R=200,
-    default_roles=[0, 1, 2, 3, 4, 5],
+    default_roles=[0, 1, 2, 3, 4, 5, 6, 7, 8],
 )
-```
 
-#### Latent-class mixed-model search
-
-```python
-evaluator = builder.build_evaluator(
-    mode="single",
-    max_latent_classes=3,
-    R=200,
-    default_roles=[0, 1, 2, 3, 4, 5, 7, 8],
-    membership_override={
-        "URB": [0, 7, 8],
-        "SPEED": [0, 1, 7, 8],
-    },
-)
-```
-
-#### Search only a selected subset of variables
-
-```python
-evaluator = builder.build_evaluator(
-    variables=["AADT", "LENGTH", "URB", "SPEED", "GRADE"],
-    mode="single",
-    R=150,
-)
-```
-
-### 5. Run the search
-
-#### Simulated annealing
-
-```python
 result = builder.run(
     evaluator=evaluator,
     algo="sa",
-    max_iter=1500,
+    max_iter=2000,
     seed=42,
 )
 ```
 
-#### Differential evolution / Pareto search
+### Focused count examples
+
+Poisson/NB mixed search:
 
 ```python
-result = builder.run(
-    evaluator=evaluator,
-    algo="de",
-    max_iter=1000,
-    n_jobs=1,
-    seed=42,
-    population_size=20,
-)
-```
-
-## Switching Search Families
-
-You can now switch the builder into different search families with `model_family=...`.
-
-### CMF family
-
-```python
-search = builder.build_evaluator(
-    model_family="cmf",
-    aadt_col="AADT",
-    baseline_vars=["URB", "HISNOW", "SLOPE"],
-    local_vars=["GBRPM", "EXPOSE", "INTPM", "SPEED"],
-)
-
-result = builder.run_search(search, algo="ga", fit_final=True, R=200, final_R=500)
-```
-
-### Linear family
-
-```python
-search = builder.build_evaluator(
-    model_family="linear",
-    variables=["x1", "x2", "x3"],
-    objective_kwargs={"algorithm": "hs", "_obj_1": "bic"},
-)
-
-result = builder.run_search(search, algo="hs")
-```
-
-### Duration family
-
-```python
-search = builder.build_evaluator(
-    model_family="duration",
-    variables=["x1", "x2"],
-    budget_col="B",
-)
-
-result = builder.run_search(
-    search,
-    objective="budget_penalty",
-    lambda_penalty=10.0,
-)
-```
-
-### 6. Read the result
-
-The returned dictionary includes:
-
-- `best_solution`
-- `best_score`
-- `solutions`
-- `scores`
-- `algorithm`
-- `seed`
-
-The run also prints the decoded best structure and writes a summary file to `results/`.
-
-## Common Experiment Recipes
-
-### Fixed-only baseline
-
-```python
-evaluator = builder.build_evaluator(
-    mode="single",
-    R=100,
-    default_roles=[0, 1],
-)
-result = builder.run(evaluator, algo="sa", max_iter=500)
-```
-
-### Independent and correlated random effects
-
-```python
-evaluator = builder.build_evaluator(
+evaluator = builder.build_count_evaluator(
+    variables=["SPEED", "LANES", "AADT_LOG"],
     mode="single",
     R=200,
     default_roles=[0, 1, 2, 3],
 )
-result = builder.run(evaluator, algo="sa", max_iter=1500)
+result = builder.run(evaluator=evaluator, algo="sa", max_iter=1500, seed=1)
 ```
 
-### Grouped random effects plus heterogeneity in means
+Zero-inflated count search:
 
 ```python
-evaluator = builder.build_evaluator(
-    mode="single",
-    R=200,
-    default_roles=[0, 1, 2, 3, 4, 5],
-)
-result = builder.run(evaluator, algo="sa", max_iter=2000)
-```
-
-### Zero inflation
-
-```python
-evaluator = builder.build_evaluator(
+evaluator = builder.build_count_evaluator(
+    variables=["SPEED", "LANES", "ZERO_FLAG"],
     mode="single",
     R=200,
     default_roles=[0, 1, 2, 6],
 )
-result = builder.run(evaluator, algo="sa", max_iter=1500)
+result = builder.run(evaluator=evaluator, algo="sa", max_iter=1500, seed=2)
 ```
 
-### Latent classes with membership variables
+Latent-class count search:
 
 ```python
-evaluator = builder.build_evaluator(
+evaluator = builder.build_count_evaluator(
+    variables=["SPEED", "LANES", "URBAN", "MEMB_URBAN"],
     mode="single",
     max_latent_classes=2,
     R=200,
-    default_roles=[0, 1, 2, 3, 5, 7, 8],
-    membership_override={
-        "URB": [0, 7],
-        "AADT": [0, 1, 7, 8],
-    },
+    default_roles=[0, 1, 2, 3, 7, 8],
 )
-result = builder.run(evaluator, algo="sa", max_iter=2500)
+result = builder.run(evaluator=evaluator, algo="sa", max_iter=2000, seed=3)
 ```
 
-## Running CMF Experiments
+## 3. CMF Search
 
-The GA CMF code is now wrapped by `CMFExperimentBuilder`, so you can run the classic AADT-based CMF search through the package instead of calling the standalone script directly.
+CMF search is different from the standard count search in functional form.
 
-### 1. Create the CMF builder
+The CMF family uses:
+
+```text
+log(mu) = baseline block + local block * log(AADT)
+```
+
+In the package, the default CMF path now transforms this into the main JAX count-search architecture by creating:
+
+- baseline terms
+- `log(AADT)` as the main elasticity term
+- `local_var * log(AADT)` interaction terms
+
+This means the default CMF path can use the same main search machinery for:
+
+- fixed effects
+- random independent effects
+- random correlated effects
+- grouped random effects
+- heterogeneity in means
+- zero inflation
+- latent classes
+- membership equations
+
+### Default CMF search on the main JAX architecture
 
 ```python
-import pandas as pd
-from metacountregressor.cmf_package import CMFExperimentBuilder
-
-df = pd.read_csv("cmf_data.csv")
-
-cmf_builder = CMFExperimentBuilder(
-    df=df,
-    y_col="Y",
+cmf_search = builder.build_evaluator(
+    model_family="cmf",
     aadt_col="AADT",
-    baseline_vars=["URB", "HISNOW", "SLOPE"],
-    local_vars=["GBRPM", "EXPOSE", "INTPM", "SPEED"],
-)
-```
-
-### 2. Search the CMF structure
-
-```python
-search_result = cmf_builder.run_search(R=200)
-print(search_result)
-```
-
-This search chooses:
-
-- which CMF variables are active
-- whether each active CMF is fixed or random
-- Poisson vs Negative Binomial
-- Halton draws vs pseudo-random draws
-
-### 3. Fit the final CMF model and print the report
-
-```python
-fit_result = cmf_builder.fit_best_model(search_result, final_R=500)
-cmf_builder.print_report(search_result, fit_result)
-```
-
-### 4. Bridge CMF variables into latent-class search
-
-If you want latent-class search over the same CMF covariates, move from the CMF builder into the general package search:
-
-```python
-general_builder, evaluator = cmf_builder.build_latent_class_evaluator(
-    id_col="ID",
-    offset_col="OFFSET",
+    baseline_vars=["GRADE", "LIGHTING", "CURVE"],
+    local_vars=["LANEWIDTH", "SHOULDER", "MEDIAN"],
+    variables=["RAIN", "ZERO_FLAG", "MEMB_URBAN"],
+    mode="single",
     max_latent_classes=2,
     R=200,
-    default_roles=[0, 1, 2, 3, 5, 7, 8],
-    membership_override={
-        "AADT": [0, 1, 7, 8],
-        "URB": [0, 7, 8],
-    },
 )
 
-result = general_builder.run(
-    evaluator=evaluator,
+result = builder.run_search(
+    cmf_search,
     algo="sa",
     max_iter=2000,
     seed=7,
 )
 ```
 
-That path is the recommended way to set up latent-class CMF-style experiments in the package.
+What this does:
 
-## Test Suite
+- keeps the CMF-style functional form
+- uses the main JAX count-search architecture as the driver
+- lets auxiliary variables enter as heterogeneity, zero-inflation, or membership terms through the normal role system
 
-Run the package tests with:
+### CMF with explicit advanced roles
 
-```bash
-pytest
+```python
+cmf_search = builder.build_evaluator(
+    model_family="cmf",
+    aadt_col="AADT",
+    baseline_vars=["GRADE", "LIGHTING"],
+    local_vars=["LANEWIDTH", "MEDIAN"],
+    variables=["HET_RAIN", "ZERO_FLAG", "MEMB_URBAN"],
+    mode="single",
+    max_latent_classes=2,
+    R=200,
+    default_roles=[0, 1, 2, 3, 4, 5, 6, 7, 8],
+)
 ```
 
-The current test suite checks:
+In that setup:
 
-- package imports
-- the `metacountregressor.experiment_package` import path
-- role decoding for fixed, random, grouped, heterogeneity, zero inflation, and membership roles
-- CMF builder integration with the general latent-class experiment API
+- baseline and CMF local terms are searched in the CMF-transformed outcome equation
+- extra variables can be assigned roles like heterogeneity in means, zero inflation, and latent-class membership
 
-## Output Files
+### Legacy GA-CMF path
 
-Search runs create result files under `results/`, including summaries and Pareto-front exports for multi-objective runs.
+If you want the older GA-specific CMF driver explicitly:
+
+```python
+cmf_search = builder.build_evaluator(
+    model_family="cmf",
+    cmf_driver="ga",
+    aadt_col="AADT",
+    baseline_vars=["GRADE", "LIGHTING"],
+    local_vars=["LANEWIDTH", "MEDIAN"],
+)
+
+result = builder.run_search(cmf_search, algo="ga", R=200, fit_final=True, final_R=500)
+```
+
+Use this only if you specifically want the legacy GA routine. The default recommendation is the JAX-count-backed CMF path.
+
+## 4. Duration Search
+
+Use the duration family for the duration-model workflow.
+
+```python
+duration_search = builder.build_evaluator(
+    model_family="duration",
+    variables=["x1", "x2", "x3"],
+    budget_col="B",
+)
+
+result = builder.run_search(
+    duration_search,
+    objective="budget_penalty",
+    lambda_penalty=10.0,
+)
+```
+
+## 5. Lower-Level CMF Helper
+
+If you want to start from CMF-specific inputs directly, you can use `CMFExperimentBuilder`.
+
+```python
+from metacountregressor.cmf_package import CMFExperimentBuilder
+
+cmf_builder = CMFExperimentBuilder(
+    df=df,
+    y_col="Y",
+    aadt_col="AADT",
+    baseline_vars=["GRADE", "LIGHTING"],
+    local_vars=["LANEWIDTH", "MEDIAN"],
+)
+```
+
+### Build a CMF evaluator on the main JAX count architecture
+
+```python
+general_builder, evaluator, metadata = cmf_builder.build_jax_count_evaluator(
+    id_col="ID",
+    offset_col="OFFSET",
+    group_id_col="FC",
+    variables=["HET_RAIN", "ZERO_FLAG", "MEMB_URBAN"],
+    max_latent_classes=2,
+    R=200,
+)
+
+result = general_builder.run(evaluator=evaluator, algo="sa", max_iter=2000, seed=9)
+```
+
+### Run the legacy GA-CMF search directly
+
+```python
+search_result = cmf_builder.run_search(R=200)
+fit_result = cmf_builder.fit_best_model(search_result, final_R=500)
+cmf_builder.print_report(search_result, fit_result)
+```
+
+## 6. How To Think About Testing Models
+
+A practical way to work through experiments is:
+
+1. start with the standard count search
+2. check whether Poisson or NB is preferred
+3. turn on random effects
+4. add heterogeneity in means if random parameters are consistently selected
+5. test zero inflation if there is excess zero mass
+6. test latent classes if you suspect segmented sub-populations
+7. then compare against a CMF search if your theory is specifically CMF-based
+
+For CMF experiments, a practical progression is:
+
+1. run the default JAX-count-backed CMF search
+2. allow random effects on baseline and CMF local terms
+3. add heterogeneity variables
+4. add zero-inflation candidates
+5. add latent-class membership variables
+6. only fall back to the legacy GA-CMF routine if you specifically want that older driver
 
 ## Notes
 
-- Python 3.10+ is required.
-- JAX should be installed in an environment that matches your CPU/GPU setup.
-- The latent-class search space can get large quickly. Start with fewer variables and fewer draws, then scale up once the pipeline is working.
+- `ExperimentBuilder` is JAX-first and only supports the JAX engine through the current package API.
+- The default family is `count`.
+- The default CMF path is also JAX-first now, but it remains a different functional form from the normal count model.
+- The duration workflow is separate from both count and CMF.

@@ -3,7 +3,13 @@ import pandas as pd
 
 from cmf_package import CMFExperimentBuilder
 from experiment_package import ExperimentBuilder
-from family_search import CMFFamilySearchProblem, DurationSearchProblem, LinearSearchProblem
+from family_search import (
+    CMFFamilySearchProblem,
+    CMFMetaheuristicObjective,
+    DurationSearchProblem,
+    LinearSearchProblem,
+    UnifiedCMFSearchProblem,
+)
 
 
 def make_panel_df():
@@ -142,10 +148,70 @@ def test_model_family_switches_return_specialized_search_problems():
         baseline_vars=["cmf_a"],
         local_vars=["cmf_b"],
     )
+    legacy_cmf_problem = builder.build_evaluator(
+        model_family="cmf",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+        cmf_driver="ga",
+    )
 
     assert isinstance(linear_problem, LinearSearchProblem)
     assert linear_problem.family == "linear"
     assert isinstance(duration_problem, DurationSearchProblem)
     assert duration_problem.family == "duration"
-    assert isinstance(cmf_problem, CMFFamilySearchProblem)
+    assert isinstance(cmf_problem, UnifiedCMFSearchProblem)
     assert cmf_problem.family == "cmf"
+    assert isinstance(legacy_cmf_problem, CMFFamilySearchProblem)
+    assert legacy_cmf_problem.family == "cmf"
+
+
+def test_cmf_metaheuristic_objective_decodes_solution():
+    df = make_panel_df().rename(columns={"Y": "FREQ"})
+    objective = CMFMetaheuristicObjective(
+        df=df,
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+        R=8,
+    )
+
+    vector = np.array([1, 1, 1, 0, 1, 0], dtype=int)
+    decoded = objective.decode_solution(vector)
+
+    assert decoded["selected_baseline"] == ["cmf_a"]
+    assert decoded["selected_local"] == ["cmf_b"]
+    assert decoded["use_halton"] is True
+    assert decoded["model"] == "poisson"
+    assert decoded["rand_baseline"] == (True,)
+    assert decoded["rand_local"] == (False,)
+
+
+def test_cmf_default_driver_uses_main_jax_count_architecture():
+    df = make_panel_df()
+    builder = ExperimentBuilder(
+        df=df,
+        id_col="ID",
+        y_col="Y",
+        offset_col="OFFSET",
+        group_id_col="FC",
+    )
+
+    cmf_problem = builder.build_evaluator(
+        model_family="cmf",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+        variables=["x_hetero", "x_zi", "x_member"],
+        max_latent_classes=2,
+        R=8,
+    )
+
+    assert isinstance(cmf_problem, UnifiedCMFSearchProblem)
+    assert cmf_problem.metadata["driver"] == "jax_count"
+    assert cmf_problem.metadata["log_aadt_col"] == "__cmf_log_aadt"
+    assert "__cmf_local__cmf_b" in cmf_problem.metadata["interaction_cols"]
+    assert "__cmf_log_aadt" in cmf_problem.evaluator.vars
+    assert "__cmf_local__cmf_b" in cmf_problem.evaluator.vars
+    assert "x_hetero" in cmf_problem.evaluator.vars
+    assert "x_zi" in cmf_problem.evaluator.vars
+    assert "x_member" in cmf_problem.evaluator.vars
