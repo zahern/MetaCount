@@ -44,7 +44,10 @@
 from __future__ import annotations
 
 # ── Apply patches FIRST ─────────────────────────────────────────────────
-import main_hpc_lc_patch as _patch   # patches main_hpc in-place
+try:
+    from . import main_hpc_lc_patch as _patch  # type: ignore[attr-defined]
+except ImportError:
+    import main_hpc_lc_patch as _patch   # patches main_hpc in-place
 
 import numpy as np
 import pandas as pd
@@ -53,36 +56,68 @@ from functools import partial
 from scipy.optimize import minimize
 from typing import Optional, Dict, List, Union, Any
 
-from family_search import (
-    CMFFamilySearchProblem,
-    DurationSearchProblem,
-    LinearSearchProblem,
-)
+try:
+    from .family_search import (
+        CMFFamilySearchProblem,
+        DurationSearchProblem,
+        LinearSearchProblem,
+    )
 
-from main_hpc import (
-    StructureEvaluator,
-    CountModel,
-    build_datasets,
-    generate_master_halton,
-    fit_em,
-    run_nsga,
-    MultiStartSA,
-    AdaptiveDE,
-    DynamicHarmony,
-    populate_allowed_roles,
-    populate_allowed_distributions,
-    decode_best_solution,
-    decode_distribution,
-    refit_and_print,
-    save_run_summary_to_txt,
-)
-from main_hpc_lc_patch import (
-    ModelSpec,
-    build_param_index,
-    build_model_from_manual_spec,
-    mixed_model_loglik,
-    print_summary,
-)
+    from .main_hpc import (
+        StructureEvaluator,
+        CountModel,
+        build_datasets,
+        generate_master_halton,
+        fit_em,
+        run_nsga,
+        MultiStartSA,
+        AdaptiveDE,
+        DynamicHarmony,
+        populate_allowed_roles,
+        populate_allowed_distributions,
+        decode_best_solution,
+        decode_distribution,
+        refit_and_print,
+        save_run_summary_to_txt,
+    )
+    from .main_hpc_lc_patch import (
+        ModelSpec,
+        build_param_index,
+        build_model_from_manual_spec,
+        mixed_model_loglik,
+        print_summary,
+    )
+except ImportError:
+    from family_search import (
+        CMFFamilySearchProblem,
+        DurationSearchProblem,
+        LinearSearchProblem,
+    )
+
+    from main_hpc import (
+        StructureEvaluator,
+        CountModel,
+        build_datasets,
+        generate_master_halton,
+        fit_em,
+        run_nsga,
+        MultiStartSA,
+        AdaptiveDE,
+        DynamicHarmony,
+        populate_allowed_roles,
+        populate_allowed_distributions,
+        decode_best_solution,
+        decode_distribution,
+        refit_and_print,
+        save_run_summary_to_txt,
+    )
+    from main_hpc_lc_patch import (
+        ModelSpec,
+        build_param_index,
+        build_model_from_manual_spec,
+        mixed_model_loglik,
+        print_summary,
+    )
 
 __all__ = ["StructureEvaluatorLC", "ExperimentBuilder"]
 
@@ -92,7 +127,10 @@ __all__ = ["StructureEvaluatorLC", "ExperimentBuilder"]
 # Applied directly to Solvers_METAJAX.ROLE_PROBS as well.
 # ═══════════════════════════════════════════════════════════════════════
 
-import Solvers_METAJAX as _solvers
+try:
+    from . import Solvers_METAJAX as _solvers  # type: ignore[attr-defined]
+except ImportError:
+    import Solvers_METAJAX as _solvers
 
 ROLE_PROBS = np.array([
     0.38,   # 0 – Excluded
@@ -855,7 +893,10 @@ class ExperimentBuilder:
             )
 
         if model_family == "cmf":
-            from cmf_package import CMFExperimentBuilder
+            try:
+                from .cmf_package import CMFExperimentBuilder
+            except ImportError:
+                from cmf_package import CMFExperimentBuilder
 
             aadt_col = kwargs.pop("aadt_col", None)
             baseline_vars = kwargs.pop("baseline_vars", None)

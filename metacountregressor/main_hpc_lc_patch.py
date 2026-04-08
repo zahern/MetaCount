@@ -78,26 +78,48 @@ from scipy import stats as scipy_stats
 from scipy.optimize import minimize
 
 # ── Import the rest of main_hpc unchanged ──────────────────────────────
-import main_hpc as _hpc
-from main_hpc import (
-    build_jax_data,          # extended below
-    build_model_from_manual_spec as _orig_build_model,
-    parse_manual_spec,
-    balance_panel_dataframe,
-    extract_offset,
-    generate_halton_normal,
-    build_base_index,
-    CountModel,
-    compute_standard_errors,
-    decode_distribution,
-    poisson_loglik,
-    nb2_loglik,
-    lognormal_loglik,
-    build_eta,
-    ensure_3d,
-    unpack_params,
-    DIST_MAP,
-)
+try:
+    from . import main_hpc as _hpc  # type: ignore[attr-defined]
+    from .main_hpc import (
+        build_jax_data,          # extended below
+        build_model_from_manual_spec as _orig_build_model,
+        parse_manual_spec,
+        balance_panel_dataframe,
+        extract_offset,
+        generate_halton_normal,
+        build_base_index,
+        CountModel,
+        compute_standard_errors,
+        decode_distribution,
+        poisson_loglik,
+        nb2_loglik,
+        lognormal_loglik,
+        build_eta,
+        ensure_3d,
+        unpack_params,
+        DIST_MAP,
+    )
+except ImportError:
+    import main_hpc as _hpc
+    from main_hpc import (
+        build_jax_data,          # extended below
+        build_model_from_manual_spec as _orig_build_model,
+        parse_manual_spec,
+        balance_panel_dataframe,
+        extract_offset,
+        generate_halton_normal,
+        build_base_index,
+        CountModel,
+        compute_standard_errors,
+        decode_distribution,
+        poisson_loglik,
+        nb2_loglik,
+        lognormal_loglik,
+        build_eta,
+        ensure_3d,
+        unpack_params,
+        DIST_MAP,
+    )
 
 jax.config.update("jax_enable_x64", True)
 

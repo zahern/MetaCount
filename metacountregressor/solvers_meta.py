@@ -8,8 +8,14 @@ from texttable import Texttable
 import latextable
 from jax import lax
 import jax
-from solution import ObjectiveFunction
-from _device_jax_cust import device as dev
+try:
+    from .solution import ObjectiveFunction
+    from ._device_jax_cust import device as dev
+    from .pareto_file import Pareto, Solution
+except ImportError:
+    from solution import ObjectiveFunction
+    from _device_jax_cust import device as dev
+    from pareto_file import Pareto, Solution
 import  logging
 import jax.scipy.special as sp
 
@@ -19,7 +25,6 @@ min_comp_val = 1e-160
 max_comp_val = 1e+200
 log_lik_min = -1e+200
 log_lik_max = 1e+200
-from pareto_file import Pareto, Solution
 import jax.scipy as jsp
 # Setup Limits, and Batches for custom GPU code
 EXP_UPPER_LIMIT = jnp.float64(jnp.log(jnp.finfo(jnp.float64).max) - 50.0)

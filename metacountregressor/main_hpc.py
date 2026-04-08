@@ -11,7 +11,10 @@ from jaxopt import LBFGS
 from jaxopt import LBFGS, GradientDescent, NonlinearCG, BFGS
 import pandas as pd
 import scipy.stats as stats
-from Solvers_METAJAX import *
+try:
+    from .Solvers_METAJAX import *  # type: ignore[attr-defined]
+except ImportError:
+    from Solvers_METAJAX import *
 from scipy.stats import qmc
 from scipy.stats import norm
 import argparse

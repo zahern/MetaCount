@@ -7,20 +7,36 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-from cmf_package import CMFExperimentBuilder
-from duration_main import (
-    estimate_model,
-    ll_independent,
-    ll_with_budget_penalty,
-    prepare_data,
-    predict_daily_schedule,
-)
-from metaheuristics import (
-    differential_evolution,
-    harmony_search,
-    simulated_annealing,
-)
-from solution import ObjectiveFunction
+try:
+    from .cmf_package import CMFExperimentBuilder
+    from .duration_main import (
+        estimate_model,
+        ll_independent,
+        ll_with_budget_penalty,
+        prepare_data,
+        predict_daily_schedule,
+    )
+    from .metaheuristics import (
+        differential_evolution,
+        harmony_search,
+        simulated_annealing,
+    )
+    from .solution import ObjectiveFunction
+except ImportError:
+    from cmf_package import CMFExperimentBuilder
+    from duration_main import (
+        estimate_model,
+        ll_independent,
+        ll_with_budget_penalty,
+        prepare_data,
+        predict_daily_schedule,
+    )
+    from metaheuristics import (
+        differential_evolution,
+        harmony_search,
+        simulated_annealing,
+    )
+    from solution import ObjectiveFunction
 
 
 def _run_metaheuristic(algo: str, objective_function, **kwargs):

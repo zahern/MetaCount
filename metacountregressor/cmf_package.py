@@ -53,14 +53,24 @@ class CMFExperimentBuilder:
 
     @staticmethod
     def _cmf_api():
-        from GA_CMF_AADT_JAX import (
-            build_summary_table,
-            compute_se,
-            fit_final_model,
-            print_cmf_results,
-            print_summary_table,
-            run_ga,
-        )
+        try:
+            from .GA_CMF_AADT_JAX import (
+                build_summary_table,
+                compute_se,
+                fit_final_model,
+                print_cmf_results,
+                print_summary_table,
+                run_ga,
+            )
+        except ImportError:
+            from GA_CMF_AADT_JAX import (
+                build_summary_table,
+                compute_se,
+                fit_final_model,
+                print_cmf_results,
+                print_summary_table,
+                run_ga,
+            )
 
         return {
             "build_summary_table": build_summary_table,
@@ -151,7 +161,10 @@ class CMFExperimentBuilder:
         offset_col: Optional[str] = None,
         group_id_col: Optional[str] = None,
     ) -> "ExperimentBuilder":
-        from experiment_package import ExperimentBuilder
+        try:
+            from .experiment_package import ExperimentBuilder
+        except ImportError:
+            from experiment_package import ExperimentBuilder
 
         return ExperimentBuilder(
             df=self.df,
@@ -174,7 +187,10 @@ class CMFExperimentBuilder:
         fixed_override: Optional[dict[str, list[int]]] = None,
         exclude: Optional[list[str]] = None,
     ):
-        from experiment_package import ExperimentBuilder
+        try:
+            from .experiment_package import ExperimentBuilder
+        except ImportError:
+            from experiment_package import ExperimentBuilder
 
         builder = self.to_experiment_builder(
             id_col=id_col,
