@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metacountregressor"
+version = "0.1.0"
+description = "Metaheuristic search for mixed and latent-class count regression models."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "jax",
+  "jaxlib",
+  "jaxopt",
+  "joblib",
+  "latextable",
+  "matplotlib",
+  "numpy",
+  "pandas",
+  "psutil",
+  "pygad",
+  "scikit-learn",
+  "scipy",
+  "statsmodels",
+  "texttable",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+include-package-data = true
+py-modules = [
+  "GA_CMF_AADT_JAX",
+  "Solvers_METAJAX",
+  "_device_cust",
+  "_device_jax_cust",
+  "cmf_package",
+  "data_split_helper",
+  "experiment_package",
+  "halton",
+  "helperprocess",
+  "main_hpc",
+  "main_hpc_lc_patch",
+  "metaheuristics",
+  "pareto_file",
+  "solution",
+  "solvers_meta",
+]
+
+[tool.setuptools.packages.find]
+include = ["metacountregressor*"]

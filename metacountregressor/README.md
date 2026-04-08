@@ -1,320 +1,342 @@
 # metacountregressor
 
-**JAX-compatable.**
+`metacountregressor` searches count-model structure for you. It can explore fixed effects, random effects, grouped effects, heterogeneity in means, zero inflation, and latent classes, then score candidate models with BIC or a multi-objective criterion.
 
-`metacountregressor` lets you automatically discover the best model specification — variable roles, random-effect distributions, dispersion, and latent class structure — for panel count-data problems (crash frequency, health events, demand counts, etc.).
-It combines a JAX back-end for fast gradient computation with metaheuristic search (Simulated Annealing, Differential Evolution, Harmony Search + NSGA-II) to explore a combinatorially large model space and return the structure with the best BIC or Pareto-optimal BIC / test-RMSE trade-off.
+The package now exposes a stable package import path:
 
----
-
-## Feature overview
-
-
-| Feature                    | Detail                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------- |
-| **Model families**         | Poisson · Negative Binomial · Zero-Inflated variants                  |
-| **Random effects**         | Independent · Correlated (Cholesky) · Grouped                         |
-| **Distributions**          | Normal · Log-Normal · Triangular · Uniform                           |
-| **Heterogeneity in means** | Covariates that shift random-effect means                               |
-| **Latent classes**         | 1–N classes with EM warm-start                                         |
-| **Membership equations**   | Variables that explain class membership (roles 7 & 8)                   |
-| **Optimisers**             | Simulated Annealing · Adaptive DE · Dynamic Harmony Search · NSGA-II |
-| **Objective**              | Single (BIC) or multi-objective (BIC + test RMSE)                       |
-
----
+```python
+from metacountregressor.experiment_package import ExperimentBuilder
+from metacountregressor.cmf_package import CMFExperimentBuilder
+```
 
 ## Installation
 
-```bash
-pip install MetaCountRegressor
-```
-
-### Development / editable install
+### Install from a local clone
 
 ```bash
 git clone https://github.com/zahern/MetaCount.git
-cd MetaCountRegressor
+cd metacountregressor
 pip install -e ".[dev]"
 ```
 
-**Python ≥ 3.10 required.**
-Core dependencies: `jax`, `jaxlib`, `jaxopt`, `numpy`, `pandas`, `scipy`, `joblib`.
+### Build a wheel
 
----
-
-## Quickstart (5 minutes)
-
-```python
-import pandas as pd
-from MetaCountRegressor import ExperimentBuilder
-
-# 1. Load your panel count dataset
-df = pd.read_csv("crash_data.csv")
-
-# 2. (Optional) engineer an exposure offset
-df["EXPOSE"] = df["LENGTH"] * df["AADT"] * 365 / 1e8
-df["OFFSET"] = 0          # zero → log(1), i.e. no offset by default
-df.rename(columns={"FREQ": "Y"}, inplace=True)
-
-# 3. Initialise the builder
-builder = ExperimentBuilder(
-    df           = df,
-    id_col       = "ID",
-    y_col        = "Y",
-    offset_col   = "OFFSET",
-    group_id_col = "FC",      # optional: functional class → grouped effects
-)
-
-# 4. Inspect data and get automatic suggestions
-builder.describe()
-builder.suggest_config()
-
-# 5. Build the evaluator  (single-objective, BIC)
-evaluator = builder.build_evaluator(
-    mode   = "single",
-    R      = 200,       # Halton simulation draws
-)
-
-# 6. Run Simulated Annealing
-result = builder.run(evaluator, algo="sa", max_iter=1000, seed=42)
+```bash
+python -m build
+pip install dist/metacountregressor-0.1.0-py3-none-any.whl
 ```
 
-The best model specification and a full coefficient table are printed automatically.
-A `results/` folder is created with a timestamped `.txt` summary.
+### Quick import check
 
----
+```bash
+python -c "from metacountregressor.experiment_package import ExperimentBuilder; print(ExperimentBuilder)"
+```
 
-## Core concepts
+## What The Search Can Explore
 
 ### Role codes
 
-Every candidate variable is assigned a **role** that determines how it enters the model.
+| Code | Meaning |
+| --- | --- |
+| `0` | Excluded |
+| `1` | Fixed effect |
+| `2` | Random independent effect |
+| `3` | Random correlated effect |
+| `4` | Grouped random effect |
+| `5` | Heterogeneity in random-effect means |
+| `6` | Zero-inflation equation |
+| `7` | Latent-class membership only |
+| `8` | Latent-class membership plus fixed outcome effect |
 
+### Model dimensions covered by the search
 
-| Code | Name               | Description                                                          |
-| ------ | -------------------- | ---------------------------------------------------------------------- |
-| `0`  | Excluded           | Not in the model                                                     |
-| `1`  | Fixed              | Single coefficient, same across all observations                     |
-| `2`  | Random Independent | Per-site coefficient, independent draws                              |
-| `3`  | Random Correlated  | Per-site coefficient, jointly estimated covariance                   |
-| `4`  | Grouped            | Coefficient shared within a group (e.g. road class)                  |
-| `5`  | Heterogeneity      | Shifts the*mean* of random coefficients                              |
-| `6`  | Zero Inflation     | Enters the zero-inflation probability equation                       |
-| `7`  | Membership only    | Enters the class-probability equation; no direct outcome effect      |
-| `8`  | Membership + Fixed | Enters*both* the class-probability equation and the outcome equation |
+- Poisson and Negative Binomial
+- Fixed-only models
+- Linear mixed count models with independent random effects
+- Linear mixed count models with correlated random effects
+- Grouped random effects
+- Heterogeneity in means
+- Zero-inflated specifications
+- Latent-class specifications with membership equations
 
-Roles 7 and 8 are only meaningful when `max_latent_classes > 1`.
+## Running A General Experiment
 
-### Decision vector
+### 1. Prepare a dataframe
 
-Internally, each candidate model is encoded as an integer array:
+You need:
 
-```
-[ roles(D)  |  dist_codes(D)  |  dispersion_bit  |  lc_code ]
-```
+- an ID column
+- a count outcome column
+- optional offset column
+- optional group column for grouped random effects
 
-- `roles`: one role code per variable
-- `dist_codes`: distribution for random/grouped variables
-- `dispersion_bit`: 0 = Poisson, 1 = Negative Binomial
-- `lc_code`: `(lc_code % max_latent_classes) + 1` → number of latent classes
-
-### Algorithms
-
-
-| `algo=` | When to use                                                              |
-| --------- | -------------------------------------------------------------------------- |
-| `"sa"`  | **Recommended default.** Single-objective (BIC). Fast, reliable.         |
-| `"de"`  | Multi-objective (BIC + RMSE). Adaptive Differential Evolution + NSGA-II. |
-| `"hs"`  | Multi-objective (BIC + RMSE). Dynamic Harmony Search + NSGA-II.          |
-
----
-
-## API reference
-
-### `ExperimentBuilder`
+Example:
 
 ```python
+import numpy as np
+import pandas as pd
+
+df = pd.read_csv("crash_data.csv")
+df["OFFSET"] = np.log(np.clip(df["AADT"] * df["LENGTH"] * 365 / 1e8, 1e-12, None))
+df = df.rename(columns={"FREQ": "Y"})
+```
+
+### 2. Create the experiment builder
+
+```python
+from metacountregressor.experiment_package import ExperimentBuilder
+
 builder = ExperimentBuilder(
-    df,
-    id_col       = "SITE_ID",
-    y_col        = "CRASHES",
-    offset_col   = "EXPOSURE",   # optional log-offset column
-    group_id_col = "ROAD_CLASS", # optional grouping variable
+    df=df,
+    id_col="ID",
+    y_col="Y",
+    offset_col="OFFSET",
+    group_id_col="FC",
 )
 ```
 
-#### `.describe()`
+### 3. Inspect the data and suggestions
 
-Prints a full data summary: outcome statistics, overdispersion index, variable types, and the role-code guide.
+```python
+builder.describe()
+builder.suggest_config(max_latent_classes=2)
+```
 
-#### `.suggest_config(max_latent_classes=1)`
+This prints:
 
-Prints per-variable recommended roles and distributions based on automatic type inference.
+- outcome diagnostics
+- candidate variable summaries
+- suggested roles
+- suggested random-effect distributions
 
-#### `.build_evaluator(...) → StructureEvaluatorLC`
+### 4. Build the evaluator
+
+#### Standard mixed-model search
 
 ```python
 evaluator = builder.build_evaluator(
-    variables           = None,      # default: all candidate columns
-    fixed_override      = {"EXPO": [1]},        # force variable to fixed
-    membership_override = {"URB": [0, 7, 8]},   # allow membership roles
-    exclude             = ["YEAR"],             # always exclude
-    mode                = "single",  # "single" or "multi"
-    max_latent_classes  = 2,         # 1 disables LC search
-    R                   = 200,       # Halton draws
-    default_roles       = None,      # override default search space
+    mode="single",
+    R=200,
+    default_roles=[0, 1, 2, 3, 4, 5],
 )
 ```
 
-#### `.run(evaluator, ...) → dict`
+#### Latent-class mixed-model search
+
+```python
+evaluator = builder.build_evaluator(
+    mode="single",
+    max_latent_classes=3,
+    R=200,
+    default_roles=[0, 1, 2, 3, 4, 5, 7, 8],
+    membership_override={
+        "URB": [0, 7, 8],
+        "SPEED": [0, 1, 7, 8],
+    },
+)
+```
+
+#### Search only a selected subset of variables
+
+```python
+evaluator = builder.build_evaluator(
+    variables=["AADT", "LENGTH", "URB", "SPEED", "GRADE"],
+    mode="single",
+    R=150,
+)
+```
+
+### 5. Run the search
+
+#### Simulated annealing
 
 ```python
 result = builder.run(
-    evaluator  = evaluator,
-    algo       = "sa",        # "sa" | "de" | "hs"
-    max_iter   = 3000,
-    n_jobs     = 1,
-    seed       = 0,
-    # SA-specific kwargs:
-    mutation_rate = 0.3,
-    n_starts      = 1,
-    alpha         = 0.995,
+    evaluator=evaluator,
+    algo="sa",
+    max_iter=1500,
+    seed=42,
 )
 ```
 
-Returns a dict with keys: `algorithm`, `seed`, `solutions`, `scores`, `best_solution`, `best_score`.
+#### Differential evolution / Pareto search
 
----
+```python
+result = builder.run(
+    evaluator=evaluator,
+    algo="de",
+    max_iter=1000,
+    n_jobs=1,
+    seed=42,
+    population_size=20,
+)
+```
 
-## Examples
+### 6. Read the result
 
-### 1 · Fixed-effects Poisson baseline
+The returned dictionary includes:
+
+- `best_solution`
+- `best_score`
+- `solutions`
+- `scores`
+- `algorithm`
+- `seed`
+
+The run also prints the decoded best structure and writes a summary file to `results/`.
+
+## Common Experiment Recipes
+
+### Fixed-only baseline
 
 ```python
 evaluator = builder.build_evaluator(
-    default_roles = [0, 1],   # only Excluded or Fixed
-    mode          = "single",
-    R             = 50,
+    mode="single",
+    R=100,
+    default_roles=[0, 1],
 )
 result = builder.run(evaluator, algo="sa", max_iter=500)
 ```
 
-### 2 · Mixed Negative Binomial search
+### Independent and correlated random effects
 
 ```python
 evaluator = builder.build_evaluator(
-    mode          = "single",
-    R             = 200,
-    default_roles = [0, 1, 2, 3],  # allow random effects
-)
-result = builder.run(evaluator, algo="sa", max_iter=2000)
-```
-
-### 3 · Zero-inflated model search
-
-```python
-evaluator = builder.build_evaluator(
-    default_roles = [0, 1, 2, 6],  # 6 = ZI role
-    mode          = "single",
-    R             = 150,
+    mode="single",
+    R=200,
+    default_roles=[0, 1, 2, 3],
 )
 result = builder.run(evaluator, algo="sa", max_iter=1500)
 ```
 
-### 4 · Latent class search with membership variables
+### Grouped random effects plus heterogeneity in means
 
 ```python
 evaluator = builder.build_evaluator(
-    mode                = "single",
-    max_latent_classes  = 2,
-    R                   = 150,
-    membership_override = {
-        "URB":   [0, 7],     # may only influence class membership
-        "SPEED": [0, 7, 8],  # may influence membership AND outcome
-    },
-)
-result = builder.run(evaluator, algo="sa", max_iter=3000)
-```
-
-### 5 · Multi-objective search (BIC + test RMSE Pareto front)
-
-```python
-evaluator = builder.build_evaluator(
-    mode               = "multi",
-    max_latent_classes = 2,
-    R                  = 200,
-)
-result = builder.run(evaluator, algo="de", max_iter=2000, population_size=30)
-```
-
-### 6 · Fixing specific variables and excluding others
-
-```python
-evaluator = builder.build_evaluator(
-    fixed_override = {
-        "AADT":  [1],        # always fixed
-        "SPEED": [0, 1, 2],  # only Excluded / Fixed / Random-Ind
-    },
-    exclude        = ["SEGMENT_ID", "YEAR"],
-    mode           = "single",
-    R              = 200,
+    mode="single",
+    R=200,
+    default_roles=[0, 1, 2, 3, 4, 5],
 )
 result = builder.run(evaluator, algo="sa", max_iter=2000)
 ```
 
-### 7 · Grouped random effects (shared within road class)
+### Zero inflation
 
 ```python
-builder = ExperimentBuilder(
-    df           = df,
-    id_col       = "SITE_ID",
-    y_col        = "CRASHES",
-    offset_col   = "EXPOSURE",
-    group_id_col = "FC",       # <-- enables role 4
-)
 evaluator = builder.build_evaluator(
-    default_roles = [0, 1, 2, 4],
-    mode          = "single",
-    R             = 150,
+    mode="single",
+    R=200,
+    default_roles=[0, 1, 2, 6],
 )
-result = builder.run(evaluator, algo="sa", max_iter=2000)
+result = builder.run(evaluator, algo="sa", max_iter=1500)
 ```
 
----
+### Latent classes with membership variables
 
-## Output files
-
-Every run writes to `results/` (auto-created):
-
-
-| File                                       | Content                                                         |
-| -------------------------------------------- | ----------------------------------------------------------------- |
-| `sa_summary_seed0_config0_<timestamp>.txt` | Full coefficient table, BIC, AIC, train/test/validation metrics |
-| `de_pareto_seed0_config0_<timestamp>.txt`  | Pareto-front summary (multi-objective only)                     |
-
----
-
-## Citation
-
-If you use `metajax-regression` in academic work, please cite:
-
-```bibtex
-@software{MetaCountRegressor,
-  title   = {metacountregressor: Analyst assisted search for mixed-hetrogeneous count-data models},
-  year    = {2026},
-  url     = {https://github.com/zahern/MetaCount},
-}
+```python
+evaluator = builder.build_evaluator(
+    mode="single",
+    max_latent_classes=2,
+    R=200,
+    default_roles=[0, 1, 2, 3, 5, 7, 8],
+    membership_override={
+        "URB": [0, 7],
+        "AADT": [0, 1, 7, 8],
+    },
+)
+result = builder.run(evaluator, algo="sa", max_iter=2500)
 ```
 
----
+## Running CMF Experiments
 
-## Contributing
+The GA CMF code is now wrapped by `CMFExperimentBuilder`, so you can run the classic AADT-based CMF search through the package instead of calling the standalone script directly.
 
-Pull requests are welcome. Please open an issue first to discuss major changes.
-See `CONTRIBUTING.md` for development setup, code style, and test instructions.
+### 1. Create the CMF builder
 
----
+```python
+import pandas as pd
+from metacountregressor.cmf_package import CMFExperimentBuilder
 
-## License
+df = pd.read_csv("cmf_data.csv")
 
-MIT — see `LICENSE`.
+cmf_builder = CMFExperimentBuilder(
+    df=df,
+    y_col="Y",
+    aadt_col="AADT",
+    baseline_vars=["URB", "HISNOW", "SLOPE"],
+    local_vars=["GBRPM", "EXPOSE", "INTPM", "SPEED"],
+)
+```
+
+### 2. Search the CMF structure
+
+```python
+search_result = cmf_builder.run_search(R=200)
+print(search_result)
+```
+
+This search chooses:
+
+- which CMF variables are active
+- whether each active CMF is fixed or random
+- Poisson vs Negative Binomial
+- Halton draws vs pseudo-random draws
+
+### 3. Fit the final CMF model and print the report
+
+```python
+fit_result = cmf_builder.fit_best_model(search_result, final_R=500)
+cmf_builder.print_report(search_result, fit_result)
+```
+
+### 4. Bridge CMF variables into latent-class search
+
+If you want latent-class search over the same CMF covariates, move from the CMF builder into the general package search:
+
+```python
+general_builder, evaluator = cmf_builder.build_latent_class_evaluator(
+    id_col="ID",
+    offset_col="OFFSET",
+    max_latent_classes=2,
+    R=200,
+    default_roles=[0, 1, 2, 3, 5, 7, 8],
+    membership_override={
+        "AADT": [0, 1, 7, 8],
+        "URB": [0, 7, 8],
+    },
+)
+
+result = general_builder.run(
+    evaluator=evaluator,
+    algo="sa",
+    max_iter=2000,
+    seed=7,
+)
+```
+
+That path is the recommended way to set up latent-class CMF-style experiments in the package.
+
+## Test Suite
+
+Run the package tests with:
+
+```bash
+pytest
+```
+
+The current test suite checks:
+
+- package imports
+- the `metacountregressor.experiment_package` import path
+- role decoding for fixed, random, grouped, heterogeneity, zero inflation, and membership roles
+- CMF builder integration with the general latent-class experiment API
+
+## Output Files
+
+Search runs create result files under `results/`, including summaries and Pareto-front exports for multi-objective runs.
+
+## Notes
+
+- Python 3.10+ is required.
+- JAX should be installed in an environment that matches your CPU/GPU setup.
+- The latent-class search space can get large quickly. Start with fewer variables and fewer draws, then scale up once the pipeline is working.

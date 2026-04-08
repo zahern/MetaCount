@@ -1,5 +1,4 @@
 import jax
-print(jax.devices())
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
@@ -24,9 +23,6 @@ import sys
 from contextlib import redirect_stdout
 from scipy.optimize import minimize
 import traceback
-
-print("Physical cores:", psutil.cpu_count(logical=False))
-print("Logical cores:", psutil.cpu_count(logical=True))
 
 DIST_MAP = {
     "normal": 0,
