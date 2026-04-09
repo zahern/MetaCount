@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "metacountregressor"
 version = "1.0.24"
-description = "Metaheuristic search for mixed and latent-class count regression models."
+description = "JAX-first hierarchical search and fitting for count, CMF, duration, and linear models."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -53,3 +53,6 @@ py-modules = [
 
 [tool.setuptools.packages.find]
 include = ["metacountregressor*"]
+
+[tool.setuptools.package-data]
+metacountregressor = ["data/*.csv"]

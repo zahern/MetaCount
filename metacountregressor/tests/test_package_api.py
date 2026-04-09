@@ -13,6 +13,8 @@ def test_public_package_imports():
     assert hasattr(package, "LinearSearchProblem")
     assert hasattr(package, "DurationSearchProblem")
     assert hasattr(package, "SearchOutputConfig")
+    assert hasattr(package, "load_example16_3_raw_data")
+    assert hasattr(package, "load_example16_3_model_data")
     assert hasattr(package, "load_example_crash_data")
     assert submodule.ExperimentBuilder is package.ExperimentBuilder
     assert cmf_submodule.CMFExperimentBuilder is package.CMFExperimentBuilder

@@ -1,35 +1,30 @@
 # metacountregressor Cookbook
 
-`metacountregressor` is a JAX-first package for fitting and searching hierarchical models.
+`metacountregressor` is a JAX-first package for hierarchical model fitting and metaheuristic structure search across:
 
-This cookbook is built around the actual public package API and the bundled example dataset, so every variable name shown below exists in the data returned by the package.
+- count models
+- CMF models
+- duration models
+- linear models
 
-## 1. What The Package Covers
+This cookbook now uses the bundled Example 16-3 data from the linked CSV source and keeps the original source column names.
 
-There are four main model families:
+## 1. Why PyPI Can Still Show Old Description Text
 
-1. Count models
-   Poisson and Negative Binomial models on the main JAX hierarchical architecture.
-2. CMF models
-   Crash Modification Factor models with functional form
-   `log(mu) = baseline block + local block * log(AADT)`.
-   The default CMF route also uses the main JAX hierarchical architecture.
-3. Duration models
-   The default duration route now uses the main JAX hierarchical architecture with a lognormal family.
-4. Linear models
-   The default linear route now uses the main JAX hierarchical architecture with a Gaussian family.
+The PyPI project page reads from the metadata inside the uploaded distribution for that release.
 
-Across the main JAX architecture, the package is designed to support:
+That means:
 
-- random parameters
-- correlated random parameters
-- grouped random parameters
-- heterogeneity in the means
-- zero inflation
-- latent classes
-- membership equations
-- random-parameter distribution assumptions
-- metaheuristic structure search
+- changing `README.md` in the repo does not change an already-published PyPI page
+- changing the short `description` in [pyproject.toml](C:/Users/ahernz/source/MetaCount/metacountregressor/pyproject.toml) also only affects newly uploaded releases
+
+This repo is now set to:
+
+- version `1.0.24`
+- short description:
+  `JAX-first hierarchical search and fitting for count, CMF, duration, and linear models.`
+
+If PyPI still shows the old text, the fix is to build and upload a new release from this updated source.
 
 ## 2. Install
 
@@ -41,65 +36,83 @@ python -m pip install jax jaxlib jaxopt
 Quick import check:
 
 ```bash
-python -c "from metacountregressor import __version__, ExperimentBuilder, load_example_crash_data; print(__version__, ExperimentBuilder, load_example_crash_data().shape)"
+python -c "from metacountregressor import __version__, load_example16_3_raw_data; print(__version__, load_example16_3_raw_data().shape)"
 ```
 
-The repo version and the uploaded PyPI version should move together. This repo is currently prepared for release `1.0.24`.
+## 3. Example Data In The Package
 
-## 3. Use The Bundled Example Data
-
-The package ships with accessible example data:
+The package now exposes the Example 16-3 data directly:
 
 ```python
-from metacountregressor import load_example_crash_data
+from metacountregressor import load_example16_3_raw_data, load_example16_3_model_data
 
-df = load_example_crash_data()
-print(df.columns.tolist())
+raw_df = load_example16_3_raw_data()
+model_df = load_example16_3_model_data()
 ```
 
-Important columns in the bundled dataset:
+### 3.1 Raw data loader
+
+`load_example16_3_raw_data()` returns the original CSV columns:
 
 - `ID`
-- `Y`
-- `OFFSET`
-- `FACILITY_CLASS`
-- `TRUE_FUNCTIONAL_CLASS`
-- `AADT`
+- `FREQ`
 - `LENGTH`
-- `GRADE`
-- `LIGHTING`
-- `CURVE`
-- `LANEWIDTH`
-- `SHOULDER`
-- `MEDIAN`
-- `RAIN`
-- `ZERO_FLAG`
-- `MEMB_URBAN`
-- `URBAN`
-- `INTERSECTION_DENSITY`
+- `INCLANES`
+- `DECLANES`
+- `WIDTH`
+- `MIMEDSH`
+- `MXMEDSH`
 - `SPEED`
-- `LANES`
-- `B`
-- `DURATION`
-- `LINEAR_X1`
-- `LINEAR_X2`
-- `LINEAR_X3`
+- `URB`
+- `FC`
+- `AADT`
+- `SINGLE`
+- `DOUBLE`
+- `TRAIN`
+- `PEAKHR`
+- `GRADEBR`
+- `MIGRADE`
+- `MXGRADE`
+- `MXGRDIFF`
+- `TANGENT`
+- `CURVES`
+- `MINRAD`
+- `ACCESS`
+- `MEDWIDTH`
+- `FRICTION`
+- `ADTLANE`
+- `SLOPE`
+- `INTECHAG`
+- `AVEPRE`
+- `AVESNOW`
 
-All cookbook examples below use columns from this bundled dataset.
+### 3.2 Model-ready loader
+
+`load_example16_3_model_data()` preserves all source columns and adds:
+
+- `OFFSET`
+- `FC_ENCODED`
+- `FC_LABEL`
+
+Notes:
+
+- `FC` remains the original source coding from the Example 16-3 data.
+- `FC_ENCODED` is a clean ordered encoding of the observed `FC` categories for comparison experiments.
+- `FC_LABEL` is a readable string form like `FC_1`, `FC_2`, `FC_5`.
 
 ## 4. Build The Main ExperimentBuilder
 
 ```python
-from metacountregressor import ExperimentBuilder, load_example_crash_data
+from metacountregressor import ExperimentBuilder, load_example16_3_model_data
 
-df = load_example_crash_data()
+df = load_example16_3_model_data()
 
 builder = ExperimentBuilder(
     df=df,
     id_col="ID",
-    y_col="Y",
+    y_col="FREQ",
     offset_col="OFFSET",
-    group_id_col="FACILITY_CLASS",
+    group_id_col="FC",
 )
 ```
 
@@ -116,18 +129,18 @@ In `ExperimentBuilder(...)`:
 - `group_id_col`
   Optional. You can pass `None`.
 
-In `build_evaluator(...)` and `build_count_evaluator(...)`:
+In `build_evaluator(...)`:
 
 - `variables=None`
-  Means use all candidate variables not reserved as IDs, outcomes, offsets, or groups.
+  Uses all candidate columns.
 - `fixed_override=None`
-  Means no per-variable role restrictions.
+  No variable-specific fixed-role restrictions.
 - `membership_override=None`
-  Means no special membership-role restrictions.
+  No variable-specific membership-role restrictions.
 - `exclude=None`
-  Means do not exclude extra variables.
+  Do not exclude extra columns.
 - `default_roles=None`
-  Means the package will choose defaults for that family.
+  Let the package choose family defaults.
 
 In CMF helpers:
 
@@ -138,7 +151,7 @@ In CMF helpers:
 - `variables=None`
   Allowed.
 
-Helpful inspection methods:
+Helpful inspection:
 
 ```python
 builder.describe()
@@ -149,42 +162,38 @@ print(builder.get_search_argument_guide())
 
 ## 5. Main Search Arguments
 
-Shared arguments you will change most often:
+Shared arguments:
 
 - `algo`
-  Search driver. Use `sa`, `hc`, `de`, or `hs`.
+  Use `sa`, `hc`, `de`, or `hs`.
 - `R`
   Number of simulation draws.
 - `max_iter`
   Search iterations.
 - `max_latent_classes`
-  Maximum number of latent classes.
+  Maximum latent classes allowed.
 - `variables`
-  Search variables.
+  Candidate search columns.
 - `default_roles`
   Allowed structural roles.
 - `fixed_override`
-  Restrict roles for specific variables.
+  Restrict roles for named variables.
 - `membership_override`
-  Restrict membership-role behavior for specific variables.
+  Restrict membership roles for named variables.
 
-Output helper:
+To save results consistently:
 
 ```python
 from metacountregressor import SearchOutputConfig
 
 output_config = SearchOutputConfig(
     output_dir="results",
-    experiment_name="count_search_demo",
-    search_description="Search over count structures with latent classes",
+    experiment_name="example16_3_count_search",
+    search_description="Count model search on Example 16-3 data",
 )
 ```
 
-If you pass `output_config=...` to `run(...)` or `run_search(...)`, the package saves a consistent JSON record of the run.
-
 ## 6. Role Codes
-
-For the hierarchical search architecture:
 
 | Code | Meaning |
 | --- | --- |
@@ -198,7 +207,7 @@ For the hierarchical search architecture:
 | `7` | Membership only |
 | `8` | Membership plus fixed outcome |
 
-Supported random-parameter distributions:
+Random-parameter distributions:
 
 - `normal`
 - `lognormal`
@@ -213,13 +222,14 @@ Supported random-parameter distributions:
 evaluator = builder.build_count_evaluator(
     variables=[
         "AADT",
+        "LENGTH",
         "SPEED",
-        "LANES",
-        "CURVE",
-        "LIGHTING",
-        "RAIN",
-        "ZERO_FLAG",
-        "MEMB_URBAN",
+        "CURVES",
+        "TANGENT",
+        "SLOPE",
+        "ACCESS",
+        "URB",
+        "AVEPRE",
     ],
     mode="single",
     max_latent_classes=2,
@@ -240,12 +250,12 @@ result = builder.run(
 
 ```python
 manual_spec = builder.make_manual_spec(
-    fixed_terms=["AADT", "SPEED"],
-    rdm_terms=["LANES:normal"],
-    rdm_cor_terms=["CURVE:normal", "LIGHTING:lognormal"],
-    hetro_in_means=["RAIN"],
-    zi_terms=["ZERO_FLAG"],
-    membership_terms=["MEMB_URBAN"],
+    fixed_terms=["AADT", "LENGTH", "SPEED"],
+    rdm_terms=["CURVES:normal"],
+    rdm_cor_terms=["TANGENT:normal", "SLOPE:lognormal"],
+    hetro_in_means=["AVEPRE"],
+    zi_terms=["ACCESS"],
+    membership_terms=["URB"],
     dispersion=1,
     latent_classes=2,
 )
@@ -265,7 +275,7 @@ CMF models use:
 log(mu) = baseline block + local block * log(AADT)
 ```
 
-The default CMF route transforms the design and then uses the same JAX hierarchical solver and search architecture as the count family.
+The default CMF route transforms the CMF design and then runs on the main JAX hierarchical architecture.
 
 ### 8.1 CMF search
 
@@ -273,25 +283,20 @@ The default CMF route transforms the design and then uses the same JAX hierarchi
 cmf_search = builder.build_evaluator(
     model_family="cmf",
     aadt_col="AADT",
-    baseline_vars=["GRADE", "LIGHTING", "CURVE"],
-    local_vars=["LANEWIDTH", "SHOULDER", "MEDIAN"],
-    variables=["RAIN", "ZERO_FLAG", "MEMB_URBAN"],
+    baseline_vars=["URB", "ACCESS", "GRADEBR"],
+    local_vars=["CURVES", "SLOPE", "WIDTH"],
+    variables=["AVEPRE", "AVESNOW", "FC_ENCODED"],
     mode="single",
     max_latent_classes=2,
     R=200,
     default_roles=[0, 1, 2, 3, 4, 5, 6, 7, 8],
 )
 
-result = builder.run_search(
+cmf_result = builder.run_search(
     cmf_search,
     algo="sa",
     max_iter=2000,
     seed=7,
-    output_config=SearchOutputConfig(
-        output_dir="results",
-        experiment_name="cmf_search_demo",
-        search_description="CMF search on the main JAX hierarchical architecture",
-    ),
 )
 ```
 
@@ -302,28 +307,28 @@ from metacountregressor import CMFExperimentBuilder
 
 cmf_builder = CMFExperimentBuilder(
     df=df,
-    y_col="Y",
+    y_col="FREQ",
     aadt_col="AADT",
-    baseline_vars=["GRADE", "LIGHTING"],
-    local_vars=["LANEWIDTH", "MEDIAN"],
+    baseline_vars=["URB", "ACCESS"],
+    local_vars=["CURVES", "SLOPE"],
 )
 
 manual_cmf_spec = cmf_builder.make_manual_cmf_spec(
-    baseline_fixed=["GRADE"],
-    baseline_correlated=["LIGHTING"],
-    local_random=["LANEWIDTH"],
-    local_correlated=["MEDIAN"],
-    hetro_in_means=["RAIN"],
-    zi_terms=["ZERO_FLAG"],
-    membership_terms=["MEMB_URBAN"],
+    baseline_fixed=["URB"],
+    baseline_correlated=["ACCESS"],
+    local_random=["CURVES"],
+    local_correlated=["SLOPE"],
+    hetro_in_means=["AVEPRE"],
+    zi_terms=["INTECHAG"],
+    membership_terms=["FC_ENCODED"],
     dispersion=1,
     latent_classes=2,
 )
 
-fit = cmf_builder.fit_manual_cmf_model(
+cmf_fit = cmf_builder.fit_manual_cmf_model(
     id_col="ID",
     offset_col="OFFSET",
-    group_id_col="FACILITY_CLASS",
+    group_id_col="FC",
     manual_spec=manual_cmf_spec,
     model="nb",
     R=200,
@@ -337,16 +342,8 @@ legacy_cmf = builder.build_evaluator(
     model_family="cmf",
     cmf_driver="ga",
     aadt_col="AADT",
-    baseline_vars=["GRADE", "LIGHTING"],
-    local_vars=["LANEWIDTH", "MEDIAN"],
-)
-
-legacy_result = builder.run_search(
-    legacy_cmf,
-    algo="ga",
-    R=200,
-    fit_final=True,
-    final_R=500,
+    baseline_vars=["URB", "ACCESS"],
+    local_vars=["CURVES", "SLOPE"],
 )
 ```
 
@@ -354,40 +351,48 @@ legacy_result = builder.run_search(
 
 The default duration route now uses the main JAX hierarchical architecture with a lognormal family.
 
+Use the model-ready duration loader:
+
+```python
+from metacountregressor import ExperimentBuilder, load_example_duration_data
+
+duration_df = load_example_duration_data()
+duration_builder = ExperimentBuilder(
+    df=duration_df,
+    id_col="ID",
+    y_col="DURATION",
+    offset_col=None,
+    group_id_col="FC",
+)
+```
+
 ### 9.1 Duration search
 
 ```python
-duration_search = builder.build_evaluator(
+duration_search = duration_builder.build_evaluator(
     model_family="duration",
-    variables=["SHOULDER", "LANES", "RAIN", "MEMB_URBAN"],
-    budget_col="B",
+    variables=["WIDTH", "CURVES", "SLOPE", "URB", "FC_ENCODED"],
+    budget_col="AADT",
     mode="single",
     max_latent_classes=2,
     R=200,
     default_roles=[0, 1, 2, 3, 4, 5, 6, 7, 8],
-)
-
-duration_result = builder.run_search(
-    duration_search,
-    algo="sa",
-    max_iter=1500,
-    seed=11,
 )
 ```
 
 ### 9.2 Manual duration model
 
 ```python
-duration_spec = builder.make_manual_spec(
-    fixed_terms=["SHOULDER"],
-    rdm_terms=["LANES:normal"],
-    rdm_cor_terms=["RAIN:normal", "MEMB_URBAN:normal"],
-    hetro_in_means=["URBAN"],
-    membership_terms=["INTERSECTION_DENSITY"],
+duration_spec = duration_builder.make_manual_spec(
+    fixed_terms=["WIDTH"],
+    rdm_terms=["CURVES:normal"],
+    rdm_cor_terms=["SLOPE:normal", "URB:normal"],
+    hetro_in_means=["AVEPRE"],
+    membership_terms=["FC_ENCODED"],
     latent_classes=2,
 )
 
-duration_fit = builder.fit_manual_model(
+duration_fit = duration_builder.fit_manual_model(
     manual_spec=duration_spec,
     model="lognormal",
     R=200,
@@ -398,47 +403,54 @@ duration_fit = builder.fit_manual_model(
 
 The default linear route now uses the main JAX hierarchical architecture with a Gaussian family.
 
+Use the model-ready linear loader:
+
+```python
+from metacountregressor import ExperimentBuilder, load_example_linear_data
+
+linear_df = load_example_linear_data()
+linear_builder = ExperimentBuilder(
+    df=linear_df,
+    id_col="ID",
+    y_col="LINEAR_TARGET",
+    offset_col=None,
+    group_id_col="FC",
+)
+```
+
 ### 10.1 Linear search
 
 ```python
-linear_search = builder.build_evaluator(
+linear_search = linear_builder.build_evaluator(
     model_family="linear",
-    variables=["LINEAR_X1", "LINEAR_X2", "LINEAR_X3", "MEMB_URBAN"],
+    variables=["WIDTH", "CURVES", "SLOPE", "URB", "FC_ENCODED"],
     mode="single",
     max_latent_classes=2,
     R=200,
     default_roles=[0, 1, 2, 3, 4, 5, 6, 7, 8],
-)
-
-linear_result = builder.run_search(
-    linear_search,
-    algo="hs",
-    max_iter=1500,
-    seed=13,
 )
 ```
 
 ### 10.2 Manual linear model
 
 ```python
-linear_spec = builder.make_manual_spec(
-    fixed_terms=["LINEAR_X1"],
-    rdm_terms=["LINEAR_X2:normal"],
-    rdm_cor_terms=["LINEAR_X3:normal", "MEMB_URBAN:normal"],
-    hetro_in_means=["URBAN"],
-    zi_terms=["ZERO_FLAG"],
-    membership_terms=["INTERSECTION_DENSITY"],
+linear_spec = linear_builder.make_manual_spec(
+    fixed_terms=["WIDTH"],
+    rdm_terms=["CURVES:normal"],
+    rdm_cor_terms=["SLOPE:normal", "URB:normal"],
+    hetro_in_means=["AVEPRE"],
+    membership_terms=["FC_ENCODED"],
     latent_classes=2,
 )
 
-linear_fit = builder.fit_manual_model(
+linear_fit = linear_builder.fit_manual_model(
     manual_spec=linear_spec,
     model="gaussian",
     R=200,
 )
 ```
 
-## 11. What Changing The Search Arguments Does
+## 11. What Changing Search Arguments Does
 
 ### Change the search algorithm
 
@@ -448,16 +460,7 @@ builder.run(evaluator=evaluator, algo="de", max_iter=2000, seed=1)
 builder.run(evaluator=evaluator, algo="hs", max_iter=2000, seed=1)
 ```
 
-- `sa`
-  Good default for single-objective structure search.
-- `de`
-  Differential-evolution style search.
-- `hs`
-  Harmony-search style search.
-- `hc`
-  Routed through the annealing-style search code.
-
-### Change the number of simulation draws
+### Change simulation draws
 
 ```python
 evaluator = builder.build_count_evaluator(R=500)
@@ -466,95 +469,75 @@ evaluator = builder.build_count_evaluator(R=500)
 Higher `R` means:
 
 - slower estimation
-- more stable simulated mixed-model integration
+- more stable simulation-based fitting
 
-### Change latent-class complexity
-
-```python
-evaluator = builder.build_count_evaluator(
-    variables=["AADT", "SPEED", "MEMB_URBAN"],
-    max_latent_classes=3,
-)
-```
-
-Higher `max_latent_classes` means:
-
-- richer segmentation
-- more parameters
-- slower fitting
-- heavier BIC penalty
-
-### Restrict the allowed structures
+### Restrict allowed structures
 
 ```python
 evaluator = builder.build_count_evaluator(
-    variables=["AADT", "SPEED", "ZERO_FLAG"],
+    variables=["AADT", "SPEED", "ACCESS"],
     default_roles=[0, 1, 2, 6],
 )
 ```
-
-That limits the search to:
-
-- exclusion
-- fixed effects
-- random independent effects
-- zero inflation
 
 ### Restrict specific variables
 
 ```python
 evaluator = builder.build_count_evaluator(
-    variables=["AADT", "SPEED", "MEMB_URBAN"],
+    variables=["AADT", "SPEED", "URB"],
     fixed_override={"AADT": [1]},
-    membership_override={"MEMB_URBAN": [7, 8]},
+    membership_override={"URB": [7, 8]},
 )
 ```
 
 ## 12. Consistent Run Output
-
-To save runs consistently:
 
 ```python
 from metacountregressor import SearchOutputConfig
 
 output_config = SearchOutputConfig(
     output_dir="results",
-    experiment_name="latent_class_demo",
-    search_description="Latent class experiment on bundled crash data",
+    experiment_name="cmf_example16_3",
+    search_description="CMF search on Example 16-3 data",
 )
 
-result = builder.run_search(
+saved = builder.run_search(
     cmf_search,
     algo="sa",
     max_iter=1000,
     output_config=output_config,
 )
 
-print(result["saved_to"])
+print(saved["saved_to"])
 ```
 
-Each saved JSON file includes:
+Each saved JSON file stores:
 
 - experiment name
 - search description
 - family
 - algorithm
-- normalized run result payload
+- normalized result payload
 
-## 13. Latent-Class Cookbook Example: Recover Functional Class
+## 13. Latent-Class Example: Recover Functional Class
 
-This example is designed to capture an underlying characteristic in the data, `TRUE_FUNCTIONAL_CLASS`, without using that true label directly as an outcome predictor.
+This example is designed to see whether a latent-class model can recover the hidden `FC` grouping pattern without using `FC` itself as a direct predictor in the outcome equation.
 
-### 13.1 Build a latent-class count model
+We keep:
 
-We do not include `TRUE_FUNCTIONAL_CLASS` in the model specification. Instead we let the latent classes explain the hidden segmentation, and we let observable membership variables drive class probabilities.
+- original truth column: `FC`
+- comparison encoding: `FC_ENCODED`
+
+We do not place `FC` or `FC_ENCODED` in the outcome equation. Instead we let membership variables explain latent class probabilities.
+
+### 13.1 Fit a latent-class count model
 
 ```python
 latent_spec = builder.make_manual_spec(
-    fixed_terms=["AADT", "SPEED", "LANES"],
-    rdm_cor_terms=["CURVE:normal", "LIGHTING:normal"],
-    hetro_in_means=["RAIN"],
-    membership_terms=["URBAN", "INTERSECTION_DENSITY", "MEMB_URBAN"],
+    fixed_terms=["AADT", "SPEED", "LENGTH"],
+    rdm_cor_terms=["CURVES:normal", "SLOPE:normal"],
+    hetro_in_means=["AVEPRE"],
+    membership_terms=["URB", "ACCESS", "GRADEBR"],
     dispersion=1,
     latent_classes=2,
 )
@@ -566,25 +549,25 @@ latent_fit = builder.fit_manual_model(
 )
 ```
 
-### 13.2 Compute estimated class probabilities
+### 13.2 Compute latent-class probabilities and compare to the true FC grouping
 
 ```python
 class_probs = builder.compute_latent_class_probabilities(
     latent_fit,
-    true_class_col="TRUE_FUNCTIONAL_CLASS",
+    true_class_col="FC_ENCODED",
 )
 
 print(class_probs.head())
 ```
 
-This returns:
+Returned columns include:
 
 - `ID`
 - `class_1_prob`
 - `class_2_prob`
-- `TRUE_FUNCTIONAL_CLASS`
+- `FC_ENCODED`
 
-### 13.3 Compare predicted latent class to the true class
+### 13.3 Compare predicted class with the encoded true class
 
 ```python
 class_probs["predicted_class"] = (
@@ -593,73 +576,38 @@ class_probs["predicted_class"] = (
     .argmax(axis=1)
 )
 
-comparison = class_probs[["ID", "TRUE_FUNCTIONAL_CLASS", "predicted_class"]]
-print(comparison.head())
-```
-
-You can also compute a simple agreement rate:
-
-```python
 agreement = (
-    comparison["TRUE_FUNCTIONAL_CLASS"].to_numpy()
-    == comparison["predicted_class"].to_numpy()
+    class_probs["predicted_class"].to_numpy()
+    == class_probs["FC_ENCODED"].to_numpy()
 ).mean()
 
 print("Agreement:", agreement)
 ```
 
-This is the package cookbook pattern for checking whether the latent-class model is recovering a real hidden grouping.
+This is the cookbook pattern for checking whether the latent-class structure is capturing the observed facility-class segmentation.
 
 ## 14. Common Validation Errors
 
 The package now raises clearer errors for:
 
-- missing dataframe columns
+- missing columns
 - invalid family-specific arguments
-- CMF models without `aadt_col`, `baseline_vars`, or `local_vars`
-- CMF models with non-positive `AADT`
+- CMF specifications missing `aadt_col`, `baseline_vars`, or `local_vars`
+- CMF data with non-positive `AADT`
 - latent-class probability requests on single-class fits
 
-Example:
+## 15. Summary
 
-```python
-builder.build_evaluator(
-    model_family="duration",
-    variables=["SHOULDER"],
-    budget_col="B",
-    not_a_real_arg=True,
-)
-```
+Use these loaders when you want the real Example 16-3 data inside the package:
 
-That raises a direct `ValueError`.
+- `load_example16_3_raw_data()`
+- `load_example16_3_model_data()`
+- `load_example_duration_data()`
+- `load_example_linear_data()`
 
-## 15. Practical Modeling Sequence
+Use these builder patterns:
 
-For count work:
-
-1. start with a count search
-2. decide whether Poisson or NB is preferred
-3. allow random parameters
-4. test correlated random parameters
-5. add heterogeneity in means
-6. test zero inflation
-7. test latent classes
-
-For CMF work:
-
-1. start with the default JAX CMF search
-2. allow random and correlated CMF terms
-3. add heterogeneity variables
-4. add zero-inflation variables
-5. add membership variables
-6. use the legacy GA-CMF route only if you specifically need it
-
-For duration work:
-
-1. use the duration family with the JAX hierarchical search
-2. move to manual lognormal fits when you want a fixed structure
-
-For linear work:
-
-1. use the linear family with the JAX hierarchical search
-2. move to manual Gaussian fits when you want a fixed structure
+- count: `build_count_evaluator(...)`
+- CMF: `build_evaluator(model_family="cmf", ...)`
+- duration: `build_evaluator(model_family="duration", ...)`
+- linear: `build_evaluator(model_family="linear", ...)`

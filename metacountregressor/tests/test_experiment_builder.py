@@ -12,7 +12,7 @@ from family_search import (
     UnifiedCMFSearchProblem,
 )
 from output_config import SearchOutputConfig, save_search_result
-from sample_data import load_example_crash_data
+from sample_data import load_example16_3_raw_data, load_example_crash_data
 
 
 def make_panel_df():
@@ -300,12 +300,23 @@ def test_cmf_manual_helpers_build_transformed_spec_and_fit():
 def test_sample_data_loader_contains_readme_columns():
     df = load_example_crash_data()
     required = {
-        "ID", "Y", "OFFSET", "FACILITY_CLASS", "AADT", "LENGTH", "GRADE",
-        "LIGHTING", "CURVE", "LANEWIDTH", "SHOULDER", "MEDIAN", "RAIN",
-        "ZERO_FLAG", "MEMB_URBAN", "URBAN", "INTERSECTION_DENSITY",
-        "SPEED", "LANES", "B", "DURATION", "TRUE_FUNCTIONAL_CLASS",
+        "ID", "FREQ", "OFFSET", "FC", "FC_ENCODED", "FC_LABEL", "AADT", "LENGTH",
+        "INCLANES", "DECLANES", "WIDTH", "MIMEDSH", "MXMEDSH", "SPEED", "URB",
+        "SINGLE", "DOUBLE", "TRAIN", "PEAKHR", "GRADEBR", "MIGRADE", "MXGRADE",
+        "MXGRDIFF", "TANGENT", "CURVES", "MINRAD", "ACCESS", "MEDWIDTH",
+        "FRICTION", "ADTLANE", "SLOPE", "INTECHAG", "AVEPRE", "AVESNOW",
     }
     assert required.issubset(df.columns)
+
+
+def test_example16_3_raw_loader_preserves_source_columns():
+    df = load_example16_3_raw_data()
+    assert list(df.columns) == [
+        "ID", "FREQ", "LENGTH", "INCLANES", "DECLANES", "WIDTH", "MIMEDSH", "MXMEDSH",
+        "SPEED", "URB", "FC", "AADT", "SINGLE", "DOUBLE", "TRAIN", "PEAKHR", "GRADEBR",
+        "MIGRADE", "MXGRADE", "MXGRDIFF", "TANGENT", "CURVES", "MINRAD", "ACCESS",
+        "MEDWIDTH", "FRICTION", "ADTLANE", "SLOPE", "INTECHAG", "AVEPRE", "AVESNOW",
+    ]
 
 
 def test_output_config_saves_search_result():
