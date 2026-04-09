@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "metacountregressor"
-version = "1.0.30"
+version = "1.0.32"
 description = "JAX-first hierarchical search and fitting for count, CMF, duration, and linear models."
 readme = "README.md"
 requires-python = ">=3.9"

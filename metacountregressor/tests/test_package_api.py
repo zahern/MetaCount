@@ -21,4 +21,4 @@ def test_public_package_imports():
     assert submodule.ExperimentBuilder is package.ExperimentBuilder
     assert cmf_submodule.CMFExperimentBuilder is package.CMFExperimentBuilder
     assert family_submodule.LinearSearchProblem is package.LinearSearchProblem
-    assert package.__version__ == "1.0.30"
+    assert package.__version__ == "1.0.32"

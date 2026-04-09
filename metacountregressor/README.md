@@ -9,24 +9,7 @@
 
 This cookbook now uses the bundled Example 16-3 data from the linked CSV source and keeps the original source column names.
 
-## 1. Why PyPI Can Still Show Old Description Text
-
-The PyPI project page reads from the metadata inside the uploaded distribution for that release.
-
-That means:
-
-- changing `README.md` in the repo does not change an already-published PyPI page
-- changing the short `description` in [pyproject.toml](C:/Users/ahernz/source/MetaCount/metacountregressor/pyproject.toml) also only affects newly uploaded releases
-
-This repo is now set to:
-
-- version `1.0.30`
-- short description:
-  `JAX-first hierarchical search and fitting for count, CMF, duration, and linear models.`
-
-If PyPI still shows the old text, the fix is to build and upload a new release from this updated source and make sure you upload only fresh artifacts from `dist/`.
-
-## 2. Install
+## 1. Install
 
 ```bash
 python -m pip install -e .
@@ -39,7 +22,7 @@ Quick import check:
 python -c "from metacountregressor import __version__, load_example16_3_raw_data; print(__version__, load_example16_3_raw_data().shape)"
 ```
 
-## 3. Example Data In The Package
+## 2. Example Data In The Package
 
 The package now exposes the Example 16-3 data directly:
 
@@ -100,7 +83,7 @@ Notes:
 - `FC_ENCODED` is a clean ordered encoding of the observed `FC` categories for comparison experiments.
 - `FC_LABEL` is a readable string form like `FC_1`, `FC_2`, `FC_5`.
 
-## 4. Build The Main ExperimentBuilder
+## 3. Build The Main ExperimentBuilder
 
 ```python
 from metacountregressor import ExperimentBuilder, load_example16_3_model_data
@@ -160,7 +143,7 @@ print(builder.get_family_capabilities())
 print(builder.get_search_argument_guide())
 ```
 
-## 5. Main Search Arguments
+## 4. Main Search Arguments
 
 Shared arguments:
 
@@ -193,7 +176,7 @@ output_config = SearchOutputConfig(
 )
 ```
 
-## 6. Role Codes
+## 5. Role Codes
 
 | Code | Meaning |
 | --- | --- |
@@ -214,7 +197,7 @@ Random-parameter distributions:
 - `triangular`
 - `uniform`
 
-## 7. Count Models
+## 6. Count Models
 
 ### 7.1 Count search
 
@@ -267,7 +250,7 @@ fit = builder.fit_manual_model(
 )
 ```
 
-## 8. CMF Models
+## 7. CMF Models
 
 CMF models use:
 
@@ -347,7 +330,7 @@ legacy_cmf = builder.build_evaluator(
 )
 ```
 
-## 9. Duration Models
+## 8. Duration Models
 
 The default duration route now uses the main JAX hierarchical architecture with a lognormal family.
 
@@ -399,7 +382,7 @@ duration_fit = duration_builder.fit_manual_model(
 )
 ```
 
-## 10. Linear Models
+## 9. Linear Models
 
 The default linear route now uses the main JAX hierarchical architecture with a Gaussian family.
 
@@ -450,7 +433,7 @@ linear_fit = linear_builder.fit_manual_model(
 )
 ```
 
-## 11. Platform-Speed Linear Mixed Effects Example
+## 10. Platform-Speed Linear Mixed Effects Example
 
 The package now includes a synthetic example designed for linear mixed-effects style experiments around vehicle speed relative to a platform.
 
@@ -510,7 +493,7 @@ This is set up to model speed relative to the platform while allowing:
 - heterogeneity in means
 - latent classes
 
-## 12. Duration Example: Time Until Another Vehicle Speeds Over The Platform
+## 11. Duration Example: Time Until Another Vehicle Speeds Over The Platform
 
 The package also includes a synthetic duration experiment for the time before another vehicle speeds over the platform.
 
@@ -563,7 +546,7 @@ gap_duration_search = gap_builder.build_evaluator(
 
 This uses the JAX hierarchical lognormal path and is intended for duration-before-speeding style analysis.
 
-## 13. What Changing Search Arguments Does
+## 12. What Changing Search Arguments Does
 
 ### Change the search algorithm
 
@@ -603,7 +586,7 @@ evaluator = builder.build_count_evaluator(
 )
 ```
 
-## 14. Consistent Run Output
+## 13. Consistent Run Output
 
 ```python
 from metacountregressor import SearchOutputConfig
@@ -632,7 +615,7 @@ Each saved JSON file stores:
 - algorithm
 - normalized result payload
 
-## 15. Latent-Class Example: Recover Functional Class
+## 14. Latent-Class Example: Recover Functional Class
 
 This example is designed to see whether a latent-class model can recover the hidden `FC` grouping pattern without using `FC` itself as a direct predictor in the outcome equation.
 
@@ -699,7 +682,7 @@ print("Agreement:", agreement)
 
 This is the cookbook pattern for checking whether the latent-class structure is capturing the observed facility-class segmentation.
 
-## 16. Common Validation Errors
+## 15. Common Validation Errors
 
 The package now raises clearer errors for:
 
@@ -709,7 +692,7 @@ The package now raises clearer errors for:
 - CMF data with non-positive `AADT`
 - latent-class probability requests on single-class fits
 
-## 17. Summary
+## 16. Summary
 
 Use these loaders when you want the real Example 16-3 data inside the package:
 
