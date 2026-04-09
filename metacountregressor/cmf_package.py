@@ -324,3 +324,74 @@ class CMFExperimentBuilder:
         }
         setattr(evaluator, "cmf_metadata", metadata)
         return builder, evaluator, metadata
+
+    def make_manual_cmf_spec(
+        self,
+        baseline_fixed: Optional[list[str]] = None,
+        baseline_random: Optional[list[str]] = None,
+        baseline_correlated: Optional[list[str]] = None,
+        local_fixed: Optional[list[str]] = None,
+        local_random: Optional[list[str]] = None,
+        local_correlated: Optional[list[str]] = None,
+        grouped_terms: Optional[list[str]] = None,
+        hetro_in_means: Optional[list[str]] = None,
+        zi_terms: Optional[list[str]] = None,
+        membership_terms: Optional[list[str]] = None,
+        dispersion: int = 0,
+        latent_classes: int = 1,
+    ) -> dict[str, Any]:
+        term_map = self._cmf_term_map()
+        fixed_terms = list(baseline_fixed or [])
+        fixed_terms.append(term_map[self.aadt_col])
+        fixed_terms.extend(term_map[var] for var in (local_fixed or []))
+
+        rdm_terms = [f"{var}:normal" for var in (baseline_random or [])]
+        rdm_terms.extend(f"{term_map[var]}:normal" for var in (local_random or []))
+
+        rdm_cor_terms = [f"{var}:normal" for var in (baseline_correlated or [])]
+        rdm_cor_terms.extend(f"{term_map[var]}:normal" for var in (local_correlated or []))
+
+        return {
+            "fixed_terms": list(dict.fromkeys(fixed_terms)),
+            "rdm_terms": rdm_terms,
+            "rdm_cor_terms": rdm_cor_terms,
+            "grouped_terms": grouped_terms or [],
+            "hetro_in_means": hetro_in_means or [],
+            "zi_terms": zi_terms or [],
+            "membership_terms": membership_terms or [],
+            "dispersion": int(dispersion),
+            "latent_classes": int(latent_classes),
+        }
+
+    def fit_manual_cmf_model(
+        self,
+        id_col: str,
+        manual_spec: dict[str, Any],
+        offset_col: Optional[str] = None,
+        group_id_col: Optional[str] = None,
+        model: str = "poisson",
+        R: int = 200,
+    ) -> dict[str, Any]:
+        try:
+            from .experiment_package import ExperimentBuilder
+        except ImportError:
+            from experiment_package import ExperimentBuilder
+
+        df = self.df.copy()
+        term_map = self._cmf_term_map()
+        log_aadt_col = term_map[self.aadt_col]
+        if log_aadt_col not in df.columns:
+            df[log_aadt_col] = np.log(df[self.aadt_col].astype(float))
+        for var in self.local_vars:
+            interaction_col = term_map[var]
+            if interaction_col not in df.columns:
+                df[interaction_col] = df[var].astype(float) * df[log_aadt_col]
+
+        manual_builder = ExperimentBuilder(
+            df=df,
+            id_col=id_col,
+            y_col=self.y_col,
+            offset_col=offset_col,
+            group_id_col=group_id_col,
+        )
+        return manual_builder.fit_manual_model(manual_spec=manual_spec, model=model, R=R)

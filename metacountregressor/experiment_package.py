@@ -59,8 +59,11 @@ import numpy as np
 import pandas as pd
 from dataclasses import replace
 from functools import partial
+import io
+from contextlib import redirect_stdout
 from scipy.optimize import minimize
 from typing import Optional, Dict, List, Union, Any
+from pathlib import Path
 
 try:
     from .family_search import (
@@ -126,6 +129,10 @@ except ImportError:
         mixed_model_loglik,
         print_summary,
     )
+try:
+    from .output_config import SearchOutputConfig, save_search_result
+except ImportError:
+    from output_config import SearchOutputConfig, save_search_result
 
 __all__ = ["StructureEvaluatorLC", "ExperimentBuilder"]
 
@@ -416,6 +423,8 @@ class StructureEvaluatorLC(StructureEvaluator):
             data_train, spec = self.build_data(
                 self.df_train, spec_dict, self.master_halton_train
             )
+            if spec_dict.get("model") is not None:
+                spec = replace(spec, model=spec_dict["model"])
 
             # ── Single-class path ──────────────────────────────────
             if C == 1:
@@ -499,6 +508,21 @@ class StructureEvaluatorLC(StructureEvaluator):
         except Exception as e:
             print(f"  [fitness error] {e}")
             return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+
+
+class ForcedModelStructureEvaluatorLC(StructureEvaluatorLC):
+    def __init__(self, *args, forced_model: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.forced_model = forced_model
+
+    def build_spec(self, decision) -> Optional[dict]:
+        spec = super().build_spec(decision)
+        if spec is None:
+            return None
+        spec["model"] = self.forced_model
+        if self.forced_model in {"lognormal", "gaussian"}:
+            spec["dispersion"] = 0
+        return spec
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -661,10 +685,247 @@ class ExperimentBuilder:
         if self.default_engine != "jax":
             raise ValueError("The primary ExperimentBuilder engine is JAX. Use default_engine='jax'.")
 
+        self._ensure_columns_exist([id_col, y_col], "ExperimentBuilder")
+        if offset_col is not None:
+            self._ensure_columns_exist([offset_col], "ExperimentBuilder")
+        if group_id_col is not None:
+            self._ensure_columns_exist([group_id_col], "ExperimentBuilder")
+
         reserved = {id_col, y_col}
         if offset_col:   reserved.add(offset_col)
         if group_id_col: reserved.add(group_id_col)
         self._candidate_vars = [c for c in df.columns if c not in reserved]
+
+    def _ensure_columns_exist(self, columns: List[str], context: str = "builder") -> None:
+        missing = [column for column in columns if column not in self.df.columns]
+        if missing:
+            formatted = ", ".join(sorted(missing))
+            raise ValueError(f"{context} received columns that are not in the dataframe: {formatted}")
+
+    def _normalize_variables(self, variables: Optional[List[str]], exclude: Optional[List[str]] = None) -> List[str]:
+        chosen = list(self._candidate_vars if variables is None else variables)
+        self._ensure_columns_exist(chosen, "variables")
+        filtered = [var for var in chosen if var not in set(exclude or [])]
+        if not filtered:
+            raise ValueError("No searchable variables remain after applying exclude.")
+        return list(dict.fromkeys(filtered))
+
+    def _normalize_override_map(self, mapping: Optional[Dict[str, list]], label: str) -> Dict[str, list]:
+        normalized = mapping or {}
+        self._ensure_columns_exist(list(normalized.keys()), label)
+        return normalized
+
+    @staticmethod
+    def _raise_on_unused_kwargs(kwargs: Dict[str, Any], context: str) -> None:
+        if not kwargs:
+            return
+        unused = ", ".join(sorted(kwargs.keys()))
+        raise ValueError(f"Unexpected arguments for {context}: {unused}")
+
+    @staticmethod
+    def get_search_argument_guide() -> Dict[str, Dict[str, str]]:
+        return {
+            "shared": {
+                "algo": "Metaheuristic driver. Use 'sa', 'hc', 'de', or 'hs'.",
+                "R": "Number of simulation draws for JAX mixed-model estimation.",
+                "max_iter": "Search iterations for the metaheuristic driver.",
+                "max_latent_classes": "Upper bound on latent classes for the count-family architecture.",
+            },
+            "count": {
+                "variables": "Candidate columns to search over.",
+                "default_roles": "Allowed structural roles per variable.",
+                "fixed_override": "Force or restrict roles for specific variables.",
+                "membership_override": "Allow or restrict latent-class membership roles for specific variables.",
+            },
+            "cmf": {
+                "aadt_col": "AADT column used to build the CMF elasticity term.",
+                "baseline_vars": "Baseline CMF variables entering outside log(AADT).",
+                "local_vars": "CMF local variables entering as var * log(AADT).",
+                "cmf_driver": "Use 'jax_count' for the main JAX architecture or 'ga' for the legacy GA route.",
+            },
+            "linear": {
+                "objective_kwargs": "Options forwarded to the linear metaheuristic objective.",
+            },
+            "duration": {
+                "budget_col": "Budget column used by the duration helper objective.",
+                "objective": "Duration objective: 'independent' or 'budget_penalty'.",
+            },
+        }
+
+    @staticmethod
+    def get_family_capabilities() -> Dict[str, Dict[str, bool]]:
+        return {
+            "count": {
+                "jax_solver": True,
+                "metaheuristic_search": True,
+                "random_parameters": True,
+                "heterogeneity_in_means": True,
+                "zero_inflation": True,
+                "latent_classes": True,
+                "distribution_assumptions": True,
+            },
+            "cmf": {
+                "jax_solver": True,
+                "metaheuristic_search": True,
+                "random_parameters": True,
+                "heterogeneity_in_means": True,
+                "zero_inflation": True,
+                "latent_classes": True,
+                "distribution_assumptions": True,
+            },
+            "duration": {
+                "jax_solver": True,
+                "metaheuristic_search": True,
+                "random_parameters": True,
+                "heterogeneity_in_means": True,
+                "zero_inflation": True,
+                "latent_classes": True,
+                "distribution_assumptions": True,
+            },
+            "linear": {
+                "jax_solver": True,
+                "metaheuristic_search": True,
+                "random_parameters": True,
+                "heterogeneity_in_means": True,
+                "zero_inflation": True,
+                "latent_classes": True,
+                "distribution_assumptions": True,
+            },
+        }
+
+    def make_manual_spec(
+        self,
+        fixed_terms: Optional[List[str]] = None,
+        rdm_terms: Optional[List[str]] = None,
+        rdm_cor_terms: Optional[List[str]] = None,
+        grouped_terms: Optional[List[str]] = None,
+        hetro_in_means: Optional[List[str]] = None,
+        zi_terms: Optional[List[str]] = None,
+        membership_terms: Optional[List[str]] = None,
+        dispersion: int = 0,
+        latent_classes: int = 1,
+        group_id_col: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        role_columns = {
+            "fixed_terms": fixed_terms or [],
+            "rdm_terms": rdm_terms or [],
+            "rdm_cor_terms": rdm_cor_terms or [],
+            "grouped_terms": grouped_terms or [],
+            "hetro_in_means": hetro_in_means or [],
+            "zi_terms": zi_terms or [],
+            "membership_terms": membership_terms or [],
+        }
+
+        for label, terms in role_columns.items():
+            stripped = [term.split(":")[0] for term in terms]
+            self._ensure_columns_exist(stripped, label)
+
+        if latent_classes < 1:
+            raise ValueError("latent_classes must be at least 1.")
+
+        if group_id_col is not None and group_id_col not in self.df.columns:
+            raise ValueError(f"group_id_col '{group_id_col}' is not in the dataframe.")
+
+        return {
+            **role_columns,
+            "dispersion": int(dispersion),
+            "latent_classes": int(latent_classes),
+            "group_id_col": group_id_col if group_id_col is not None else self.group_id_col,
+        }
+
+    def fit_manual_model(
+        self,
+        manual_spec: Dict[str, Any],
+        model: str = "poisson",
+        df: Optional[pd.DataFrame] = None,
+        R: int = 200,
+        print_report: bool = False,
+    ) -> Dict[str, Any]:
+        df_fit = self.df if df is None else df
+        data, spec = build_model_from_manual_spec(
+            df=df_fit,
+            manual_spec=manual_spec,
+            id_col=self.id_col,
+            y_col=self.y_col,
+            offset_col=self.offset_col,
+            R=R,
+        )
+        spec = replace(spec, model=model)
+        fitted = CountModel(spec, data)
+        result = fitted.fit()
+        objective = partial(mixed_model_loglik, data=data, spec=spec)
+        param_index = build_param_index(spec)
+
+        if print_report:
+            summary = print_summary(
+                result=result,
+                objective=objective,
+                data=data,
+                spec=spec,
+                param_index=param_index,
+            )
+        else:
+            with redirect_stdout(io.StringIO()):
+                summary = print_summary(
+                    result=result,
+                    objective=objective,
+                    data=data,
+                    spec=spec,
+                    param_index=param_index,
+                )
+
+        return {
+            "result": result,
+            "data": data,
+            "spec": spec,
+            "manual_spec": manual_spec,
+            "summary": summary,
+            "param_index": param_index,
+            "predictions": np.asarray(fitted.predict()).squeeze(),
+        }
+
+    def compute_latent_class_probabilities(
+        self,
+        fit_result: Dict[str, Any],
+        true_class_col: Optional[str] = None,
+    ) -> pd.DataFrame:
+        spec = fit_result["spec"]
+        if spec.latent_classes <= 1:
+            raise ValueError("Latent class probabilities require a fit with latent_classes > 1.")
+
+        data = fit_result["data"]
+        params = np.asarray(fit_result["result"].params)
+        C = spec.latent_classes
+        K_mem = spec.K_membership
+        base_spec = replace(spec, latent_classes=1)
+        K_base = build_param_index(base_spec)["total_params"]
+        gamma_size = (C - 1) * (K_mem + 1)
+        gamma = params[C * K_base : C * K_base + gamma_size].reshape(C - 1, K_mem + 1)
+
+        n = data["y"].shape[0]
+        if K_mem > 0:
+            z = np.mean(np.asarray(data["Xmem"]), axis=1)
+            z_full = np.concatenate([np.ones((n, 1)), z], axis=1)
+        else:
+            z_full = np.ones((n, 1))
+
+        logits = z_full @ gamma.T
+        logits_full = np.concatenate([np.zeros((n, 1)), logits], axis=1)
+        logits_full = logits_full - logits_full.max(axis=1, keepdims=True)
+        probs = np.exp(logits_full)
+        probs = probs / probs.sum(axis=1, keepdims=True)
+
+        ids = np.asarray(data.get("ids", self.df[[self.id_col]].drop_duplicates()[self.id_col].to_numpy()))
+        out = pd.DataFrame({self.id_col: ids})
+        for idx in range(C):
+            out[f"class_{idx + 1}_prob"] = probs[:, idx]
+        out = out.drop_duplicates(subset=[self.id_col]).reset_index(drop=True)
+
+        if true_class_col is not None:
+            self._ensure_columns_exist([true_class_col], "true_class_col")
+            truth = self.df[[self.id_col, true_class_col]].drop_duplicates(subset=[self.id_col])
+            out = out.merge(truth, on=self.id_col, how="left")
+        return out
 
     # ── describe ────────────────────────────────────────────────────
 
@@ -802,12 +1063,9 @@ class ExperimentBuilder:
                 **family_kwargs,
             )
 
-        variables    = variables or self._candidate_vars
-        exclude_set  = set(exclude or [])
-        variables    = [v for v in variables if v not in exclude_set]
-
-        fixed_override      = fixed_override      or {}
-        membership_override = membership_override or {}
+        variables = self._normalize_variables(variables, exclude)
+        fixed_override = self._normalize_override_map(fixed_override, "fixed_override")
+        membership_override = self._normalize_override_map(membership_override, "membership_override")
 
         if default_roles is None:
             if max_latent_classes > 1:
@@ -868,9 +1126,7 @@ class ExperimentBuilder:
         if engine != "jax":
             raise ValueError("Only the JAX-first engine is supported through ExperimentBuilder.")
 
-        variables = variables or self._candidate_vars
-        exclude_set = set(exclude or [])
-        variables = [v for v in variables if v not in exclude_set]
+        variables = self._normalize_variables(variables, exclude)
 
         if model_family == "count":
             return self.build_evaluator(
@@ -882,17 +1138,85 @@ class ExperimentBuilder:
             )
 
         if model_family == "linear":
+            linear_driver = str(kwargs.pop("linear_driver", "jax_hierarchical")).lower()
+            objective_kwargs = kwargs.pop("objective_kwargs", {})
+            if linear_driver in {"jax", "jax_hierarchical", "main"}:
+                mode = kwargs.pop("mode", "single")
+                max_latent_classes = kwargs.pop("max_latent_classes", 2)
+                R = kwargs.pop("R", 200)
+                default_roles = kwargs.pop("default_roles", None)
+                fixed_override = self._normalize_override_map(kwargs.pop("fixed_override", None), "fixed_override")
+                membership_override = self._normalize_override_map(kwargs.pop("membership_override", None), "membership_override")
+                if default_roles is None:
+                    default_roles = [0, 1, 2, 3, 4, 5, 6]
+                    if max_latent_classes > 1:
+                        default_roles.extend([7, 8])
+                evaluator = ForcedModelStructureEvaluatorLC(
+                    df=self.df,
+                    id_col=self.id_col,
+                    y_col=self.y_col,
+                    offset_col=self.offset_col,
+                    all_variables=variables,
+                    allowed_roles=populate_allowed_roles(variables, {**fixed_override, **membership_override}, default_roles=default_roles),
+                    allowed_distributions=populate_allowed_distributions(variables, None),
+                    group_id_col=self.group_id_col,
+                    mode=mode,
+                    R=R,
+                    max_latent_classes=max_latent_classes,
+                    forced_model="gaussian",
+                )
+                self._raise_on_unused_kwargs(kwargs, "linear search")
+                return LinearSearchProblem(
+                    builder=self,
+                    evaluator=evaluator,
+                    metadata={"model": "gaussian", "variables": variables, "max_latent_classes": max_latent_classes},
+                )
+            self._raise_on_unused_kwargs(kwargs, "legacy linear search")
             return LinearSearchProblem(
                 df=self.df,
                 y_col=self.y_col,
                 variables=variables,
-                objective_kwargs=kwargs.pop("objective_kwargs", {}),
+                objective_kwargs=objective_kwargs,
             )
 
         if model_family == "duration":
             budget_col = kwargs.pop("budget_col", "B")
             if budget_col not in self.df.columns:
                 raise ValueError(f"Duration search requires budget_col='{budget_col}' in the dataframe.")
+            duration_driver = str(kwargs.pop("duration_driver", "jax_hierarchical")).lower()
+            if duration_driver in {"jax", "jax_hierarchical", "main"}:
+                mode = kwargs.pop("mode", "single")
+                max_latent_classes = kwargs.pop("max_latent_classes", 2)
+                R = kwargs.pop("R", 200)
+                default_roles = kwargs.pop("default_roles", None)
+                fixed_override = self._normalize_override_map(kwargs.pop("fixed_override", None), "fixed_override")
+                membership_override = self._normalize_override_map(kwargs.pop("membership_override", None), "membership_override")
+                duration_variables = list(dict.fromkeys([*variables, budget_col]))
+                if default_roles is None:
+                    default_roles = [0, 1, 2, 3, 4, 5, 6]
+                    if max_latent_classes > 1:
+                        default_roles.extend([7, 8])
+                evaluator = ForcedModelStructureEvaluatorLC(
+                    df=self.df,
+                    id_col=self.id_col,
+                    y_col=self.y_col,
+                    offset_col=self.offset_col,
+                    all_variables=duration_variables,
+                    allowed_roles=populate_allowed_roles(duration_variables, {**fixed_override, **membership_override}, default_roles=default_roles),
+                    allowed_distributions=populate_allowed_distributions(duration_variables, None),
+                    group_id_col=self.group_id_col,
+                    mode=mode,
+                    R=R,
+                    max_latent_classes=max_latent_classes,
+                    forced_model="lognormal",
+                )
+                self._raise_on_unused_kwargs(kwargs, "duration search")
+                return DurationSearchProblem(
+                    builder=self,
+                    evaluator=evaluator,
+                    metadata={"model": "lognormal", "variables": duration_variables, "budget_col": budget_col, "max_latent_classes": max_latent_classes},
+                )
+            self._raise_on_unused_kwargs(kwargs, "duration search")
             return DurationSearchProblem(
                 df=self.df.copy(),
                 y_col=self.y_col,
@@ -936,6 +1260,7 @@ class ExperimentBuilder:
                     R=kwargs.pop("R", 200),
                     default_roles=kwargs.pop("default_roles", None),
                 )
+                self._raise_on_unused_kwargs(kwargs, "cmf search")
                 return UnifiedCMFSearchProblem(
                     builder=general_builder,
                     evaluator=evaluator,
@@ -946,6 +1271,13 @@ class ExperimentBuilder:
                 raise ValueError(
                     "cmf_driver must be one of: 'jax_count' (default), 'ga', 'legacy_ga', 'metaheuristic'."
                 )
+            kwargs.pop("mode", None)
+            kwargs.pop("max_latent_classes", None)
+            kwargs.pop("R", None)
+            kwargs.pop("default_roles", None)
+            kwargs.pop("fixed_override", None)
+            kwargs.pop("membership_override", None)
+            self._raise_on_unused_kwargs(kwargs, "legacy cmf search")
             return CMFFamilySearchProblem(
                 builder=cmf_builder,
                 id_col=self.id_col,
@@ -970,6 +1302,7 @@ class ExperimentBuilder:
         n_jobs:     int  = 1,
         seed:       int  = 0,
         config_id:  int  = 0,
+        output_config: Optional[SearchOutputConfig] = None,
         **algo_kwargs,
     ) -> dict:
         """
@@ -1032,7 +1365,7 @@ class ExperimentBuilder:
             save_run_summary_to_txt(evaluator, best_solution,
                                     algo, seed, config_id)
 
-            return {
+            result = {
                 "algorithm":     algo,
                 "seed":          seed,
                 "solutions":     solutions,
@@ -1040,6 +1373,9 @@ class ExperimentBuilder:
                 "best_solution": best_solution,
                 "best_score":    best_score,
             }
+            if output_config is not None:
+                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo))
+            return result
 
         elif algo in ("de", "hs"):
             de_def = dict(population_size=20, F=0.5, CR=0.7)
@@ -1056,23 +1392,32 @@ class ExperimentBuilder:
                                         if k != "population_size"})
                 pop = hs_def["population_size"]
 
-            return run_nsga(evaluator=evaluator, operator=op,
-                            seed=seed, pop_size=pop,
-                            max_iter=max_iter, n_jobs=n_jobs)
+            result = run_nsga(evaluator=evaluator, operator=op,
+                              seed=seed, pop_size=pop,
+                              max_iter=max_iter, n_jobs=n_jobs)
+            if output_config is not None:
+                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo))
+            return result
 
         else:
             raise ValueError(f"Unknown algo '{algo}'. Choose: sa, hc, de, hs")
 
     def run_search(self, search_problem=None, **kwargs):
+        output_config = kwargs.pop("output_config", None)
         search_problem = search_problem or self._evaluator
         if search_problem is None:
             raise RuntimeError("Call build_evaluator() or build_search() first.")
 
         if isinstance(search_problem, StructureEvaluatorLC):
-            return self.run(evaluator=search_problem, **kwargs)
+            return self.run(evaluator=search_problem, output_config=output_config, **kwargs)
 
         if hasattr(search_problem, "run"):
-            return search_problem.run(**kwargs)
+            result = search_problem.run(**kwargs)
+            if output_config is not None:
+                family = result.get("family") or getattr(search_problem, "family", "search")
+                algorithm = str(kwargs.get("algo", result.get("algorithm", "run")))
+                result["saved_to"] = str(save_search_result(result, output_config, family=family, algorithm=algorithm))
+            return result
 
         raise TypeError("Unsupported search problem type.")
 

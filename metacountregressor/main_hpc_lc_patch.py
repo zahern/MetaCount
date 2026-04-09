@@ -93,6 +93,7 @@ try:
         decode_distribution,
         poisson_loglik,
         nb2_loglik,
+        gaussian_loglik,
         lognormal_loglik,
         build_eta,
         ensure_3d,
@@ -114,6 +115,7 @@ except ImportError:
         decode_distribution,
         poisson_loglik,
         nb2_loglik,
+        gaussian_loglik,
         lognormal_loglik,
         build_eta,
         ensure_3d,
@@ -502,6 +504,9 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
     elif spec.model == "lognormal":
         sigma    = blocks["sigma"]
         ll_count = lognormal_loglik(y, eta, sigma)
+    elif spec.model == "gaussian":
+        sigma    = blocks["sigma"]
+        ll_count = gaussian_loglik(y, eta, sigma)
 
     else:
         raise ValueError(f"Unknown model: {spec.model}")
@@ -515,14 +520,21 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
             eta_zi = jnp.zeros_like(eta[..., :1])
 
         pi_zi = jax.nn.sigmoid(eta_zi)
-        mu    = jnp.exp(eta)
+        mu = jnp.exp(eta)
 
         if spec.model == "poisson":
             f0 = jnp.exp(-mu)
-        else:
+        elif spec.model == "nb":
             alpha_e  = jnp.exp(blocks["alpha"])
             inv_a    = 1.0 / alpha_e
             f0       = jnp.exp(inv_a * (jnp.log(inv_a) - jnp.log(inv_a + mu)))
+        elif spec.model == "lognormal":
+            f0 = jnp.zeros_like(mu)
+        elif spec.model == "gaussian":
+            sigma = jax.nn.softplus(blocks["sigma"])
+            f0 = jnp.exp(-0.5 * jnp.log(2 * jnp.pi * sigma**2) - (eta**2) / (2 * sigma**2))
+        else:
+            raise ValueError(f"Unknown zero-inflated model: {spec.model}")
 
         zero_mask = (y == 0)
         ll_zero   = jnp.log(pi_zi + (1 - pi_zi) * f0 + 1e-12)

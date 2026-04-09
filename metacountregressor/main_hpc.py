@@ -50,6 +50,18 @@ def lognormal_loglik(y, eta, sigma):
     return ll
 
 
+def gaussian_loglik(y, eta, sigma):
+
+    sigma = jax.nn.softplus(sigma)
+
+    ll = (
+        -0.5 * jnp.log(2 * jnp.pi * sigma**2)
+        - (y - eta) ** 2 / (2 * sigma**2)
+    )
+
+    return ll
+
+
 
 def check_structure_recovery(
     pareto_solutions,
@@ -822,6 +834,9 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
     elif spec.model == "lognormal":
         sigma = blocks["sigma"]
         ll_count = lognormal_loglik(y, eta, sigma)
+    elif spec.model == "gaussian":
+        sigma = blocks["sigma"]
+        ll_count = gaussian_loglik(y, eta, sigma)
 
     else:
         raise ValueError("Unknown model")
@@ -1243,7 +1258,7 @@ def build_base_index(spec):
         index["dispersion"] = idx
         idx += 1
     
-    if spec.model == "lognormal":
+    if spec.model in {"lognormal", "gaussian"}:
         index["sigma"] = idx
         idx += 1
 
@@ -3087,6 +3102,8 @@ class CountModel:
 
     def predict(self):
         eta = build_eta(self.params, self.data, self.spec)
+        if self.spec.model == "gaussian":
+            return eta.mean(axis=-1)
         mu = jnp.exp(eta)
         return mu.mean(axis=-1)
 
@@ -3560,7 +3577,7 @@ def unpack_params(params, spec: ModelSpec):
         if spec.model == "nb":
             out["alpha"] = params[idx]
             idx += 1
-        elif spec.model == "lognormal":
+        elif spec.model in {"lognormal", "gaussian"}:
             out["sigma"] = params[idx]
             idx += 1
         else:

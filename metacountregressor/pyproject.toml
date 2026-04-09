@@ -43,7 +43,9 @@ py-modules = [
   "main_hpc",
   "main_hpc_lc_patch",
   "metaheuristics",
+  "output_config",
   "pareto_file",
+  "sample_data",
   "solution",
   "solvers_meta",
 ]

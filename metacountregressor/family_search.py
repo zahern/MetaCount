@@ -210,10 +210,13 @@ class CMFMetaheuristicObjective:
 
 @dataclass
 class LinearSearchProblem:
-    df: pd.DataFrame
-    y_col: str
-    variables: list[str]
-    objective_kwargs: dict[str, Any]
+    df: Optional[pd.DataFrame] = None
+    y_col: Optional[str] = None
+    variables: Optional[list[str]] = None
+    objective_kwargs: Optional[dict[str, Any]] = None
+    builder: Any = None
+    evaluator: Any = None
+    metadata: Optional[dict[str, Any]] = None
 
     family: str = "linear"
 
@@ -223,6 +226,13 @@ class LinearSearchProblem:
         initial_solutions=None,
         **algorithm_kwargs,
     ):
+        if self.builder is not None and self.evaluator is not None:
+            result = self.builder.run_search(self.evaluator, algo=algo, **algorithm_kwargs)
+            result["family"] = "linear"
+            result["driver"] = "jax_hierarchical"
+            result["linear_metadata"] = self.metadata or {}
+            return result
+
         X = self.df[self.variables].copy()
         y = self.df[[self.y_col]].copy()
 
@@ -230,7 +240,7 @@ class LinearSearchProblem:
             X,
             y,
             linear_model=True,
-            **self.objective_kwargs,
+            **(self.objective_kwargs or {}),
         )
         return _run_metaheuristic(
             algo,
@@ -242,11 +252,14 @@ class LinearSearchProblem:
 
 @dataclass
 class DurationSearchProblem:
-    df: pd.DataFrame
-    y_col: str
-    variables: list[str]
-    id_col: str
-    budget_col: str
+    df: Optional[pd.DataFrame] = None
+    y_col: Optional[str] = None
+    variables: Optional[list[str]] = None
+    id_col: Optional[str] = None
+    budget_col: Optional[str] = None
+    builder: Any = None
+    evaluator: Any = None
+    metadata: Optional[dict[str, Any]] = None
 
     family: str = "duration"
 
@@ -255,7 +268,16 @@ class DurationSearchProblem:
         objective: str = "budget_penalty",
         init_params: Optional[np.ndarray] = None,
         lambda_penalty: float = 10.0,
+        algo: str = "sa",
+        **algorithm_kwargs,
     ) -> dict[str, Any]:
+        if self.builder is not None and self.evaluator is not None:
+            result = self.builder.run_search(self.evaluator, algo=algo, **algorithm_kwargs)
+            result["family"] = "duration"
+            result["driver"] = "jax_hierarchical"
+            result["duration_metadata"] = self.metadata or {}
+            return result
+
         X, y, ids, budgets = prepare_data(
             self.df,
             feature_cols=self.variables,

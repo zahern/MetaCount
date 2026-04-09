@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 from cmf_package import CMFExperimentBuilder
 from experiment_package import ExperimentBuilder
@@ -10,6 +11,8 @@ from family_search import (
     LinearSearchProblem,
     UnifiedCMFSearchProblem,
 )
+from output_config import SearchOutputConfig, save_search_result
+from sample_data import load_example_crash_data
 
 
 def make_panel_df():
@@ -158,8 +161,10 @@ def test_model_family_switches_return_specialized_search_problems():
 
     assert isinstance(linear_problem, LinearSearchProblem)
     assert linear_problem.family == "linear"
+    assert linear_problem.metadata["model"] == "gaussian"
     assert isinstance(duration_problem, DurationSearchProblem)
     assert duration_problem.family == "duration"
+    assert duration_problem.metadata["model"] == "lognormal"
     assert isinstance(cmf_problem, UnifiedCMFSearchProblem)
     assert cmf_problem.family == "cmf"
     assert isinstance(legacy_cmf_problem, CMFFamilySearchProblem)
@@ -215,3 +220,97 @@ def test_cmf_default_driver_uses_main_jax_count_architecture():
     assert "x_hetero" in cmf_problem.evaluator.vars
     assert "x_zi" in cmf_problem.evaluator.vars
     assert "x_member" in cmf_problem.evaluator.vars
+
+
+def test_manual_spec_helper_preserves_roles_and_model_fit():
+    df = make_panel_df()
+    builder = ExperimentBuilder(
+        df=df,
+        id_col="ID",
+        y_col="Y",
+        offset_col="OFFSET",
+        group_id_col="FC",
+    )
+
+    manual_spec = builder.make_manual_spec(
+        fixed_terms=["x_fixed"],
+        rdm_terms=["x_rnd_ind:normal"],
+        hetro_in_means=["x_hetero"],
+        dispersion=1,
+        latent_classes=1,
+    )
+    fit = builder.fit_manual_model(manual_spec, model="nb", R=8)
+
+    assert fit["manual_spec"]["fixed_terms"] == ["x_fixed"]
+    assert fit["spec"].model == "nb"
+    assert fit["spec"].latent_classes == 1
+    assert fit["predictions"].shape[0] == df["ID"].nunique()
+
+
+def test_family_builders_raise_on_unexpected_kwargs():
+    df = make_panel_df()
+    builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
+
+    try:
+        builder.build_evaluator(
+            model_family="duration",
+            variables=["x_fixed"],
+            budget_col="AADT",
+            not_a_real_arg=2,
+        )
+    except ValueError as exc:
+        assert "Unexpected arguments for duration search" in str(exc)
+    else:
+        raise AssertionError("duration search should reject unexpected kwargs")
+
+
+def test_cmf_manual_helpers_build_transformed_spec_and_fit():
+    df = make_panel_df()
+    cmf_builder = CMFExperimentBuilder(
+        df=df,
+        y_col="Y",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+    )
+
+    manual_spec = cmf_builder.make_manual_cmf_spec(
+        baseline_fixed=["cmf_a"],
+        local_fixed=["cmf_b"],
+        zi_terms=["x_zi"],
+        membership_terms=["x_member"],
+        dispersion=1,
+        latent_classes=2,
+    )
+    fit = cmf_builder.fit_manual_cmf_model(
+        id_col="ID",
+        offset_col="OFFSET",
+        group_id_col="FC",
+        manual_spec=manual_spec,
+        model="nb",
+        R=8,
+    )
+
+    assert "__cmf_log_aadt" in manual_spec["fixed_terms"]
+    assert "__cmf_local__cmf_b" in manual_spec["fixed_terms"]
+    assert fit["spec"].model == "nb"
+    assert fit["spec"].latent_classes == 2
+
+
+def test_sample_data_loader_contains_readme_columns():
+    df = load_example_crash_data()
+    required = {
+        "ID", "Y", "OFFSET", "FACILITY_CLASS", "AADT", "LENGTH", "GRADE",
+        "LIGHTING", "CURVE", "LANEWIDTH", "SHOULDER", "MEDIAN", "RAIN",
+        "ZERO_FLAG", "MEMB_URBAN", "URBAN", "INTERSECTION_DENSITY",
+        "SPEED", "LANES", "B", "DURATION", "TRUE_FUNCTIONAL_CLASS",
+    }
+    assert required.issubset(df.columns)
+
+
+def test_output_config_saves_search_result():
+    output_dir = Path("test_results_output")
+    output_dir.mkdir(exist_ok=True)
+    config = SearchOutputConfig(output_dir=str(output_dir), experiment_name="unit_test", search_description="count search")
+    target = save_search_result({"best_score": 12.34, "family": "count"}, config, family="count", algorithm="sa")
+    assert target.exists()
