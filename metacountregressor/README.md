@@ -20,11 +20,11 @@ That means:
 
 This repo is now set to:
 
-- version `1.0.24`
+- version `1.0.30`
 - short description:
   `JAX-first hierarchical search and fitting for count, CMF, duration, and linear models.`
 
-If PyPI still shows the old text, the fix is to build and upload a new release from this updated source.
+If PyPI still shows the old text, the fix is to build and upload a new release from this updated source and make sure you upload only fresh artifacts from `dist/`.
 
 ## 2. Install
 
