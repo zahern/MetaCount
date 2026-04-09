@@ -1,0 +1,14 @@
+{
+  "config": {
+    "output_dir": "test_results_output",
+    "experiment_name": "unit_test",
+    "search_description": "count search",
+    "save_json": true
+  },
+  "family": "count",
+  "algorithm": "sa",
+  "result": {
+    "best_score": 12.34,
+    "family": "count"
+  }
+}

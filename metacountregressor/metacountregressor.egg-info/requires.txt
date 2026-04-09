@@ -1,0 +1,17 @@
+jax
+jaxlib
+jaxopt
+joblib
+latextable
+matplotlib
+numpy
+pandas
+psutil
+pygad
+scikit-learn
+scipy
+statsmodels
+texttable
+
+[dev]
+pytest>=8.0
