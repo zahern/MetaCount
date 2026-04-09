@@ -33,6 +33,7 @@ include-package-data = true
 py-modules = [
   "GA_CMF_AADT_JAX",
   "Solvers_METAJAX",
+  "_version",
   "_device_cust",
   "_device_jax_cust",
   "cmf_package",

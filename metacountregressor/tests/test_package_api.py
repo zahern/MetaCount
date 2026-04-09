@@ -8,6 +8,7 @@ def test_public_package_imports():
     family_submodule = importlib.import_module("metacountregressor.family_search")
 
     assert hasattr(package, "ExperimentBuilder")
+    assert hasattr(package, "__version__")
     assert hasattr(package, "CMFExperimentBuilder")
     assert hasattr(package, "LinearSearchProblem")
     assert hasattr(package, "DurationSearchProblem")
@@ -16,3 +17,4 @@ def test_public_package_imports():
     assert submodule.ExperimentBuilder is package.ExperimentBuilder
     assert cmf_submodule.CMFExperimentBuilder is package.CMFExperimentBuilder
     assert family_submodule.LinearSearchProblem is package.LinearSearchProblem
+    assert package.__version__ == "1.0.24"

@@ -41,8 +41,10 @@ python -m pip install jax jaxlib jaxopt
 Quick import check:
 
 ```bash
-python -c "from metacountregressor import ExperimentBuilder, load_example_crash_data; print(ExperimentBuilder, load_example_crash_data().shape)"
+python -c "from metacountregressor import __version__, ExperimentBuilder, load_example_crash_data; print(__version__, ExperimentBuilder, load_example_crash_data().shape)"
 ```
+
+The repo version and the uploaded PyPI version should move together. This repo is currently prepared for release `1.0.24`.
 
 ## 3. Use The Bundled Example Data
 

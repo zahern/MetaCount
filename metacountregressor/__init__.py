@@ -1,6 +1,11 @@
 from importlib import import_module
+try:
+    from ._version import __version__
+except ImportError:
+    from _version import __version__
 
 __all__ = [
+    "__version__",
     "CMFExperimentBuilder",
     "CMFFamilySearchProblem",
     "DataProcessor",
