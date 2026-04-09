@@ -450,7 +450,120 @@ linear_fit = linear_builder.fit_manual_model(
 )
 ```
 
-## 11. What Changing Search Arguments Does
+## 11. Platform-Speed Linear Mixed Effects Example
+
+The package now includes a synthetic example designed for linear mixed-effects style experiments around vehicle speed relative to a platform.
+
+Load it with:
+
+```python
+from metacountregressor import load_example_platform_speed_data, ExperimentBuilder
+
+platform_df = load_example_platform_speed_data()
+
+platform_builder = ExperimentBuilder(
+    df=platform_df,
+    id_col="PLATFORM_ID",
+    y_col="RELATIVE_SPEED",
+    offset_col=None,
+    group_id_col="PLATFORM_TYPE",
+)
+```
+
+Available columns include:
+
+- `DIST_TO_PLATFORM`
+- `VEHICLE_SPEED`
+- `RELATIVE_SPEED`
+- `POSTED_SPEED`
+- `APPROACH_ACCEL`
+- `PLATFORM_TYPE`
+- `PLATFORM_HEIGHT`
+- `PLATFORM_WIDTH`
+- `AT_PLATFORM`
+
+### 11.1 Linear mixed-effects style search
+
+```python
+platform_linear_search = platform_builder.build_evaluator(
+    model_family="linear",
+    variables=[
+        "DIST_TO_PLATFORM",
+        "POSTED_SPEED",
+        "APPROACH_ACCEL",
+        "PLATFORM_HEIGHT",
+        "PLATFORM_WIDTH",
+        "AT_PLATFORM",
+    ],
+    mode="single",
+    max_latent_classes=2,
+    R=200,
+    default_roles=[0, 1, 2, 3, 4, 5, 7, 8],
+)
+```
+
+This is set up to model speed relative to the platform while allowing:
+
+- random parameters
+- correlated random parameters
+- grouped effects
+- heterogeneity in means
+- latent classes
+
+## 12. Duration Example: Time Until Another Vehicle Speeds Over The Platform
+
+The package also includes a synthetic duration experiment for the time before another vehicle speeds over the platform.
+
+Load it with:
+
+```python
+from metacountregressor import load_example_platform_gap_duration_data, ExperimentBuilder
+
+gap_df = load_example_platform_gap_duration_data()
+
+gap_builder = ExperimentBuilder(
+    df=gap_df,
+    id_col="PLATFORM_ID",
+    y_col="DURATION_UNTIL_NEXT_SPEEDING",
+    offset_col=None,
+    group_id_col=None,
+)
+```
+
+Available columns include:
+
+- `DURATION_UNTIL_NEXT_SPEEDING`
+- `PRECEDING_VEHICLE_SPEED`
+- `FOLLOWING_VEHICLE_SPEED`
+- `POSTED_SPEED`
+- `PLATFORM_HEIGHT`
+- `PLATFORM_WIDTH`
+- `APPROACH_VOLUME`
+
+### 12.1 Duration search
+
+```python
+gap_duration_search = gap_builder.build_evaluator(
+    model_family="duration",
+    variables=[
+        "PRECEDING_VEHICLE_SPEED",
+        "FOLLOWING_VEHICLE_SPEED",
+        "POSTED_SPEED",
+        "PLATFORM_HEIGHT",
+        "PLATFORM_WIDTH",
+        "APPROACH_VOLUME",
+    ],
+    budget_col="POSTED_SPEED",
+    mode="single",
+    max_latent_classes=2,
+    R=200,
+    default_roles=[0, 1, 2, 3, 4, 5, 7, 8],
+)
+```
+
+This uses the JAX hierarchical lognormal path and is intended for duration-before-speeding style analysis.
+
+## 13. What Changing Search Arguments Does
 
 ### Change the search algorithm
 
@@ -490,7 +603,7 @@ evaluator = builder.build_count_evaluator(
 )
 ```
 
-## 12. Consistent Run Output
+## 14. Consistent Run Output
 
 ```python
 from metacountregressor import SearchOutputConfig
@@ -519,7 +632,7 @@ Each saved JSON file stores:
 - algorithm
 - normalized result payload
 
-## 13. Latent-Class Example: Recover Functional Class
+## 15. Latent-Class Example: Recover Functional Class
 
 This example is designed to see whether a latent-class model can recover the hidden `FC` grouping pattern without using `FC` itself as a direct predictor in the outcome equation.
 
@@ -586,7 +699,7 @@ print("Agreement:", agreement)
 
 This is the cookbook pattern for checking whether the latent-class structure is capturing the observed facility-class segmentation.
 
-## 14. Common Validation Errors
+## 16. Common Validation Errors
 
 The package now raises clearer errors for:
 
@@ -596,7 +709,7 @@ The package now raises clearer errors for:
 - CMF data with non-positive `AADT`
 - latent-class probability requests on single-class fits
 
-## 15. Summary
+## 17. Summary
 
 Use these loaders when you want the real Example 16-3 data inside the package:
 

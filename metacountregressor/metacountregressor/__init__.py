@@ -20,6 +20,8 @@ __all__ = [
     "load_example_duration_data",
     "load_example_linear_data",
     "load_example_panel_data",
+    "load_example_platform_gap_duration_data",
+    "load_example_platform_speed_data",
     "StructureEvaluatorLC",
     "differential_evolution",
     "harmony_search",
@@ -44,6 +46,8 @@ _EXPORTS = {
     "load_example_duration_data": ("sample_data", "load_example_duration_data"),
     "load_example_linear_data": ("sample_data", "load_example_linear_data"),
     "load_example_panel_data": ("sample_data", "load_example_panel_data"),
+    "load_example_platform_gap_duration_data": ("sample_data", "load_example_platform_gap_duration_data"),
+    "load_example_platform_speed_data": ("sample_data", "load_example_platform_speed_data"),
     "simulated_annealing": ("metaheuristics", "simulated_annealing"),
 }
 

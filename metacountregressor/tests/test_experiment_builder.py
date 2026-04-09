@@ -12,7 +12,12 @@ from family_search import (
     UnifiedCMFSearchProblem,
 )
 from output_config import SearchOutputConfig, save_search_result
-from sample_data import load_example16_3_raw_data, load_example_crash_data
+from sample_data import (
+    load_example16_3_raw_data,
+    load_example_crash_data,
+    load_example_platform_gap_duration_data,
+    load_example_platform_speed_data,
+)
 
 
 def make_panel_df():
@@ -317,6 +322,34 @@ def test_example16_3_raw_loader_preserves_source_columns():
         "MIGRADE", "MXGRADE", "MXGRDIFF", "TANGENT", "CURVES", "MINRAD", "ACCESS",
         "MEDWIDTH", "FRICTION", "ADTLANE", "SLOPE", "INTECHAG", "AVEPRE", "AVESNOW",
     ]
+
+
+def test_platform_example_loaders_expose_requested_fields():
+    speed_df = load_example_platform_speed_data()
+    duration_df = load_example_platform_gap_duration_data()
+
+    assert {
+        "PLATFORM_ID",
+        "DIST_TO_PLATFORM",
+        "VEHICLE_SPEED",
+        "RELATIVE_SPEED",
+        "POSTED_SPEED",
+        "APPROACH_ACCEL",
+        "PLATFORM_TYPE",
+        "PLATFORM_HEIGHT",
+        "PLATFORM_WIDTH",
+    }.issubset(speed_df.columns)
+
+    assert {
+        "PLATFORM_ID",
+        "DURATION_UNTIL_NEXT_SPEEDING",
+        "PRECEDING_VEHICLE_SPEED",
+        "FOLLOWING_VEHICLE_SPEED",
+        "POSTED_SPEED",
+        "PLATFORM_HEIGHT",
+        "PLATFORM_WIDTH",
+        "APPROACH_VOLUME",
+    }.issubset(duration_df.columns)
 
 
 def test_output_config_saves_search_result():
