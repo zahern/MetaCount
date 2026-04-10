@@ -4,25 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "metacountregressor"
-version = "1.0.32"
+version = "1.0.33"
 description = "JAX-first hierarchical search and fitting for count, CMF, duration, and linear models."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-  "jax",
-  "jaxlib",
-  "jaxopt",
-  "joblib",
-  "latextable",
-  "matplotlib",
-  "numpy",
-  "pandas",
-  "psutil",
-  "pygad",
-  "scikit-learn",
-  "scipy",
-  "statsmodels",
-  "texttable",
+  # JAX ecosystem — required for all model fitting and search
+  "jax>=0.4.1",
+  "jaxlib>=0.4.1",
+  "jaxopt>=0.6",
+  # Genetic algorithm search backend
+  "pygad>=3.0.0",
+  # Scientific stack
+  "joblib>=1.2",
+  "latextable>=0.2",
+  "matplotlib>=3.5",
+  "numpy>=1.23",
+  "pandas>=1.5",
+  "psutil>=5.9",
+  "scikit-learn>=1.1",
+  "scipy>=1.9",
+  "statsmodels>=0.13",
+  "texttable>=1.6",
 ]
 
 [project.optional-dependencies]
