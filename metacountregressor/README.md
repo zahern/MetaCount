@@ -485,6 +485,47 @@ platform_linear_search = platform_builder.build_evaluator(
 )
 ```
 
+Run the search:
+
+```python
+from metacountregressor import SearchOutputConfig
+
+platform_linear_result = platform_builder.run_search(
+    platform_linear_search,
+    algo="sa",
+    max_iter=1500,
+    seed=21,
+    output_config=SearchOutputConfig(
+        output_dir="results",
+        experiment_name="platform_linear_speed_search",
+        search_description="Linear mixed-effects style search for speed relative to platform",
+    ),
+)
+
+print(platform_linear_result["algorithm"])
+print(platform_linear_result["best_score"])
+print(platform_linear_result["saved_to"])
+```
+
+If you want to manually fit one chosen structure after the search:
+
+```python
+platform_linear_spec = platform_builder.make_manual_spec(
+    fixed_terms=["DIST_TO_PLATFORM", "POSTED_SPEED"],
+    rdm_terms=["APPROACH_ACCEL:normal"],
+    rdm_cor_terms=["PLATFORM_HEIGHT:normal", "PLATFORM_WIDTH:normal"],
+    hetro_in_means=["AT_PLATFORM"],
+    membership_terms=["DIST_TO_PLATFORM"],
+    latent_classes=2,
+)
+
+platform_linear_fit = platform_builder.fit_manual_model(
+    manual_spec=platform_linear_spec,
+    model="gaussian",
+    R=200,
+)
+```
+
 This is set up to model speed relative to the platform while allowing:
 
 - random parameters
@@ -541,6 +582,44 @@ gap_duration_search = gap_builder.build_evaluator(
     max_latent_classes=2,
     R=200,
     default_roles=[0, 1, 2, 3, 4, 5, 7, 8],
+)
+```
+
+Run the search:
+
+```python
+gap_duration_result = gap_builder.run_search(
+    gap_duration_search,
+    algo="sa",
+    max_iter=1500,
+    seed=22,
+    output_config=SearchOutputConfig(
+        output_dir="results",
+        experiment_name="platform_gap_duration_search",
+        search_description="Duration search for time until another vehicle speeds over the platform",
+    ),
+)
+
+print(gap_duration_result["algorithm"])
+print(gap_duration_result["best_score"])
+print(gap_duration_result["saved_to"])
+```
+
+If you want to manually fit one chosen duration structure:
+
+```python
+gap_duration_spec = gap_builder.make_manual_spec(
+    fixed_terms=["PRECEDING_VEHICLE_SPEED", "POSTED_SPEED"],
+    rdm_terms=["FOLLOWING_VEHICLE_SPEED:normal"],
+    rdm_cor_terms=["PLATFORM_HEIGHT:normal", "PLATFORM_WIDTH:normal"],
+    hetro_in_means=["APPROACH_VOLUME"],
+    latent_classes=2,
+)
+
+gap_duration_fit = gap_builder.fit_manual_model(
+    manual_spec=gap_duration_spec,
+    model="lognormal",
+    R=200,
 )
 ```
 

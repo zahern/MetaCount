@@ -39,11 +39,14 @@ py-modules = [
   "cmf_package",
   "data_split_helper",
   "experiment_package",
+  "fitted_specifications",
   "halton",
+  "help_guide",
   "helperprocess",
   "main_hpc",
   "main_hpc_lc_patch",
   "metaheuristics",
+  "model_constraints",
   "output_config",
   "pareto_file",
   "sample_data",
@@ -55,4 +58,4 @@ py-modules = [
 include = ["metacountregressor*"]
 
 [tool.setuptools.package-data]
-metacountregressor = ["data/*.csv"]
+metacountregressor = ["data/*.csv", "templates/*.ipynb"]

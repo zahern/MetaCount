@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Read(//c/Users/ahernz/source/MetaCount/**)"
+      "Read(//c/Users/ahernz/source/MetaCount/**)",
+      "Bash(python -c ':*)"
     ]
   }
 }

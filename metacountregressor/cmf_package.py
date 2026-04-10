@@ -237,11 +237,26 @@ class CMFExperimentBuilder:
         R: int = 200,
         default_roles: Optional[list[int]] = None,
         force_aadt_term: bool = True,
+        constraints=None,
     ):
         try:
             from .experiment_package import ExperimentBuilder
         except ImportError:
             from experiment_package import ExperimentBuilder
+
+        # Merge ModelConstraints (if supplied); explicit overrides win
+        if constraints is not None:
+            _ckw = constraints.to_evaluator_kwargs()
+            fixed_override = {
+                **_ckw.get("fixed_override", {}),
+                **(fixed_override or {}),
+            }
+            membership_override = {
+                **_ckw.get("membership_override", {}),
+                **(membership_override or {}),
+            }
+            _c_ex = _ckw.get("exclude", [])
+            exclude = list(dict.fromkeys(list(_c_ex) + list(exclude or [])))
 
         if (self.df[self.aadt_col] <= 0).any():
             raise ValueError(

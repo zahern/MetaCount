@@ -1008,6 +1008,7 @@ class ExperimentBuilder:
         default_roles:       Optional[list]            = None,
         model_family:        Optional[str]             = None,
         engine:              Optional[str]             = None,
+        constraints=None,
         **family_kwargs: Any,
     ):
         """
@@ -1062,6 +1063,28 @@ class ExperimentBuilder:
                 engine=engine,
                 **family_kwargs,
             )
+
+        # Merge ModelConstraints (if supplied) with explicit override kwargs.
+        # Explicit kwargs always win over constraint-derived defaults.
+        if constraints is not None:
+            _ckw = constraints.to_evaluator_kwargs()
+            fixed_override = {
+                **_ckw.get("fixed_override", {}),
+                **(fixed_override or {}),
+            }
+            membership_override = {
+                **_ckw.get("membership_override", {}),
+                **(membership_override or {}),
+            }
+            _c_exclude = _ckw.get("exclude", [])
+            exclude = list(dict.fromkeys(list(_c_exclude) + list(exclude or [])))
+            # Distribution overrides from constraints (merged, explicit wins)
+            if "dist_override" in _ckw:
+                family_kwargs.setdefault("dist_override", {})
+                family_kwargs["dist_override"] = {
+                    **_ckw["dist_override"],
+                    **family_kwargs["dist_override"],
+                }
 
         variables = self._normalize_variables(variables, exclude)
         fixed_override = self._normalize_override_map(fixed_override, "fixed_override")
