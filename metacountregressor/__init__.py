@@ -6,14 +6,25 @@ except ImportError:
 
 __all__ = [
     "__version__",
+    # Builders
     "CMFExperimentBuilder",
-    "CMFFamilySearchProblem",
-    "DataProcessor",
-    "DurationSearchProblem",
     "ExperimentBuilder",
-    "LinearSearchProblem",
-    "ObjectiveFunction",
+    "StructureEvaluatorLC",
+    # Constraints & config
+    "ModelConstraints",
     "SearchOutputConfig",
+    # Search algorithms
+    "differential_evolution",
+    "harmony_search",
+    "simulated_annealing",
+    # Family search problems
+    "CMFFamilySearchProblem",
+    "DurationSearchProblem",
+    "LinearSearchProblem",
+    # Data utilities
+    "DataProcessor",
+    "ObjectiveFunction",
+    # Data loaders
     "load_example16_3_model_data",
     "load_example16_3_raw_data",
     "load_example_crash_data",
@@ -22,10 +33,12 @@ __all__ = [
     "load_example_panel_data",
     "load_example_platform_gap_duration_data",
     "load_example_platform_speed_data",
-    "StructureEvaluatorLC",
-    "differential_evolution",
-    "harmony_search",
-    "simulated_annealing",
+    # Help system
+    "get_help",
+    "load_book_latent_class_spec",
+    "describe_book_latent_class_spec",
+    "load_book_cmf_spec",
+    "describe_book_cmf_spec",
 ]
 
 _EXPORTS = {
@@ -35,6 +48,7 @@ _EXPORTS = {
     "DurationSearchProblem": ("family_search", "DurationSearchProblem"),
     "ExperimentBuilder": ("experiment_package", "ExperimentBuilder"),
     "LinearSearchProblem": ("family_search", "LinearSearchProblem"),
+    "ModelConstraints": ("model_constraints", "ModelConstraints"),
     "ObjectiveFunction": ("solution", "ObjectiveFunction"),
     "SearchOutputConfig": ("output_config", "SearchOutputConfig"),
     "StructureEvaluatorLC": ("experiment_package", "StructureEvaluatorLC"),
@@ -49,6 +63,12 @@ _EXPORTS = {
     "load_example_platform_gap_duration_data": ("sample_data", "load_example_platform_gap_duration_data"),
     "load_example_platform_speed_data": ("sample_data", "load_example_platform_speed_data"),
     "simulated_annealing": ("metaheuristics", "simulated_annealing"),
+    # Help system
+    "get_help": ("help", "get_help"),
+    "load_book_latent_class_spec": ("help", "load_book_latent_class_spec"),
+    "describe_book_latent_class_spec": ("help", "describe_book_latent_class_spec"),
+    "load_book_cmf_spec": ("help", "load_book_cmf_spec"),
+    "describe_book_cmf_spec": ("help", "describe_book_cmf_spec"),
 }
 
 
