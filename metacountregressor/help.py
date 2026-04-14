@@ -792,14 +792,14 @@ QUICK START
   builder.describe()
   get_help('crash_frequency')
 
-NOTEBOOKS
+NOTEBOOKS  (GitHub links — work from PyPI and GitHub)
 ---------
-  00_quickstart.ipynb               — Install, load data, first run
-  01_crash_frequency_search.ipynb   — Mixed NB search on Example 16-3
-  02_latent_class_fc_validation.ipynb — LC model and FC recovery
-  03_cmf_aadt_search.ipynb          — CMF model search
-  04_linear_speed_prediction.ipynb  — Linear model search
-  05_batch_script_tutorial.ipynb    — Batch jobs and HPC
+  https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/00_quickstart.ipynb
+  https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/01_crash_frequency_search.ipynb
+  https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/02_latent_class_fc_validation.ipynb
+  https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/03_cmf_aadt_search.ipynb
+  https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/04_linear_speed_prediction.ipynb
+  https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb
 """)
 
 

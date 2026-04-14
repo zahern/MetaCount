@@ -50,12 +50,12 @@ so you can run everything without sourcing your own dataset.
 
 | # | Notebook | What you learn |
 | --- | -------- | -------------- |
-| 00 | [00_quickstart.ipynb](metacountregressor/metacountregressor/templates/00_quickstart.ipynb) | Install, load data, first search run in under 10 minutes |
-| 01 | [01_crash_frequency_search.ipynb](metacountregressor/metacountregressor/templates/01_crash_frequency_search.ipynb) | Mixed Negative Binomial search — constraints, roles, re-fit |
-| 02 | [02_latent_class_fc_validation.ipynb](metacountregressor/metacountregressor/templates/02_latent_class_fc_validation.ipynb) | 2-class LC model — fit, extract class probabilities, validate against FC |
-| 03 | [03_cmf_aadt_search.ipynb](metacountregressor/metacountregressor/templates/03_cmf_aadt_search.ipynb) | CMF model — baseline + AADT-interaction structure search |
-| 04 | [04_linear_speed_prediction.ipynb](metacountregressor/metacountregressor/templates/04_linear_speed_prediction.ipynb) | Gaussian linear model search (speed prediction) |
-| 05 | [05_batch_script_tutorial.ipynb](metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) | Batch scripts, parallel runs, PBS/SLURM HPC job templates |
+| 00 | [00_quickstart.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/00_quickstart.ipynb) | Install, load data, first search run in under 10 minutes |
+| 01 | [01_crash_frequency_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/01_crash_frequency_search.ipynb) | Mixed Negative Binomial search — constraints, roles, re-fit |
+| 02 | [02_latent_class_fc_validation.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/02_latent_class_fc_validation.ipynb) | 2-class LC model — fit, extract class probabilities, validate against FC |
+| 03 | [03_cmf_aadt_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/03_cmf_aadt_search.ipynb) | CMF model — baseline + AADT-interaction structure search |
+| 04 | [04_linear_speed_prediction.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/04_linear_speed_prediction.ipynb) | Gaussian linear model search (speed prediction) |
+| 05 | [05_batch_script_tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) | Batch scripts, parallel runs, PBS/SLURM HPC job templates |
 
 > **Tip:** open with `jupyter lab metacountregressor/metacountregressor/templates/` to browse all notebooks together.
 
@@ -572,7 +572,7 @@ source venv/bin/activate
 python run_experiment.py sa $SLURM_ARRAY_TASK_ID 200 99999
 ```
 
-See [05_batch_script_tutorial.ipynb](metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) for a complete worked example including a reusable `run_experiment.py` template and result-collection scripts.
+See [05_batch_script_tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) for a complete worked example including a reusable `run_experiment.py` template and result-collection scripts.
 
 ```python
 get_help('batch')   # inline guide
