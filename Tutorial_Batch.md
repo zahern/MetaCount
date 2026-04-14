@@ -45091,6 +45091,43 @@ if __name__ == "__main__":
     print(f"Results for {setup_name}: {results}")
 ```
 
+## Running on HPC Clusters
+
+MetaCountRegressor automatically detects walltime limits from HPC schedulers (PBS/Torque, SLURM) and integrates them into the metaheuristic search algorithms to prevent job timeouts.
+
+### Automatic Walltime Detection
+
+The package reads walltime from environment variables:
+- **PBS**: `PBS_WALLTIME` (format: HH:MM:SS)
+- **SLURM**: `SLURM_TIME_LIMIT` (seconds or HH:MM:SS)
+
+Walltime is automatically converted to seconds and used for early stopping in optimization algorithms.
+
+### HPC Job Script Example
+
+```bash
+#!/bin/bash
+#PBS -N metacount_job
+#PBS -l walltime=02:00:00
+#PBS -l nodes=1:ppn=4
+
+cd $PBS_O_WORKDIR
+python main_hpc_new.py --algo sa --max_iter 5000 --seed 42
+```
+
+### Manual Walltime Override
+
+You can also specify maximum runtime manually:
+
+```python
+# Override automatic detection with 1 hour limit
+from metacountregressor.main_hpc_new import main
+
+main(algo='hs', max_iter=10000, max_time=3600, seed=123)
+```
+
+All algorithms (Harmony Search, Differential Evolution, Simulated Annealing) support walltime-based early stopping, ensuring jobs complete gracefully before scheduler timeouts.
+
 ## Paper
 
 The following tutorial is in conjunction with our latest paper. A link the current paper is her [MetaCounteRegressor]()

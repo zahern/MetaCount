@@ -14,6 +14,7 @@ from Solvers_METAJAX import *
 from scipy.stats import qmc
 from scipy.stats import norm
 import argparse
+import os
 import time
 import psutil
 import json
@@ -1497,7 +1498,7 @@ def get_best_index(scores):
         return np.argmin(scores)
     return np.argmin(scores[:, 0])
 
-def main(seed, algo, pop_size, max_iter, n_jobs, config_id):
+def main(seed, algo, pop_size, max_iter, n_jobs, config_id, max_time=None):
     start_time = time.time()
     print("Running experiment:")
     print("Algo:", algo)
@@ -1666,10 +1667,10 @@ def main(seed, algo, pop_size, max_iter, n_jobs, config_id):
         solver = MultiStartSA(
             evaluator=evaluator,
             dimension=2 * len(evaluator.vars)+1,
+            max_time=max_time,
             **config
         )
-      
-        all_solutions, all_scores= solver.optimize()
+        all_solutions, all_scores = solver.optimize()
         best_idx = np.argmin(all_scores)
         best_solution = all_solutions[best_idx]
         best_score = all_scores[best_idx]
@@ -1844,10 +1845,33 @@ if __name__ == "__main__":
     parser.add_argument("--pop_size", type=int, default=20)
     parser.add_argument("--max_iter", type=int, default=2000)
     parser.add_argument("--n_jobs", type=int, default=1)
+    parser.add_argument("--max_time", type=int, default=None)
 
     args = parser.parse_args()
 
-    main(args.seed, args.algo, args.pop_size, args.max_iter,args.n_jobs, args.config_id)
+    env_max_time = None
+    if args.max_time is not None:
+        env_max_time = args.max_time
+    else:
+        env_max_time = os.environ.get('MAX_TIME')
+        if env_max_time is not None:
+            try:
+                env_max_time = int(env_max_time)
+            except ValueError:
+                env_max_time = None
+    if env_max_time is None:
+        walltime_env = os.environ.get('PBS_WALLTIME') or os.environ.get('PBS_O_WALLTIME')
+        if walltime_env:
+            parts = [int(x) for x in walltime_env.strip().split(':') if x]
+            if len(parts) == 3:
+                env_max_time = parts[0] * 3600 + parts[1] * 60 + parts[2]
+            elif len(parts) == 2:
+                env_max_time = parts[0] * 60 + parts[1]
+
+    if env_max_time is not None:
+        print(f"Using HPC max_time={env_max_time}s")
+
+    main(args.seed, args.algo, args.pop_size, args.max_iter, args.n_jobs, args.config_id, max_time=env_max_time)
     
     
     

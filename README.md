@@ -786,3 +786,65 @@ Use these builder patterns:
 - CMF: `build_evaluator(model_family="cmf", ...)`
 - duration: `build_evaluator(model_family="duration", ...)`
 - linear: `build_evaluator(model_family="linear", ...)`
+
+
+## 17. Running on HPC Clusters
+
+The package automatically detects walltime limits from HPC schedulers and integrates them into the metaheuristic search algorithms to prevent job timeouts.
+
+### Automatic Walltime Detection
+
+When running on PBS/Torque or SLURM clusters, the package automatically reads the walltime limit from environment variables:
+
+- **PBS**: `PBS_WALLTIME` (format: HH:MM:SS)
+- **SLURM**: `SLURM_TIME_LIMIT` (format: seconds or HH:MM:SS)
+
+The walltime is automatically converted to seconds and used as a `max_time` parameter in the optimization algorithms, enabling early stopping before the job is killed by the scheduler.
+
+### HPC Job Script Example
+
+Here's an example PBS job script (`job_script.pbs`):
+
+```bash
+#!/bin/bash
+#PBS -N metaheuristic_batch_job
+#PBS -l nodes=1:ppn=4
+#PBS -l walltime=04:00:00
+#PBS -l mem=16gb
+#PBS -j oe
+#PBS -o output.log
+
+module load python/3.8.0
+cd $PBS_O_WORKDIR
+
+python main_hpc_new.py --algo hs --max_iter 5000 --seed 42
+```
+
+### Running with Walltime Awareness
+
+The main HPC script (`main_hpc_new.py`) automatically detects the walltime and passes it to the search algorithms:
+
+```bash
+# Walltime automatically detected from PBS_WALLTIME or SLURM_TIME_LIMIT
+python main_hpc_new.py --algo sa --max_iter 10000 --seed 123
+```
+
+### Manual Walltime Override
+
+You can also manually specify a maximum runtime in seconds:
+
+```bash
+python main_hpc_new.py --algo de --max_iter 5000 --max_time 7200 --seed 456
+```
+
+This is useful for testing or when the environment variables are not set correctly.
+
+### Supported Algorithms with Walltime
+
+All metaheuristic algorithms support walltime-based early stopping:
+
+- **SA (Simulated Annealing)**: Stops when walltime is exceeded
+- **DE (Differential Evolution)**: Respects time limits during population evolution
+- **HS (Harmony Search)**: Terminates search when time limit reached
+
+The algorithms will complete the current iteration and save results before stopping, ensuring no work is lost.

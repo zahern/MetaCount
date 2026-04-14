@@ -181,7 +181,28 @@ class ObjectiveFunction(object):
         # defalt paramaters for hs #TODO unpack into harmony search class
         self.algorithm = kwargs.get('algorithm', 'hs')  # 'sa' 'de' also avialable
         self._hms = 20
-        self._max_time = self._max_time = kwargs.get('_max_time', kwargs.get('MAX_TIME', 0.8 * 60 * 60 * 24))
+        env_max_time = None
+        if kwargs.get('_max_time') is None and kwargs.get('MAX_TIME') is None:
+            walltime_value = os.environ.get('MAX_TIME') or os.environ.get('PBS_WALLTIME') or os.environ.get('PBS_O_WALLTIME')
+            if walltime_value is not None:
+                if isinstance(walltime_value, str):
+                    parts = [p for p in walltime_value.strip().split(':') if p]
+                    try:
+                        parts = [int(p) for p in parts]
+                    except ValueError:
+                        parts = []
+                    if len(parts) == 3:
+                        env_max_time = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                    elif len(parts) == 2:
+                        env_max_time = parts[0] * 60 + parts[1]
+                    elif len(parts) == 1:
+                        env_max_time = parts[0]
+                else:
+                    try:
+                        env_max_time = int(walltime_value)
+                    except Exception:
+                        env_max_time = None
+        self._max_time = kwargs.get('_max_time', kwargs.get('MAX_TIME', env_max_time if env_max_time is not None else 0.8 * 60 * 60 * 24))
         self._hmcr = kwargs.get('_hmcr', .5)
         self._par = 0.3  # dont think this gets useted
         self._mpai = 1
@@ -557,6 +578,26 @@ class ObjectiveFunction(object):
             self.process_manual_fit(manual_fit)
 
         self.solution_analyst = None
+
+    def parse_walltime_seconds(self, walltime_value):
+        if walltime_value is None:
+            return None
+        if isinstance(walltime_value, str):
+            parts = [p for p in walltime_value.strip().split(':') if p]
+            try:
+                parts = [int(p) for p in parts]
+            except ValueError:
+                return None
+            if len(parts) == 3:
+                return parts[0] * 3600 + parts[1] * 60 + parts[2]
+            if len(parts) == 2:
+                return parts[0] * 60 + parts[1]
+            if len(parts) == 1:
+                return parts[0]
+        try:
+            return int(walltime_value)
+        except (TypeError, ValueError):
+            return None
 
     def _get_obj1(self):
 
@@ -4257,7 +4298,7 @@ class ObjectiveFunction(object):
         corr_indices = []
         chol_count = 0
 
-        # NOTE: small loop — fine outside jit; can be replaced with vmap if needed
+        # NOTE: small loop â€” fine outside jit; can be replaced with vmap if needed
         for ii, var in enumerate(varnames):
             is_correlated = var in self.none_handler(self.rdm_cor_fit)
 
@@ -7963,7 +8004,7 @@ class ObjectiveFunction(object):
             #df_tf_scaled = df_tf_scaled - df_tf_scaled.min()
             # Reshape back to original 3D shape if necessary
             df_tf = df_tf_scaled.reshape(original_shape)
-            # Save per‑column min, max for later back‑transformation
+            # Save perâ€‘column min, max for later backâ€‘transformation
 
             self.feature_min_['array'] = scaler.data_min_
             self.feature_max_['array'] = scaler.data_max_
@@ -7981,7 +8022,7 @@ class ObjectiveFunction(object):
 
             # Convert the result back to a DataFrame
             #scaled_df = pd.DataFrame(scaled_data, columns=X.columns)
-            # Save per‑column min, max for later back‑transformation
+            # Save perâ€‘column min, max for later backâ€‘transformation
             for i, col in enumerate(float_columns):
                 self.feature_min_[col] = scaler.data_min_[i]
                 self.feature_max_[col] = scaler.data_max_[i]

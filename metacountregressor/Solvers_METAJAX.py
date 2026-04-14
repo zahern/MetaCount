@@ -61,6 +61,7 @@ class AdvancedSimulatedAnnealing:
                  evaluator,
                  dimension,
                  max_iter=3000,
+                 max_time=None,
                  T0=None,
                  alpha=0.995,
                  mutation_rate=0.3,
@@ -87,6 +88,7 @@ class AdvancedSimulatedAnnealing:
         self.alpha = alpha
         self.adaptive = adaptive
         self.step_size = step_size
+        self.max_time = max_time
 
         self.archive_limit = archive_limit
         self.restart_threshold = restart_threshold
@@ -795,6 +797,10 @@ class AdvancedSimulatedAnnealing:
                 force_gc()
                 jax.clear_caches()
             T = self.temperature(gen)
+
+            if self.max_time is not None and elapsed >= self.max_time:
+                print(f"⏹ Stopping early: reached max_time={self.max_time:.1f}s")
+                break
 
             neighbor = self.generate_neighbor(current, T)
             neighbor = self.repair(neighbor)
