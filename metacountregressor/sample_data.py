@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from importlib import resources
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
@@ -10,8 +12,27 @@ def _example16_3_path() -> Path:
     return Path(__file__).resolve().parent / "metacountregressor" / "data" / "Ex-16-3.csv"
 
 
+def _load_example16_3_bytes() -> bytes:
+    local_candidates = [
+        _example16_3_path(),
+        Path(__file__).resolve().parent / "data" / "Ex-16-3.csv",
+    ]
+    for path in local_candidates:
+        if path.exists():
+            return path.read_bytes()
+
+    try:
+        resource = resources.files("metacountregressor").joinpath("data", "Ex-16-3.csv")
+        return resource.read_bytes()
+    except (FileNotFoundError, ModuleNotFoundError, AttributeError):
+        raise FileNotFoundError(
+            "Could not locate packaged Example 16-3 data. "
+            "Expected metacountregressor/data/Ex-16-3.csv to be installed."
+        )
+
+
 def load_example16_3_raw_data() -> pd.DataFrame:
-    return pd.read_csv(_example16_3_path())
+    return pd.read_csv(BytesIO(_load_example16_3_bytes()))
 
 
 def load_example16_3_model_data() -> pd.DataFrame:

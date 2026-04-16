@@ -1,23 +1,23 @@
 Metadata-Version: 2.4
 Name: metacountregressor
-Version: 1.0.30
+Version: 1.0.33
 Summary: JAX-first hierarchical search and fitting for count, CMF, duration, and linear models.
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
-Requires-Dist: jax
-Requires-Dist: jaxlib
-Requires-Dist: jaxopt
-Requires-Dist: joblib
-Requires-Dist: latextable
-Requires-Dist: matplotlib
-Requires-Dist: numpy
-Requires-Dist: pandas
-Requires-Dist: psutil
-Requires-Dist: pygad
-Requires-Dist: scikit-learn
-Requires-Dist: scipy
-Requires-Dist: statsmodels
-Requires-Dist: texttable
+Requires-Dist: jax>=0.4.1
+Requires-Dist: jaxlib>=0.4.1
+Requires-Dist: jaxopt>=0.6
+Requires-Dist: pygad>=3.0.0
+Requires-Dist: joblib>=1.2
+Requires-Dist: latextable>=0.2
+Requires-Dist: matplotlib>=3.5
+Requires-Dist: numpy>=1.23
+Requires-Dist: pandas>=1.5
+Requires-Dist: psutil>=5.9
+Requires-Dist: scikit-learn>=1.1
+Requires-Dist: scipy>=1.9
+Requires-Dist: statsmodels>=0.13
+Requires-Dist: texttable>=1.6
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
 
@@ -32,24 +32,7 @@ Requires-Dist: pytest>=8.0; extra == "dev"
 
 This cookbook now uses the bundled Example 16-3 data from the linked CSV source and keeps the original source column names.
 
-## 1. Why PyPI Can Still Show Old Description Text
-
-The PyPI project page reads from the metadata inside the uploaded distribution for that release.
-
-That means:
-
-- changing `README.md` in the repo does not change an already-published PyPI page
-- changing the short `description` in [pyproject.toml](C:/Users/ahernz/source/MetaCount/metacountregressor/pyproject.toml) also only affects newly uploaded releases
-
-This repo is now set to:
-
-- version `1.0.30`
-- short description:
-  `JAX-first hierarchical search and fitting for count, CMF, duration, and linear models.`
-
-If PyPI still shows the old text, the fix is to build and upload a new release from this updated source and make sure you upload only fresh artifacts from `dist/`.
-
-## 2. Install
+## 1. Install
 
 ```bash
 python -m pip install -e .
@@ -62,7 +45,7 @@ Quick import check:
 python -c "from metacountregressor import __version__, load_example16_3_raw_data; print(__version__, load_example16_3_raw_data().shape)"
 ```
 
-## 3. Example Data In The Package
+## 2. Example Data In The Package
 
 The package now exposes the Example 16-3 data directly:
 
@@ -123,7 +106,7 @@ Notes:
 - `FC_ENCODED` is a clean ordered encoding of the observed `FC` categories for comparison experiments.
 - `FC_LABEL` is a readable string form like `FC_1`, `FC_2`, `FC_5`.
 
-## 4. Build The Main ExperimentBuilder
+## 3. Build The Main ExperimentBuilder
 
 ```python
 from metacountregressor import ExperimentBuilder, load_example16_3_model_data
@@ -183,7 +166,7 @@ print(builder.get_family_capabilities())
 print(builder.get_search_argument_guide())
 ```
 
-## 5. Main Search Arguments
+## 4. Main Search Arguments
 
 Shared arguments:
 
@@ -216,7 +199,7 @@ output_config = SearchOutputConfig(
 )
 ```
 
-## 6. Role Codes
+## 5. Role Codes
 
 | Code | Meaning |
 | --- | --- |
@@ -237,7 +220,7 @@ Random-parameter distributions:
 - `triangular`
 - `uniform`
 
-## 7. Count Models
+## 6. Count Models
 
 ### 7.1 Count search
 
@@ -290,7 +273,7 @@ fit = builder.fit_manual_model(
 )
 ```
 
-## 8. CMF Models
+## 7. CMF Models
 
 CMF models use:
 
@@ -370,7 +353,7 @@ legacy_cmf = builder.build_evaluator(
 )
 ```
 
-## 9. Duration Models
+## 8. Duration Models
 
 The default duration route now uses the main JAX hierarchical architecture with a lognormal family.
 
@@ -422,7 +405,7 @@ duration_fit = duration_builder.fit_manual_model(
 )
 ```
 
-## 10. Linear Models
+## 9. Linear Models
 
 The default linear route now uses the main JAX hierarchical architecture with a Gaussian family.
 
@@ -473,7 +456,7 @@ linear_fit = linear_builder.fit_manual_model(
 )
 ```
 
-## 11. Platform-Speed Linear Mixed Effects Example
+## 10. Platform-Speed Linear Mixed Effects Example
 
 The package now includes a synthetic example designed for linear mixed-effects style experiments around vehicle speed relative to a platform.
 
@@ -525,6 +508,47 @@ platform_linear_search = platform_builder.build_evaluator(
 )
 ```
 
+Run the search:
+
+```python
+from metacountregressor import SearchOutputConfig
+
+platform_linear_result = platform_builder.run_search(
+    platform_linear_search,
+    algo="sa",
+    max_iter=1500,
+    seed=21,
+    output_config=SearchOutputConfig(
+        output_dir="results",
+        experiment_name="platform_linear_speed_search",
+        search_description="Linear mixed-effects style search for speed relative to platform",
+    ),
+)
+
+print(platform_linear_result["algorithm"])
+print(platform_linear_result["best_score"])
+print(platform_linear_result["saved_to"])
+```
+
+If you want to manually fit one chosen structure after the search:
+
+```python
+platform_linear_spec = platform_builder.make_manual_spec(
+    fixed_terms=["DIST_TO_PLATFORM", "POSTED_SPEED"],
+    rdm_terms=["APPROACH_ACCEL:normal"],
+    rdm_cor_terms=["PLATFORM_HEIGHT:normal", "PLATFORM_WIDTH:normal"],
+    hetro_in_means=["AT_PLATFORM"],
+    membership_terms=["DIST_TO_PLATFORM"],
+    latent_classes=2,
+)
+
+platform_linear_fit = platform_builder.fit_manual_model(
+    manual_spec=platform_linear_spec,
+    model="gaussian",
+    R=200,
+)
+```
+
 This is set up to model speed relative to the platform while allowing:
 
 - random parameters
@@ -533,7 +557,7 @@ This is set up to model speed relative to the platform while allowing:
 - heterogeneity in means
 - latent classes
 
-## 12. Duration Example: Time Until Another Vehicle Speeds Over The Platform
+## 11. Duration Example: Time Until Another Vehicle Speeds Over The Platform
 
 The package also includes a synthetic duration experiment for the time before another vehicle speeds over the platform.
 
@@ -584,9 +608,47 @@ gap_duration_search = gap_builder.build_evaluator(
 )
 ```
 
+Run the search:
+
+```python
+gap_duration_result = gap_builder.run_search(
+    gap_duration_search,
+    algo="sa",
+    max_iter=1500,
+    seed=22,
+    output_config=SearchOutputConfig(
+        output_dir="results",
+        experiment_name="platform_gap_duration_search",
+        search_description="Duration search for time until another vehicle speeds over the platform",
+    ),
+)
+
+print(gap_duration_result["algorithm"])
+print(gap_duration_result["best_score"])
+print(gap_duration_result["saved_to"])
+```
+
+If you want to manually fit one chosen duration structure:
+
+```python
+gap_duration_spec = gap_builder.make_manual_spec(
+    fixed_terms=["PRECEDING_VEHICLE_SPEED", "POSTED_SPEED"],
+    rdm_terms=["FOLLOWING_VEHICLE_SPEED:normal"],
+    rdm_cor_terms=["PLATFORM_HEIGHT:normal", "PLATFORM_WIDTH:normal"],
+    hetro_in_means=["APPROACH_VOLUME"],
+    latent_classes=2,
+)
+
+gap_duration_fit = gap_builder.fit_manual_model(
+    manual_spec=gap_duration_spec,
+    model="lognormal",
+    R=200,
+)
+```
+
 This uses the JAX hierarchical lognormal path and is intended for duration-before-speeding style analysis.
 
-## 13. What Changing Search Arguments Does
+## 12. What Changing Search Arguments Does
 
 ### Change the search algorithm
 
@@ -626,7 +688,7 @@ evaluator = builder.build_count_evaluator(
 )
 ```
 
-## 14. Consistent Run Output
+## 13. Consistent Run Output
 
 ```python
 from metacountregressor import SearchOutputConfig
@@ -655,7 +717,7 @@ Each saved JSON file stores:
 - algorithm
 - normalized result payload
 
-## 15. Latent-Class Example: Recover Functional Class
+## 14. Latent-Class Example: Recover Functional Class
 
 This example is designed to see whether a latent-class model can recover the hidden `FC` grouping pattern without using `FC` itself as a direct predictor in the outcome equation.
 
@@ -722,7 +784,7 @@ print("Agreement:", agreement)
 
 This is the cookbook pattern for checking whether the latent-class structure is capturing the observed facility-class segmentation.
 
-## 16. Common Validation Errors
+## 15. Common Validation Errors
 
 The package now raises clearer errors for:
 
@@ -732,7 +794,7 @@ The package now raises clearer errors for:
 - CMF data with non-positive `AADT`
 - latent-class probability requests on single-class fits
 
-## 17. Summary
+## 16. Summary
 
 Use these loaders when you want the real Example 16-3 data inside the package:
 

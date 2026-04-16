@@ -7,11 +7,14 @@ _version.py
 cmf_package.py
 data_split_helper.py
 experiment_package.py
+fitted_specifications.py
 halton.py
+help_guide.py
 helperprocess.py
 main_hpc.py
 main_hpc_lc_patch.py
 metaheuristics.py
+model_constraints.py
 output_config.py
 pareto_file.py
 pyproject.toml
@@ -23,6 +26,9 @@ metacountregressor/_version.py
 metacountregressor/cmf_package.py
 metacountregressor/experiment_package.py
 metacountregressor/family_search.py
+metacountregressor/fitted_specifications.py
+metacountregressor/help_guide.py
+metacountregressor/model_constraints.py
 metacountregressor/output_config.py
 metacountregressor/sample_data.py
 metacountregressor.egg-info/PKG-INFO
@@ -31,5 +37,11 @@ metacountregressor.egg-info/dependency_links.txt
 metacountregressor.egg-info/requires.txt
 metacountregressor.egg-info/top_level.txt
 metacountregressor/data/Ex-16-3.csv
+metacountregressor/templates/00_quickstart.ipynb
+metacountregressor/templates/01_crash_frequency_search.ipynb
+metacountregressor/templates/02_latent_class_fc_validation.ipynb
+metacountregressor/templates/03_cmf_aadt_search.ipynb
+metacountregressor/templates/04_linear_speed_prediction.ipynb
+metacountregressor/templates/05_batch_script_tutorial.ipynb
 tests/test_experiment_builder.py
 tests/test_package_api.py

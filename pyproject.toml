@@ -56,5 +56,14 @@ Homepage = "https://github.com/zahern/MetaCount"
 [tool.setuptools.dynamic]
 version = { file = "version.txt" }
 
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+metacountregressor = [
+    "metacountregressor/data/*.csv",
+    "metacountregressor/templates/*.ipynb",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]

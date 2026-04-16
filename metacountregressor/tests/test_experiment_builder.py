@@ -321,7 +321,7 @@ def test_example16_3_raw_loader_preserves_source_columns():
         "SPEED", "URB", "FC", "AADT", "SINGLE", "DOUBLE", "TRAIN", "PEAKHR", "GRADEBR",
         "MIGRADE", "MXGRADE", "MXGRDIFF", "TANGENT", "CURVES", "MINRAD", "ACCESS",
         "MEDWIDTH", "FRICTION", "ADTLANE", "SLOPE", "INTECHAG", "AVEPRE", "AVESNOW",
-    ]
+    ], list(df.columns)
 
 
 def test_platform_example_loaders_expose_requested_fields():

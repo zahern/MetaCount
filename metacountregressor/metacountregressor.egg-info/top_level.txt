@@ -6,12 +6,15 @@ _version
 cmf_package
 data_split_helper
 experiment_package
+fitted_specifications
 halton
+help_guide
 helperprocess
 main_hpc
 main_hpc_lc_patch
 metacountregressor
 metaheuristics
+model_constraints
 output_config
 pareto_file
 sample_data
