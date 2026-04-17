@@ -1593,16 +1593,18 @@ class StructureEvaluator:
         allowed_distributions,
         mode="single",
         group_id_col=None,
+        offset_col=None,
         R=200
     ):
 
         self.id_col = id_col
         self.y_col = y_col
+        self.offset_col = offset_col
+        self.group_id_col = group_id_col
         self.vars = all_variables
         self.allowed_roles = allowed_roles
         self.allowed_distributions = allowed_distributions
         self.mode = mode
-        self.group_id_col = group_id_col
         self.R = R
 
         if mode == "multi":
@@ -1705,6 +1707,7 @@ class StructureEvaluator:
             manual_spec=spec_dict,
             id_col=self.id_col,
             y_col=self.y_col,
+            offset_col=self.offset_col,
             draws_ind=None,
             draws_cor=None,
             draws_g=None,
@@ -1756,6 +1759,7 @@ class StructureEvaluator:
             manual_spec=spec_dict,
             id_col=self.id_col,
             y_col=self.y_col,
+            offset_col=self.offset_col,
             draws_ind=draws_ind,
             draws_cor=draws_cor,
             draws_g=draws_g,

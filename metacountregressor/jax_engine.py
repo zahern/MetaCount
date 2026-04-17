@@ -1494,12 +1494,16 @@ class StructureEvaluator:
         allowed_roles,
         allowed_distributions,
         mode="single",
-        R=100
+        R=100,
+        offset_col=None,
+        group_id_col=None,
     ):
 
         self.df = df
         self.id_col = id_col
         self.y_col = y_col
+        self.offset_col = offset_col
+        self.group_id_col = group_id_col
         self.vars = all_variables
         self.allowed_roles = allowed_roles
         self.allowed_distributions = allowed_distributions
@@ -1622,6 +1626,7 @@ class StructureEvaluator:
                 manual_spec=spec_dict,
                 id_col=self.id_col,
                 y_col=self.y_col,
+                offset_col=self.offset_col,
                 R=self.R
             )
 
@@ -1649,6 +1654,7 @@ class StructureEvaluator:
                 manual_spec=spec_dict,
                 id_col=self.id_col,
                 y_col=self.y_col,
+                offset_col=self.offset_col,
                 R=self.R
             )
 

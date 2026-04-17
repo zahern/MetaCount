@@ -927,6 +927,134 @@ class ExperimentBuilder:
             out = out.merge(truth, on=self.id_col, how="left")
         return out
 
+    def print_coefficients(self, fit_result: Dict[str, Any]) -> pd.DataFrame:
+        """
+        Efficiently print model coefficients from a fitted model.
+
+        After calling fit_manual_model(), pass the result to this method to
+        display a clean coefficient table with estimates and standard errors.
+
+        Parameters
+        ----------
+        fit_result
+            Dictionary returned by fit_manual_model()
+
+        Returns
+        -------
+        pd.DataFrame
+            Coefficient table as a DataFrame
+
+        Example
+        -------
+        best_spec = evaluator.build_spec(result_full["best_solution"])
+        fit_full = builder.fit_manual_model(manual_spec=best_spec, model="nb")
+        coef_table = builder.print_coefficients(fit_full)
+        print(coef_table)
+        """
+        spec = fit_result["spec"]
+        result = fit_result["result"]
+        param_index = fit_result["param_index"]
+        data = fit_result["data"]
+
+        params = np.asarray(result.params)
+
+        # Build coefficient table with fixed, random, and dispersion parameters
+        coef_rows = []
+
+        # ── Fixed coefficients ─────────────────────────────────────
+        if spec.Kf > 0:
+            fixed_names = list(spec.fixed_names)
+            fixed_start, fixed_end = param_index["fixed"]
+            for name, value in zip(fixed_names, params[fixed_start:fixed_end]):
+                coef_rows.append({"Parameter": name, "Type": "Fixed", "Estimate": value})
+
+        # ── Random independent (means) ─────────────────────────────
+        if spec.Kr_ind > 0:
+            ind_names = list(spec.random_ind_names)
+            if "ind_mean" in param_index:
+                mean_start, mean_end = param_index["ind_mean"]
+                for name, value in zip(ind_names, params[mean_start:mean_end]):
+                    coef_rows.append({
+                        "Parameter": f"{name} (ind. mean)",
+                        "Type": "Random-Ind",
+                        "Estimate": value
+                    })
+
+            # Standard deviations
+            if "ind_sd" in param_index:
+                sd_start, sd_end = param_index["ind_sd"]
+                for name, value in zip(ind_names, params[sd_start:sd_end]):
+                    coef_rows.append({
+                        "Parameter": f"{name} (ind. SD)",
+                        "Type": "Random-Ind",
+                        "Estimate": value
+                    })
+
+        # ── Random correlated (means) ──────────────────────────────
+        if spec.Kr_cor > 0:
+            cor_names = list(spec.random_cor_names)
+            if "cor_mean" in param_index:
+                mean_start, mean_end = param_index["cor_mean"]
+                for name, value in zip(cor_names, params[mean_start:mean_end]):
+                    coef_rows.append({
+                        "Parameter": f"{name} (cor. mean)",
+                        "Type": "Random-Cor",
+                        "Estimate": value
+                    })
+
+        # ── Grouped effects ────────────────────────────────────────
+        if spec.Kg > 0:
+            grouped_names = list(spec.grouped_names)
+            if "group_mean" in param_index:
+                mean_start, mean_end = param_index["group_mean"]
+                for name, value in zip(grouped_names, params[mean_start:mean_end]):
+                    coef_rows.append({
+                        "Parameter": f"{name} (group mean)",
+                        "Type": "Grouped",
+                        "Estimate": value
+                    })
+
+            if "group_sd" in param_index:
+                sd_start, sd_end = param_index["group_sd"]
+                for name, value in zip(grouped_names, params[sd_start:sd_end]):
+                    coef_rows.append({
+                        "Parameter": f"{name} (group SD)",
+                        "Type": "Grouped",
+                        "Estimate": value
+                    })
+
+        # ── Dispersion parameter (for negative binomial) ───────────
+        if spec.model == "nb":
+            if "dispersion" in param_index:
+                disp_idx = param_index["dispersion"]
+                coef_rows.append({
+                    "Parameter": "Dispersion",
+                    "Type": "Dispersion",
+                    "Estimate": params[disp_idx]
+                })
+
+        # Build DataFrame and print
+        coef_df = pd.DataFrame(coef_rows)
+
+        print("\n" + "=" * 80)
+        print(f"  MODEL COEFFICIENTS  —  {spec.model.upper()} MODEL")
+        print("=" * 80 + "\n")
+
+        if len(coef_df) > 0:
+            # Group by type for better readability
+            for type_name in ["Fixed", "Random-Ind", "Random-Cor", "Grouped", "Dispersion"]:
+                subset = coef_df[coef_df["Type"] == type_name]
+                if len(subset) > 0:
+                    print(f"  {type_name.upper()} PARAMETERS:")
+                    print(f"  {'-' * 76}")
+                    for _, row in subset.iterrows():
+                        print(f"    {row['Parameter']:30s} = {row['Estimate']:+.6f}")
+                    print()
+
+        print("=" * 80 + "\n")
+
+        return coef_df[["Parameter", "Type", "Estimate"]]
+
     # ── describe ────────────────────────────────────────────────────
 
     def describe(self):
