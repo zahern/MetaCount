@@ -360,11 +360,15 @@ class CMFExperimentBuilder:
         fixed_terms.append(term_map[self.aadt_col])
         fixed_terms.extend(term_map[var] for var in (local_fixed or []))
 
-        rdm_terms = [f"{var}:normal" for var in (baseline_random or [])]
-        rdm_terms.extend(f"{term_map[var]}:normal" for var in (local_random or []))
+        def _with_dist(var: str, default: str = "normal") -> str:
+            """Attach distribution suffix if not already present."""
+            return var if ":" in var else f"{var}:{default}"
 
-        rdm_cor_terms = [f"{var}:normal" for var in (baseline_correlated or [])]
-        rdm_cor_terms.extend(f"{term_map[var]}:normal" for var in (local_correlated or []))
+        rdm_terms = [_with_dist(var) for var in (baseline_random or [])]
+        rdm_terms.extend(_with_dist(term_map.get(var, var)) for var in (local_random or []))
+
+        rdm_cor_terms = [_with_dist(var) for var in (baseline_correlated or [])]
+        rdm_cor_terms.extend(_with_dist(term_map.get(var, var)) for var in (local_correlated or []))
 
         return {
             "fixed_terms": list(dict.fromkeys(fixed_terms)),

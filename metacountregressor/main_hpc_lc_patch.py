@@ -75,7 +75,7 @@ import pandas as pd
 from dataclasses import dataclass, replace
 from functools import partial
 from scipy import stats as scipy_stats
-from scipy.optimize import minimize
+from jaxopt import LBFGS
 
 # ── Import the rest of main_hpc unchanged ──────────────────────────────
 try:
@@ -575,7 +575,7 @@ _hpc.mixed_model_loglik = mixed_model_loglik
 def fit_em(init_params, data, spec: ModelSpec,
            max_iter=100, tol=1e-6, verbose=True):
 
-    from scipy.special import log_softmax as _log_softmax
+    from jax.nn import log_softmax as _log_softmax
 
     assert spec.latent_classes > 1, "EM only needed for latent classes"
 
@@ -647,10 +647,11 @@ def fit_em(init_params, data, spec: ModelSpec,
                 ll_ind = mixed_model_loglik(
                     theta_c, data, base_spec, indivi=True
                 )
-                return -np.sum(_wc * np.array(ll_ind))
+                return -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
 
-            result = minimize(weighted_objective, theta_all[c], method="L-BFGS-B")
-            theta_new.append(result.x)
+            solver_theta = LBFGS(fun=weighted_objective, maxiter=300)
+            result = solver_theta.run(jnp.array(theta_all[c]))
+            theta_new.append(np.array(result.params))
 
         theta_new = np.concatenate(theta_new)
 
@@ -660,12 +661,11 @@ def fit_em(init_params, data, spec: ModelSpec,
             li = _Zf @ gc.T                                     # (N, C-1)
             lf = np.concatenate([np.zeros((N, 1)), li], axis=1)
             lp = _log_softmax(lf, axis=1)                       # (N, C)
-            return -np.sum(_w * lp)
+            return -jnp.sum(jnp.array(_w) * lp)
 
-        result_gamma = minimize(
-            gamma_objective, gamma.flatten(), method="L-BFGS-B"
-        )
-        gamma_new = result_gamma.x
+        solver_gamma = LBFGS(fun=gamma_objective, maxiter=300)
+        result_gamma = solver_gamma.run(jnp.array(gamma.flatten()))
+        gamma_new = np.array(result_gamma.params)
 
         params = np.concatenate([theta_new, gamma_new])
 
@@ -795,7 +795,20 @@ def print_summary(result, objective, data, spec: ModelSpec,
             print(f"  π_{c+1} = {pi[c]:.6f}")
 
         print("\n" + "=" * 65 + "\n")
-        return
+
+        # ── Build summary dict for LC models ─────────────────────
+        lc_ll = float(-objective(params_np))
+        lc_k  = len(params_np)
+        lc_n  = data["y"].shape[0]
+        return {
+            "loglik":    lc_ll,
+            "num_parm":  lc_k,
+            "n_obs":     lc_n,
+            "aic":       2 * lc_k - 2 * lc_ll,
+            "bic":       lc_k * np.log(lc_n) - 2 * lc_ll,
+            "latent_classes": C,
+            "class_probs":    pi.tolist(),
+        }
 
     # ── SINGLE-CLASS SUMMARY (delegate to main_hpc's print_summary) ─
     _orig_print = _hpc.__dict__.get("_orig_print_summary")
@@ -826,6 +839,27 @@ def print_summary(result, objective, data, spec: ModelSpec,
         print(f"\nLog-Likelihood: {final_ll:.4f}")
         print(f"AIC: {2*k - 2*final_ll:.4f}")
         print(f"BIC: {k*np.log(n) - 2*final_ll:.4f}\n")
+
+        return {
+            "loglik":   final_ll,
+            "num_parm": k,
+            "n_obs":    n,
+            "aic":      2 * k - 2 * final_ll,
+            "bic":      k * np.log(n) - 2 * final_ll,
+        }
+    else:
+        _orig_print(result, objective, data, spec, param_index, se=se)
+        params_np = np.asarray(result.params if hasattr(result, "params")
+                               else result.x)
+        final_ll = float(-objective(params_np))
+        k, n = len(params_np), data["y"].shape[0]
+        return {
+            "loglik":   final_ll,
+            "num_parm": k,
+            "n_obs":    n,
+            "aic":      2 * k - 2 * final_ll,
+            "bic":      k * np.log(n) - 2 * final_ll,
+        }
 
 
 # Keep the original print_summary available under a private alias so the

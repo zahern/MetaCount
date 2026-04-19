@@ -7,7 +7,6 @@ Description-Content-Type: text/markdown
 Requires-Dist: jax>=0.4.1
 Requires-Dist: jaxlib>=0.4.1
 Requires-Dist: jaxopt>=0.6
-Requires-Dist: pygad>=3.0.0
 Requires-Dist: joblib>=1.2
 Requires-Dist: latextable>=0.2
 Requires-Dist: matplotlib>=3.5

@@ -9,11 +9,19 @@ import os
 import random
 import statistics as st
 import time
+import warnings
 from collections import namedtuple
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
+
+warnings.warn(
+    "metaheuristics.py is a legacy interface and will be removed in a future release. "
+    "Use ExperimentBuilder.run(...) on the JAX-first path instead.",
+    FutureWarning,
+    stacklevel=2,
+)
 
 try:
     from .pareto_file import Pareto, Solution

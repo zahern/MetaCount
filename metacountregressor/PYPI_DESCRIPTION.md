@@ -13,6 +13,16 @@ The package now exposes:
 
 Bundled example data includes the Example 16-3 CSV and synthetic platform-speed examples.
 
+Canonical comparison assets (hierarchical CMF vs traditional count):
+
+- Notebook (no latent class, no zero-inflation):
+	https://github.com/zahern/MetaCount/blob/master/metacountregressor/cmf_vs_count_comparison.ipynb
+- Markdown slides:
+	https://github.com/zahern/MetaCount/blob/master/metacountregressor/cmf_vs_count_comparison_slides.md
+
+Note: the current package long description in `pyproject.toml` points to `README.md`.
+So PyPI will show content from `README.md`, not from this file, unless that setting is changed.
+
 Important packaging note:
 
 - the long description shown on PyPI comes from the uploaded distribution metadata

@@ -49,6 +49,13 @@ from scipy import stats
 np.seterr(divide='ignore', invalid='ignore')
 warnings.simplefilter("ignore")
 
+warnings.warn(
+    "solution.ObjectiveFunction is a legacy interface and will be removed in a future release. "
+    "Use ExperimentBuilder and JAX evaluators instead.",
+    FutureWarning,
+    stacklevel=2,
+)
+
 # define the computation boundary limits
 min_comp_val = 1e-160
 max_comp_val = 1e+200

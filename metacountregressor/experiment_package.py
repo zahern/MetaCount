@@ -57,11 +57,12 @@ except ImportError as exc:
 
 import numpy as np
 import pandas as pd
+import jax.numpy as jnp
 from dataclasses import replace
 from functools import partial
 import io
 from contextlib import redirect_stdout
-from scipy.optimize import minimize
+from jaxopt import LBFGS
 from typing import Optional, Dict, List, Union, Any
 from pathlib import Path
 
@@ -468,21 +469,20 @@ class StructureEvaluatorLC(StructureEvaluator):
                 except Exception:
                     params_em = init_params
 
-                # Step 4 — MLE polish
-                result_c = minimize(
-                    lambda p: float(mixed_model_loglik(p, data_train, spec_c)),
-                    params_em,
-                    method="L-BFGS-B",
-                    options={"maxiter": 500},
+                # Step 4 — MLE polish (JAX-native optimizer)
+                polish = LBFGS(
+                    fun=lambda p: mixed_model_loglik(p, data_train, spec_c),
+                    maxiter=500,
                 )
-
-                ll  = -result_c.fun
+                result_c = polish.run(jnp.array(params_em))
+                params_c = np.array(result_c.params)
+                ll  = -float(result_c.state.value)
                 n   = data_train["y"].shape[0]
-                k   = len(result_c.x)
+                k   = len(params_c)
                 bic = k * np.log(n) - 2.0 * ll
 
                 class _Model:
-                    params = result_c.x
+                    params = params_c
                 model = _Model()
 
             # ── Single-objective return ────────────────────────────
@@ -1615,3 +1615,93 @@ class ExperimentBuilder:
             "Continuous — full menu. Role 8 (mem+fixed) is useful for "
             "variables that explain both class membership and outcome level."
         )
+
+
+# =====================================================================
+# Standalone helper functions (importable from metacountregressor)
+# =====================================================================
+
+def extract_summary(fit_result: dict) -> dict:
+    """Safely extract the summary dict from a fit_manual_model result.
+
+    Parameters
+    ----------
+    fit_result : dict
+        Output of ``ExperimentBuilder.fit_manual_model()`` or
+        ``CMFExperimentBuilder.fit_manual_cmf_model()``.
+
+    Returns
+    -------
+    dict
+        Keys: ``bic``, ``aic``, ``loglik``, ``num_parm``, ``n_obs``.
+    """
+    s = fit_result.get("summary")
+    if s is not None and isinstance(s, dict) and "bic" in s:
+        return s
+    # Fallback: build a minimal dict from whatever is available
+    return {
+        "loglik":   s.get("loglik", float("nan")) if isinstance(s, dict) else float("nan"),
+        "num_parm": s.get("num_parm", float("nan")) if isinstance(s, dict) else float("nan"),
+        "n_obs":    s.get("n_obs", float("nan")) if isinstance(s, dict) else float("nan"),
+        "aic":      s.get("aic", float("nan")) if isinstance(s, dict) else float("nan"),
+        "bic":      s.get("bic", float("nan")) if isinstance(s, dict) else float("nan"),
+    }
+
+
+def extract_search_best(search_result: dict) -> dict:
+    """Normalise search result keys from ``ExperimentBuilder.run()``.
+
+    The ``run()`` method returns ``best_score`` and ``best_solution``.
+    This helper returns a dict with canonical names so downstream code
+    is resilient to future API changes.
+
+    Parameters
+    ----------
+    search_result : dict
+        Output of ``ExperimentBuilder.run()``.
+
+    Returns
+    -------
+    dict
+        Keys: ``best_bic``, ``best_decision``, ``scores``.
+    """
+    return {
+        "best_bic":      search_result.get("best_score",
+                            search_result.get("best_fitness")),
+        "best_decision": search_result.get("best_solution",
+                            search_result.get("best_decision")),
+        "scores":        search_result.get("scores",
+                            search_result.get("history")),
+    }
+
+
+def compare_models(fit_results: dict) -> "pd.DataFrame":
+    """Build a comparison DataFrame from a dict of fit results.
+
+    Parameters
+    ----------
+    fit_results : dict[str, dict]
+        ``{model_name: fit_result}`` where each ``fit_result`` is the
+        output of ``fit_manual_model()`` or ``fit_manual_cmf_model()``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns: ``Model``, ``BIC``, ``AIC``, ``Log-Likelihood``,
+        ``Parameters``.  Sorted by BIC ascending.
+    """
+    import pandas as _pd  # local import to keep module import light
+    rows = []
+    for name, fit in fit_results.items():
+        s = extract_summary(fit)
+        rows.append({
+            "Model":          name,
+            "BIC":            s.get("bic", float("nan")),
+            "AIC":            s.get("aic", float("nan")),
+            "Log-Likelihood": s.get("loglik", float("nan")),
+            "Parameters":     s.get("num_parm", float("nan")),
+        })
+    df = _pd.DataFrame(rows).sort_values("BIC")
+    df.index = range(1, len(df) + 1)
+    df.index.name = "Rank"
+    return df

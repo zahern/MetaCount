@@ -9,6 +9,24 @@
 
 This cookbook now uses the bundled Example 16-3 data from the linked CSV source and keeps the original source column names.
 
+## General-Audience CMF vs Traditional Walkthrough
+
+For presentations and stakeholder communication, use the simplified comparison assets:
+
+- Canonical notebook (no latent class, no zero-inflation):
+    [cmf_vs_count_comparison.ipynb](cmf_vs_count_comparison.ipynb)
+- Canonical markdown slides:
+    [cmf_vs_count_comparison_slides.md](cmf_vs_count_comparison_slides.md)
+
+One-command PDF export from markdown slides:
+
+- Marp CLI:
+    `npx @marp-team/marp-cli cmf_vs_count_comparison_slides.md --pdf --allow-local-files`
+- Quarto CLI:
+    `quarto render cmf_vs_count_comparison_slides.md --to beamer --output cmf_vs_count_comparison_slides.pdf`
+
+This version is intentionally scoped to baseline and random-parameter models so non-technical audiences can follow the modeling process end-to-end.
+
 ## 1. Install
 
 ```bash

@@ -24,9 +24,9 @@
 #
 # Optimizer:
 #   scipy.optimize.minimize (L-BFGS-B) receives the JAX-computed gradient
-#   directly via jac=True.  No jaxopt dependency required.
+#   directly via jac=True.
 #
-# GA gene layout  (total = 2*(k_base + k_loc) + 2):
+# Search gene layout  (total = 2*(k_base + k_loc) + 2):
 #   [0 .. k_base-1]              inclusion flags  — baseline vars
 #   [k_base .. k_base+k_loc-1]   inclusion flags  — local vars
 #   [k_base+k_loc]               use_halton  (0=random, 1=Halton)
@@ -45,7 +45,10 @@ from functools import partial
 from scipy.optimize import minimize
 from scipy.stats import norm
 from scipy.stats import qmc
-import pygad
+try:
+    from .Solvers_METAJAX import MultiStartSA
+except ImportError:
+    from Solvers_METAJAX import MultiStartSA
 
 import jax
 import jax.numpy as jnp
@@ -461,54 +464,118 @@ def _param_labels(selected_baseline, selected_local, rand_baseline, rand_local, 
 
 
 # ─────────────────────────────────────────────────────────────
-# GENETIC ALGORITHM
+# SOLVER-BASED SEARCH (MultiStartSA)
 # ─────────────────────────────────────────────────────────────
 
 def run_ga(data, baseline_vars, local_vars, R=200):
-    k_base    = len(baseline_vars)
-    k_loc     = len(local_vars)
-    offset_rf = k_base + k_loc + 2
+    k_base = len(baseline_vars)
+    k_loc = len(local_vars)
+    D = k_base + k_loc
+    offset_rf = D + 2
 
-    def fitness_func(ga_instance, solution, sol_idx):
-        use_halton = bool(solution[k_base + k_loc])
-        model      = "poisson" if int(solution[k_base + k_loc + 1]) == 0 else "nb"
+    class _CMFSearchEvaluator:
+        def __init__(self):
+            self.vars = [*baseline_vars, *local_vars]
+            self.allowed_roles = {v: [0, 1] for v in self.vars}
+            self.allowed_distributions = {v: ["normal"] for v in self.vars}
 
-        rand_baseline_all = [bool(solution[offset_rf + i])           for i in range(k_base)]
-        rand_local_all    = [bool(solution[offset_rf + k_base + i])  for i in range(k_loc)]
+        @staticmethod
+        def _to_binary(x):
+            return np.asarray(x, dtype=int) % 2
 
-        fitness = evaluate_model(
-            solution, data, baseline_vars, local_vars,
-            use_halton=use_halton, model=model,
-            rand_baseline_all=rand_baseline_all,
-            rand_local_all=rand_local_all,
-            R=R
-        )
-        return -fitness   # PyGAD maximises; we minimise BIC+penalty
+        def decode(self, decision):
+            # Solver dimension is 2*D+1: [include(D), random(D), model_bit]
+            dec = self._to_binary(decision)
+            include = dec[:D]
+            random_flags = dec[D:2 * D]
+            model_bit = dec[2 * D]
 
-    n_genes    = 2 * (k_base + k_loc) + 2
-    gene_space = [[0, 1]] * n_genes
+            full = np.zeros(2 * D + 2, dtype=int)
+            full[:D] = include
+            full[D] = 1  # keep Halton enabled in solver path
+            full[D + 1] = model_bit
+            full[offset_rf:offset_rf + D] = random_flags
+            return full
 
-    ga = pygad.GA(
-        num_generations        = 50,
-        sol_per_pop            = 10,
-        num_parents_mating     = 2,
-        num_genes              = n_genes,
-        gene_space             = gene_space,
-        gene_type              = int,
-        fitness_func           = fitness_func,
-        mutation_percent_genes = 20,
-        crossover_type         = "uniform"
+        def build_spec(self, decision):
+            full = self.decode(decision)
+            model = "poisson" if int(full[D + 1]) == 0 else "nb"
+
+            baseline_terms = []
+            local_terms = []
+
+            for idx, var in enumerate(baseline_vars):
+                if int(full[idx]) == 1:
+                    role = "R" if int(full[offset_rf + idx]) == 1 else "F"
+                    baseline_terms.append((var, role))
+
+            for idx, var in enumerate(local_vars):
+                full_idx = k_base + idx
+                if int(full[full_idx]) == 1:
+                    role = "R" if int(full[offset_rf + full_idx]) == 1 else "F"
+                    local_terms.append((var, role))
+
+            return {
+                "baseline_terms": tuple(sorted(baseline_terms)),
+                "local_terms": tuple(sorted(local_terms)),
+                "model": model,
+            }
+
+        @staticmethod
+        def structural_signature(spec_dict):
+            if spec_dict is None:
+                return None
+            return (
+                spec_dict["baseline_terms"],
+                spec_dict["local_terms"],
+                spec_dict["model"],
+            )
+
+        def fitness(self, decision):
+            full = self.decode(decision)
+            model = "poisson" if int(full[D + 1]) == 0 else "nb"
+            rand_baseline_all = [bool(full[offset_rf + i]) for i in range(k_base)]
+            rand_local_all = [bool(full[offset_rf + k_base + i]) for i in range(k_loc)]
+            return evaluate_model(
+                full,
+                data,
+                baseline_vars,
+                local_vars,
+                use_halton=True,
+                model=model,
+                rand_baseline_all=rand_baseline_all,
+                rand_local_all=rand_local_all,
+                R=R,
+            )
+
+    evaluator = _CMFSearchEvaluator()
+    dim = 2 * D + 1
+    solver = MultiStartSA(
+        evaluator=evaluator,
+        dimension=dim,
+        n_starts=1,
+        max_iter=600,
+        mutation_rate=0.3,
+        step_size=1,
+        alpha=0.995,
+        min_changes=1,
+        max_changes=3,
     )
+    solutions, scores = solver.optimize()
+    if len(scores) == 0:
+        raise RuntimeError("CMF solver returned no candidate solutions.")
 
-    ga.run()
-    solution, fitness, _ = ga.best_solution()
+    best_idx = int(np.argmin(scores))
+    best_decision = solutions[best_idx]
+    fitness = float(scores[best_idx])
 
-    baseline_mask     = solution[:k_base].astype(bool)
-    local_mask        = solution[k_base:k_base+k_loc].astype(bool)
-    use_halton        = bool(solution[k_base + k_loc])
-    model             = "poisson" if int(solution[k_base + k_loc + 1]) == 0 else "nb"
-    rand_baseline_all = [bool(solution[offset_rf + i])           for i in range(k_base)]
-    rand_local_all    = [bool(solution[offset_rf + k_base + i])  for i in range(k_loc)]
+    solution = evaluator.decode(best_decision)
+    baseline_mask = solution[:k_base].astype(bool)
+    local_mask = solution[k_base:k_base + k_loc].astype(bool)
+    use_halton = True
+    model = "poisson" if int(solution[k_base + k_loc + 1]) == 0 else "nb"
+    rand_baseline_all = [bool(solution[offset_rf + i]) for i in range(k_base)]
+    rand_local_all = [bool(solution[offset_rf + k_base + i]) for i in range(k_loc)]
 
     selected_baseline = [v for v, m in zip(baseline_vars, baseline_mask) if m]
     selected_local    = [v for v, m in zip(local_vars,    local_mask)    if m]

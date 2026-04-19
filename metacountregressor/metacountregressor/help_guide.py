@@ -241,6 +241,59 @@ See also: get_help("crash_frequency"), get_help("latent_class")
 """
 
 
+@_topic("metaheuristics")
+def _metaheuristics_topic() -> str:
+    return """
++======================================================================+
+|  METAHEURISTICS: SA, DE, HS                                          |
++======================================================================+
+
+The search engine supports three main algorithms:
+
+  "sa"  Simulated Annealing      (single-objective; robust default)
+  "de"  Differential Evolution   (multi-objective / Pareto-style)
+  "hs"  Harmony Search           (multi-objective / Pareto-style)
+
+Quick start (single-objective BIC)
+----------------------------------
+  result = builder.run(
+      evaluator=evaluator,
+      algo="sa",
+      max_iter=1500,
+      seed=42,
+      mutation_rate=0.3,
+      step_size=1,
+      min_changes=1,
+      max_changes=3,
+      alpha=0.995,
+  )
+
+Common tuning knobs
+-------------------
+  max_iter      Total evaluations / generations
+  n_starts      SA restarts (higher = more global exploration)
+  mutation_rate Chance of modifying each decision element
+  step_size     Size of local neighborhood move
+  alpha         SA cooling parameter (closer to 1 = slower cooling)
+  seed          Reproducibility
+
+What the result dict contains
+-----------------------------
+  result["best_solution"]   Best decision vector
+  result["best_score"]      Best objective value (typically BIC)
+  result["scores"]          Objective values over sampled candidates
+  result["solutions"]       Candidate decision vectors evaluated
+
+Compatibility note
+------------------
+  Older examples may use keys "best_fitness", "best_decision", or
+  "history". Current API uses "best_score", "best_solution", and
+  "scores".
+
+See also: get_help("variables"), get_help("constraints")
+"""
+
+
 @_topic("crash_frequency")
 def _crash_frequency_topic() -> str:
     return """
@@ -571,6 +624,7 @@ _INDEX = """
 |    "data"             Loading data, required columns, offsets        |
 |    "variables"        Variable selection and role codes (0-8)        |
 |    "constraints"      ModelConstraints API - intuitive restrictions  |
+|    "metaheuristics"   SA/DE/HS algorithms and tuning                |
 |    "crash_frequency"  End-to-end crash frequency model search        |
 |    "latent_class"     LC search, membership vars, FC validation      |
 |    "cmf"              CMF with AADT as main term                     |
@@ -588,6 +642,23 @@ _INDEX = """
 """
 
 
+_ALIASES: dict[str, str] = {
+  "count": "crash_frequency",
+  "nb": "crash_frequency",
+  "poisson": "crash_frequency",
+  "lc": "latent_class",
+  "latentclass": "latent_class",
+  "constraint": "constraints",
+  "role": "variables",
+  "roles": "variables",
+  "algo": "metaheuristics",
+  "algorithms": "metaheuristics",
+  "sa": "metaheuristics",
+  "de": "metaheuristics",
+  "hs": "metaheuristics",
+}
+
+
 def get_help(topic: str | None = None) -> None:
     """
     Print a structured usage guide for the metacountregressor package.
@@ -595,8 +666,8 @@ def get_help(topic: str | None = None) -> None:
     Parameters
     ----------
     topic : str, optional
-        One of: "data", "variables", "constraints", "crash_frequency",
-        "latent_class", "cmf", "linear".
+      One of: "data", "variables", "constraints", "metaheuristics",
+      "crash_frequency", "latent_class", "cmf", "linear".
         If *None* (default), prints the topic index.
 
     Examples
@@ -611,6 +682,7 @@ def get_help(topic: str | None = None) -> None:
         return
 
     key = topic.lower().strip().replace("-", "_").replace(" ", "_")
+    key = _ALIASES.get(key, key)
     text = _TOPICS.get(key)
     if text is None:
         available = ", ".join(f'"{k}"' for k in sorted(_TOPICS))

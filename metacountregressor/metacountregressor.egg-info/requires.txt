@@ -1,7 +1,6 @@
 jax>=0.4.1
 jaxlib>=0.4.1
 jaxopt>=0.6
-pygad>=3.0.0
 joblib>=1.2
 latextable>=0.2
 matplotlib>=3.5
