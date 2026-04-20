@@ -353,6 +353,42 @@ class CMFFamilySearchProblem:
             return output
 
         if algo in {"sa", "de", "hs", "hc"}:
+            # Prefer the hierarchical JAX CMF path (single-class by default)
+            # whenever id_col is available. The legacy CMF objective remains
+            # available via legacy_cmf_objective=True for backward compatibility.
+            legacy_cmf_objective = bool(kwargs.pop("legacy_cmf_objective", False))
+            if self.id_col is not None and not legacy_cmf_objective:
+                max_iter = kwargs.pop("max_iter", 3000)
+                seed = kwargs.pop("seed", 0)
+
+                general_builder, evaluator, metadata = self.builder.build_jax_count_evaluator(
+                    id_col=self.id_col,
+                    offset_col=self.offset_col,
+                    group_id_col=self.group_id_col,
+                    variables=kwargs.pop("variables", None),
+                    fixed_override=kwargs.pop("fixed_override", None),
+                    membership_override=kwargs.pop("membership_override", None),
+                    exclude=kwargs.pop("exclude", None),
+                    mode=kwargs.pop("mode", "single"),
+                    max_latent_classes=int(kwargs.pop("max_latent_classes", 1)),
+                    R=R,
+                    default_roles=kwargs.pop("default_roles", None),
+                    force_aadt_term=bool(kwargs.pop("force_aadt_term", True)),
+                    constraints=kwargs.pop("constraints", None),
+                )
+
+                result = general_builder.run(
+                    evaluator=evaluator,
+                    algo=algo,
+                    max_iter=max_iter,
+                    seed=seed,
+                    **kwargs,
+                )
+                result["family"] = "cmf"
+                result["driver"] = "jax_hierarchical"
+                result["cmf_metadata"] = metadata
+                return result
+
             objective = CMFMetaheuristicObjective(
                 df=self.builder.df.rename(columns={self.builder.y_col: "FREQ"})
                 if self.builder.y_col != "FREQ"

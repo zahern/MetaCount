@@ -1,0 +1,43 @@
+======================================================
+EXPERIMENT SUMMARY
+======================================================
+Algorithm: sa
+Seed: 8
+Config ID: 0
+Timestamp: 20260420_112019
+======================================================
+
+
+================ BEST MODEL STRUCTURE ================
+
+URB          → Excluded               | Dist: normal
+ACCESS       → Random Correlated      | Dist: normal
+GRADEBR      → Random Independent     | Dist: normal
+CURVES       → Random Independent     | Dist: normal
+__cmf_log_aadt → Fixed                  | Dist: normal
+__cmf_local__CURVES → Random Independent     | Dist: normal
+__cmf_local__WIDTH → Excluded               | Dist: normal
+
+======================================================
+
+
+================ MODEL SUMMARY ================
+
+                Parameter  Estimate  Std.Err    z-value      p-value
+            __INTERCEPT__  3.646339 0.590418   6.175864 6.580279e-10
+           __cmf_log_aadt  0.097701 0.060301   1.620224 1.051842e-01
+            mean(GRADEBR)  0.015682 0.008417   1.863223 6.243096e-02
+             mean(CURVES)  1.452932 0.135476  10.724656 0.000000e+00
+mean(__cmf_local__CURVES) -0.150423 0.013839 -10.869353 0.000000e+00
+             mean(ACCESS) -0.255396 0.084902  -3.008141 2.628513e-03
+              sd(GRADEBR)  0.000110 0.000684   0.161055 8.720500e-01
+               sd(CURVES)  0.026664 0.006991   3.813938 1.367696e-04
+  sd(__cmf_local__CURVES)  0.009604 0.000732  13.117098 0.000000e+00
+               sd(ACCESS)  0.418129 0.017402  24.027488 0.000000e+00
+
+------------------------------------------------
+Log-Likelihood: -964.1821
+AIC: 1948.3642
+BIC: 1984.5320
+================================================
+

@@ -62,6 +62,7 @@ __pycache__/
 *.synctex.gz
 *.run.xml
 *.tex
+*.png
 
 
 # Ignore specific auto-generated files

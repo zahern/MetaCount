@@ -61,6 +61,7 @@ import jax.numpy as jnp
 from dataclasses import replace
 from functools import partial
 import io
+import warnings
 from contextlib import redirect_stdout
 from jaxopt import LBFGS
 from typing import Optional, Dict, List, Union, Any
@@ -77,6 +78,7 @@ try:
     from .main_hpc import (
         StructureEvaluator,
         CountModel,
+        build_base_index,
         build_datasets,
         generate_master_halton,
         fit_em,
@@ -109,6 +111,7 @@ except ImportError:
     from main_hpc import (
         StructureEvaluator,
         CountModel,
+        build_base_index,
         build_datasets,
         generate_master_halton,
         fit_em,
@@ -840,6 +843,7 @@ class ExperimentBuilder:
         df: Optional[pd.DataFrame] = None,
         R: int = 200,
         print_report: bool = False,
+        _lc_fallback_applied: bool = False,
     ) -> Dict[str, Any]:
         df_fit = self.df if df is None else df
         data, spec = build_model_from_manual_spec(
@@ -851,8 +855,149 @@ class ExperimentBuilder:
             R=R,
         )
         spec = replace(spec, model=model)
-        fitted = CountModel(spec, data)
-        result = fitted.fit()
+
+        # Harden latent-class estimation with warm start + EM + polish retries.
+        if spec.latent_classes > 1:
+            C = int(spec.latent_classes)
+            K_mem = int(spec.K_membership)
+            spec_1 = replace(spec, latent_classes=1)
+
+            has_random_structure = any([
+                bool(manual_spec.get("rdm_terms")),
+                bool(manual_spec.get("rdm_cor_terms")),
+                bool(manual_spec.get("grouped_terms")),
+                bool(manual_spec.get("hetro_in_means")),
+            ])
+
+            model_1 = CountModel(spec_1, data)
+            try:
+                result_1 = model_1.fit(use_prefit=True)
+            except Exception as exc:
+                if (not _lc_fallback_applied) and has_random_structure:
+                    fallback_spec = dict(manual_spec)
+                    fallback_spec["rdm_terms"] = []
+                    fallback_spec["rdm_cor_terms"] = []
+                    fallback_spec["grouped_terms"] = []
+                    fallback_spec["hetro_in_means"] = []
+                    warnings.warn(
+                        "Latent-class warm-start failed on random-effect structure; "
+                        "retrying with fixed-only latent-class fallback.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    return self.fit_manual_model(
+                        manual_spec=fallback_spec,
+                        model=model,
+                        df=df,
+                        R=R,
+                        print_report=print_report,
+                        _lc_fallback_applied=True,
+                    )
+                raise
+
+            theta_1 = np.asarray(result_1.params)
+            K_base = build_param_index(spec_1)["total_params"]
+
+            spec_c = replace(spec, latent_classes=C)
+
+            best_result = None
+            best_value = np.inf
+            last_error: Optional[Exception] = None
+
+            retry_configs = [
+                (0.05, 0),
+                (0.02, 1),
+                (0.01, 2),
+                (0.00, 3),
+            ]
+
+            for noise_scale, seed in retry_configs:
+                try:
+                    rng = np.random.default_rng(seed)
+                    if noise_scale > 0.0:
+                        theta_init = np.concatenate([
+                            theta_1 + rng.normal(0.0, noise_scale, K_base)
+                            for _ in range(C)
+                        ])
+                    else:
+                        theta_init = np.concatenate([theta_1.copy() for _ in range(C)])
+
+                    gamma_init = np.zeros((C - 1) * (K_mem + 1), dtype=float)
+                    init_params = np.concatenate([theta_init, gamma_init])
+
+                    try:
+                        params_em = fit_em(
+                            init_params=init_params,
+                            data=data,
+                            spec=spec_c,
+                            max_iter=40,
+                            tol=1e-4,
+                            verbose=False,
+                        )
+                    except Exception:
+                        params_em = init_params
+
+                    polish = LBFGS(
+                        fun=lambda p: mixed_model_loglik(p, data, spec_c),
+                        maxiter=800,
+                    )
+                    candidate = polish.run(jnp.array(params_em))
+
+                    params_np = np.asarray(candidate.params)
+                    value = float(mixed_model_loglik(jnp.array(params_np), data, spec_c))
+
+                    if not np.all(np.isfinite(params_np)):
+                        continue
+                    if not np.isfinite(value):
+                        continue
+
+                    if value < best_value:
+                        best_value = value
+                        best_result = candidate
+
+                except Exception as exc:
+                    last_error = exc
+
+            if best_result is None:
+                if not _lc_fallback_applied:
+                    if has_random_structure:
+                        fallback_spec = dict(manual_spec)
+                        fallback_spec["rdm_terms"] = []
+                        fallback_spec["rdm_cor_terms"] = []
+                        fallback_spec["grouped_terms"] = []
+                        fallback_spec["hetro_in_means"] = []
+                        warnings.warn(
+                            "Latent-class manual fit failed on random-effect structure; "
+                            "retrying with fixed-only latent-class fallback.",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                        return self.fit_manual_model(
+                            manual_spec=fallback_spec,
+                            model=model,
+                            df=df,
+                            R=R,
+                            print_report=print_report,
+                            _lc_fallback_applied=True,
+                        )
+
+                if last_error is not None:
+                    raise RuntimeError(
+                        "Latent-class manual fit failed after robust retries. "
+                        "Try simpler random-effects structure or fewer latent classes."
+                    ) from last_error
+                raise RuntimeError(
+                    "Latent-class manual fit failed after robust retries with non-finite objective/parameters."
+                )
+
+            result = best_result
+            fitted = CountModel(spec_c, data)
+            fitted.params = np.asarray(result.params)
+            spec = spec_c
+        else:
+            fitted = CountModel(spec, data)
+            result = fitted.fit(use_prefit=True)
+
         objective = partial(mixed_model_loglik, data=data, spec=spec)
         param_index = build_param_index(spec)
 
@@ -954,84 +1099,109 @@ class ExperimentBuilder:
         spec = fit_result["spec"]
         result = fit_result["result"]
         param_index = fit_result["param_index"]
-        data = fit_result["data"]
-
         params = np.asarray(result.params)
 
         # Build coefficient table with fixed, random, and dispersion parameters
         coef_rows = []
 
-        # ── Fixed coefficients ─────────────────────────────────────
-        if spec.Kf > 0:
-            fixed_names = list(spec.fixed_names)
-            fixed_start, fixed_end = param_index["fixed"]
-            for name, value in zip(fixed_names, params[fixed_start:fixed_end]):
-                coef_rows.append({"Parameter": name, "Type": "Fixed", "Estimate": value})
+        def _add_rows(index_map: Dict[str, Any], local_params: np.ndarray, class_label: Optional[str] = None) -> None:
+            label_suffix = f" [{class_label}]" if class_label else ""
 
-        # ── Random independent (means) ─────────────────────────────
-        if spec.Kr_ind > 0:
-            ind_names = list(spec.random_ind_names)
-            if "ind_mean" in param_index:
-                mean_start, mean_end = param_index["ind_mean"]
-                for name, value in zip(ind_names, params[mean_start:mean_end]):
+            # ── Fixed coefficients ─────────────────────────────────────
+            if spec.Kf > 0 and "fixed" in index_map:
+                fixed_names = list(spec.fixed_names)
+                fixed_start, fixed_end = index_map["fixed"]
+                for name, value in zip(fixed_names, local_params[fixed_start:fixed_end]):
                     coef_rows.append({
-                        "Parameter": f"{name} (ind. mean)",
-                        "Type": "Random-Ind",
-                        "Estimate": value
+                        "Parameter": f"{name}{label_suffix}",
+                        "Type": "Fixed" if class_label is None else f"Fixed ({class_label})",
+                        "Estimate": value,
                     })
 
-            # Standard deviations
-            if "ind_sd" in param_index:
-                sd_start, sd_end = param_index["ind_sd"]
-                for name, value in zip(ind_names, params[sd_start:sd_end]):
-                    coef_rows.append({
-                        "Parameter": f"{name} (ind. SD)",
-                        "Type": "Random-Ind",
-                        "Estimate": value
-                    })
+            # ── Random independent (means) ─────────────────────────────
+            if spec.Kr_ind > 0:
+                ind_names = list(spec.random_ind_names)
+                if "ind_mean" in index_map:
+                    mean_start, mean_end = index_map["ind_mean"]
+                    for name, value in zip(ind_names, local_params[mean_start:mean_end]):
+                        coef_rows.append({
+                            "Parameter": f"{name} (ind. mean){label_suffix}",
+                            "Type": "Random-Ind" if class_label is None else f"Random-Ind ({class_label})",
+                            "Estimate": value,
+                        })
 
-        # ── Random correlated (means) ──────────────────────────────
-        if spec.Kr_cor > 0:
-            cor_names = list(spec.random_cor_names)
-            if "cor_mean" in param_index:
-                mean_start, mean_end = param_index["cor_mean"]
-                for name, value in zip(cor_names, params[mean_start:mean_end]):
-                    coef_rows.append({
-                        "Parameter": f"{name} (cor. mean)",
-                        "Type": "Random-Cor",
-                        "Estimate": value
-                    })
+                if "ind_sd" in index_map:
+                    sd_start, sd_end = index_map["ind_sd"]
+                    for name, value in zip(ind_names, local_params[sd_start:sd_end]):
+                        coef_rows.append({
+                            "Parameter": f"{name} (ind. SD){label_suffix}",
+                            "Type": "Random-Ind" if class_label is None else f"Random-Ind ({class_label})",
+                            "Estimate": value,
+                        })
 
-        # ── Grouped effects ────────────────────────────────────────
-        if spec.Kg > 0:
-            grouped_names = list(spec.grouped_names)
-            if "group_mean" in param_index:
-                mean_start, mean_end = param_index["group_mean"]
-                for name, value in zip(grouped_names, params[mean_start:mean_end]):
-                    coef_rows.append({
-                        "Parameter": f"{name} (group mean)",
-                        "Type": "Grouped",
-                        "Estimate": value
-                    })
+            # ── Random correlated (means) ──────────────────────────────
+            if spec.Kr_cor > 0:
+                cor_names = list(spec.random_cor_names)
+                if "cor_mean" in index_map:
+                    mean_start, mean_end = index_map["cor_mean"]
+                    for name, value in zip(cor_names, local_params[mean_start:mean_end]):
+                        coef_rows.append({
+                            "Parameter": f"{name} (cor. mean){label_suffix}",
+                            "Type": "Random-Cor" if class_label is None else f"Random-Cor ({class_label})",
+                            "Estimate": value,
+                        })
 
-            if "group_sd" in param_index:
-                sd_start, sd_end = param_index["group_sd"]
-                for name, value in zip(grouped_names, params[sd_start:sd_end]):
-                    coef_rows.append({
-                        "Parameter": f"{name} (group SD)",
-                        "Type": "Grouped",
-                        "Estimate": value
-                    })
+            # ── Grouped effects ────────────────────────────────────────
+            if spec.Kg > 0:
+                grouped_names = list(spec.grouped_names)
+                if "group_mean" in index_map:
+                    mean_start, mean_end = index_map["group_mean"]
+                    for name, value in zip(grouped_names, local_params[mean_start:mean_end]):
+                        coef_rows.append({
+                            "Parameter": f"{name} (group mean){label_suffix}",
+                            "Type": "Grouped" if class_label is None else f"Grouped ({class_label})",
+                            "Estimate": value,
+                        })
 
-        # ── Dispersion parameter (for negative binomial) ───────────
-        if spec.model == "nb":
-            if "dispersion" in param_index:
-                disp_idx = param_index["dispersion"]
+                if "group_sd" in index_map:
+                    sd_start, sd_end = index_map["group_sd"]
+                    for name, value in zip(grouped_names, local_params[sd_start:sd_end]):
+                        coef_rows.append({
+                            "Parameter": f"{name} (group SD){label_suffix}",
+                            "Type": "Grouped" if class_label is None else f"Grouped ({class_label})",
+                            "Estimate": value,
+                        })
+
+            # ── Dispersion parameter (for negative binomial) ───────────
+            if spec.model == "nb" and "dispersion" in index_map:
+                disp_idx = index_map["dispersion"]
                 coef_rows.append({
-                    "Parameter": "Dispersion",
-                    "Type": "Dispersion",
-                    "Estimate": params[disp_idx]
+                    "Parameter": f"Dispersion{label_suffix}",
+                    "Type": "Dispersion" if class_label is None else f"Dispersion ({class_label})",
+                    "Estimate": local_params[disp_idx],
                 })
+
+        if spec.latent_classes > 1 and "class_params" in param_index:
+            base_spec = replace(spec, latent_classes=1)
+            base_index = build_base_index(base_spec)
+            K_base = param_index.get("K_base", base_index.get("total_params"))
+            C = int(spec.latent_classes)
+
+            for c in range(C):
+                class_slice = params[c * K_base:(c + 1) * K_base]
+                _add_rows(base_index, class_slice, class_label=f"Class {c + 1}")
+
+            class_params_end = param_index["class_params"][1]
+            logits_tail = params[class_params_end:]
+            if logits_tail.size > 0:
+                for idx, value in enumerate(logits_tail, start=1):
+                    coef_rows.append({
+                        "Parameter": f"Class logit gamma {idx}",
+                        "Type": "Class-Logits",
+                        "Estimate": value,
+                    })
+        else:
+            _add_rows(param_index, params)
 
         # Build DataFrame and print
         coef_df = pd.DataFrame(coef_rows)
@@ -1042,10 +1212,21 @@ class ExperimentBuilder:
 
         if len(coef_df) > 0:
             # Group by type for better readability
-            for type_name in ["Fixed", "Random-Ind", "Random-Cor", "Grouped", "Dispersion"]:
+            for type_name in ["Fixed", "Random-Ind", "Random-Cor", "Grouped", "Dispersion", "Class-Logits"]:
                 subset = coef_df[coef_df["Type"] == type_name]
                 if len(subset) > 0:
                     print(f"  {type_name.upper()} PARAMETERS:")
+                    print(f"  {'-' * 76}")
+                    for _, row in subset.iterrows():
+                        print(f"    {row['Parameter']:30s} = {row['Estimate']:+.6f}")
+                    print()
+
+            # Print latent-class blocks when present.
+            class_types = [t for t in coef_df["Type"].unique() if "Class" in str(t) and t != "Class-Logits"]
+            for type_name in class_types:
+                subset = coef_df[coef_df["Type"] == type_name]
+                if len(subset) > 0:
+                    print(f"  {str(type_name).upper()} PARAMETERS:")
                     print(f"  {'-' * 76}")
                     for _, row in subset.iterrows():
                         print(f"    {row['Parameter']:30s} = {row['Estimate']:+.6f}")
@@ -1474,6 +1655,7 @@ class ExperimentBuilder:
 
         if algo in ("sa", "hc"):
             defaults = dict(
+                max_iter=max_iter,
                 mutation_rate=0.3, step_size=1,
                 min_changes=1, max_changes=3,
                 n_starts=1, alpha=0.995,

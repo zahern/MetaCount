@@ -7,7 +7,7 @@
 - duration models
 - linear models
 
-This cookbook now uses the bundled Example 16-3 data from the linked CSV source and keeps the original source column names.
+This cookbook uses the bundled Example 16-3 data and preserves the original source column names.
 
 ## General-Audience CMF vs Traditional Walkthrough
 
@@ -36,8 +36,12 @@ python -m pip install jax jaxlib jaxopt
 
 Quick import check:
 
-```bash
-python -c "from metacountregressor import __version__, load_example16_3_raw_data; print(__version__, load_example16_3_raw_data().shape)"
+```python
+import metacountregressor
+from metacountregressor import load_example16_3_raw_data
+
+print(metacountregressor.__version__)
+print(load_example16_3_raw_data().shape)
 ```
 
 ## 2. Example Data In The Package
@@ -217,7 +221,7 @@ Random-parameter distributions:
 
 ## 6. Count Models
 
-### 7.1 Count search
+### Count Search
 
 ```python
 evaluator = builder.build_count_evaluator(
@@ -247,7 +251,7 @@ result = builder.run(
 )
 ```
 
-### 7.2 Manual count model
+### Manual Count Model
 
 ```python
 manual_spec = builder.make_manual_spec(
@@ -268,6 +272,66 @@ fit = builder.fit_manual_model(
 )
 ```
 
+### Export Fitted Output For Notebook And Marp Slides
+
+The cleanest export path is:
+
+- show the fitted output directly in the notebook as DataFrames
+- write the same DataFrames to `.md` and `.html`
+- generate a Marp slide deck from Python with the markdown table embedded inline
+
+```python
+from pathlib import Path
+
+coef_df = builder.print_coefficients(fit).copy()
+coef_df["Estimate"] = coef_df["Estimate"].round(4)
+
+fit_overview = pd.DataFrame(
+    [
+        {"Metric": "Search best BIC", "Value": round(float(result.best_score), 3)},
+        {"Metric": "Refit model", "Value": fit["spec"].model.upper()},
+        {"Metric": "Rows used", "Value": len(df)},
+        {"Metric": "Parameter count", "Value": len(fit["result"].params)},
+    ]
+)
+
+slide_dir = Path("results/slide_assets")
+slide_dir.mkdir(parents=True, exist_ok=True)
+
+overview_md = fit_overview.to_markdown(index=False)
+coef_md = coef_df.to_markdown(index=False)
+
+(slide_dir / "fit_overview.md").write_text(overview_md, encoding="utf-8")
+(slide_dir / "fit_coefficients.md").write_text(coef_md, encoding="utf-8")
+(slide_dir / "fit_coefficients.html").write_text(
+    coef_df.to_html(index=False),
+    encoding="utf-8",
+)
+
+marp_deck = f"""---
+marp: true
+title: Fitted Model Output
+paginate: true
+---
+
+# Fitted Model Output
+
+## Fit Overview
+
+{overview_md}
+
+---
+
+## Coefficients
+
+{coef_md}
+"""
+
+(slide_dir / "fit_output_slides.md").write_text(marp_deck.strip(), encoding="utf-8")
+```
+
+The quickstart and batch tutorial notebooks now use this pattern.
+
 ## 7. CMF Models
 
 CMF models use:
@@ -278,7 +342,7 @@ log(mu) = baseline block + local block * log(AADT)
 
 The default CMF route transforms the CMF design and then runs on the main JAX hierarchical architecture.
 
-### 8.1 CMF search
+### CMF Search
 
 ```python
 cmf_search = builder.build_evaluator(
@@ -301,7 +365,7 @@ cmf_result = builder.run_search(
 )
 ```
 
-### 8.2 Manual CMF model
+### Manual CMF Model
 
 ```python
 from metacountregressor import CMFExperimentBuilder
@@ -336,7 +400,7 @@ cmf_fit = cmf_builder.fit_manual_cmf_model(
 )
 ```
 
-### 8.3 Legacy GA-CMF route
+### Legacy GA-CMF Route
 
 ```python
 legacy_cmf = builder.build_evaluator(
@@ -367,7 +431,7 @@ duration_builder = ExperimentBuilder(
 )
 ```
 
-### 9.1 Duration search
+### Duration Search (Example Duration Data)
 
 ```python
 duration_search = duration_builder.build_evaluator(
@@ -381,7 +445,7 @@ duration_search = duration_builder.build_evaluator(
 )
 ```
 
-### 9.2 Manual duration model
+### Manual Duration Model
 
 ```python
 duration_spec = duration_builder.make_manual_spec(
@@ -419,7 +483,7 @@ linear_builder = ExperimentBuilder(
 )
 ```
 
-### 10.1 Linear search
+### Linear Search
 
 ```python
 linear_search = linear_builder.build_evaluator(
@@ -432,7 +496,7 @@ linear_search = linear_builder.build_evaluator(
 )
 ```
 
-### 10.2 Manual linear model
+### Manual Linear Model
 
 ```python
 linear_spec = linear_builder.make_manual_spec(
@@ -483,7 +547,7 @@ Available columns include:
 - `PLATFORM_WIDTH`
 - `AT_PLATFORM`
 
-### 11.1 Linear mixed-effects style search
+### Linear Mixed-Effects Style Search
 
 ```python
 platform_linear_search = platform_builder.build_evaluator(
@@ -582,7 +646,7 @@ Available columns include:
 - `PLATFORM_WIDTH`
 - `APPROACH_VOLUME`
 
-### 12.1 Duration search
+### Duration Search
 
 ```python
 gap_duration_search = gap_builder.build_evaluator(
@@ -723,7 +787,7 @@ We keep:
 
 We do not place `FC` or `FC_ENCODED` in the outcome equation. Instead we let membership variables explain latent class probabilities.
 
-### 13.1 Fit a latent-class count model
+### Fit A Latent-Class Count Model
 
 ```python
 latent_spec = builder.make_manual_spec(
@@ -742,7 +806,7 @@ latent_fit = builder.fit_manual_model(
 )
 ```
 
-### 13.2 Compute latent-class probabilities and compare to the true FC grouping
+### Compute Latent-Class Probabilities And Compare To The True FC Grouping
 
 ```python
 class_probs = builder.compute_latent_class_probabilities(
@@ -760,7 +824,7 @@ Returned columns include:
 - `class_2_prob`
 - `FC_ENCODED`
 
-### 13.3 Compare predicted class with the encoded true class
+### Compare Predicted Class With The Encoded True Class
 
 ```python
 class_probs["predicted_class"] = (

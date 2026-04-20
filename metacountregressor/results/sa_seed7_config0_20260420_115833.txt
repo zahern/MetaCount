@@ -1,0 +1,43 @@
+======================================================
+EXPERIMENT SUMMARY
+======================================================
+Algorithm: sa
+Seed: 7
+Config ID: 0
+Timestamp: 20260420_115833
+======================================================
+
+
+================ BEST MODEL STRUCTURE ================
+
+URB          → Random Independent     | Dist: normal
+ACCESS       → Random Independent     | Dist: normal
+GRADEBR      → Random Independent     | Dist: normal
+CURVES       → Random Correlated      | Dist: normal
+LENGTH       → Excluded               | Dist: normal
+WIDTH        → Random Independent     | Dist: normal
+
+======================================================
+
+
+================ MODEL SUMMARY ================
+
+    Parameter  Estimate  Std.Err   z-value      p-value
+__INTERCEPT__  5.694819 0.207805 27.404655 0.000000e+00
+    mean(URB)  0.005241 0.081554  0.064259 9.487644e-01
+ mean(ACCESS) -0.262363 0.101962 -2.573152 1.007770e-02
+mean(GRADEBR) -0.008780 0.007101 -1.236486 2.162779e-01
+  mean(WIDTH) -0.016762 0.002092 -8.013609 1.110223e-15
+ mean(CURVES) -0.013522 0.012159 -1.112028 2.661261e-01
+      sd(URB)  1.256666 0.048770 25.767417 0.000000e+00
+   sd(ACCESS)  0.206637 0.018656 11.076094 0.000000e+00
+  sd(GRADEBR)  0.000038 0.000408  0.093195 9.257488e-01
+    sd(WIDTH)  0.002877      NaN       NaN          NaN
+   sd(CURVES)  0.020714 0.006189  3.346851 8.173516e-04
+
+------------------------------------------------
+Log-Likelihood: -947.1021
+AIC: 1916.2043
+BIC: 1955.9888
+================================================
+

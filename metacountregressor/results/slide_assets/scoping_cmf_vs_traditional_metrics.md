@@ -1,0 +1,8 @@
+| Stage | Family | Model | BIC | AIC | Log-Likelihood | Parameters | RMSE | MAE | Bias | R2 | Corr | Poisson Dev | Search Iterations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Manual fit | Traditional | Traditional baseline NB | 1925.5156349389833 | 1900.1982372553173 | -943.0991186276586 | 7.0 | 15.191798103161824 | 8.472775074786407 | 1.6073226543767867 | 0.49402532285355816 | 0.7561662118954349 | 2205.622024209303 | nan |
+| Manual fit | CMF | CMF baseline NB | 1928.4607855557178 | 1903.1433878720518 | -944.5716939360259 | 7.0 | 16.566000895261872 | 8.810043058172562 | 1.6227952627092714 | 0.39834742075612783 | 0.7165702152105278 | 2313.838416226848 | nan |
+| Manual fit | Traditional | Traditional random-parameter NB | 1931.2558945026274 | 1902.3217257212948 | -943.1608628606474 | 8.0 | 15.236126613899907 | 8.490834561043068 | 1.6197031144782228 | 0.49106822363913905 | 0.7558344006691472 | 2208.9142369199053 | nan |
+| Manual fit | CMF | CMF random-parameter NB | 1939.6943277508367 | 1907.1433878718376 | -944.5716939359188 | 9.0 | 16.566011604040593 | 8.81004401850847 | 1.6227990004856434 | 0.3983466429019601 | 0.7165701596872254 | 2313.83901065413 | nan |
+| Search (hierarchical micro-SA) | Traditional | Traditional search best (quick) | 1955.988766515855 | nan | nan | nan | nan | nan | nan | nan | nan | nan | 5.0 |
+| Search (hierarchical micro-SA) | CMF | CMF search best (quick) | 1967.9840576208653 | nan | nan | nan | nan | nan | nan | nan | nan | nan | 5.0 |
