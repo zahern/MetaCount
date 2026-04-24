@@ -101,6 +101,7 @@ try:
         mixed_model_loglik,
         print_summary,
         _seed_classes_from_clusters,
+        _tobit_ols_init,
     )
 except ImportError:
     from family_search import (
@@ -135,6 +136,7 @@ except ImportError:
         mixed_model_loglik,
         print_summary,
         _seed_classes_from_clusters,
+        _tobit_ols_init,
     )
 try:
     from .output_config import SearchOutputConfig, save_search_result
@@ -880,7 +882,20 @@ class ExperimentBuilder:
 
             model_1 = CountModel(spec_1, data)
             try:
-                result_1 = model_1.fit(use_prefit=True)
+                if model == "tobit":
+                    # Bypass Poisson-style prefit: use OLS starting values
+                    # and a direct LBFGS on the single-class Tobit likelihood.
+                    from dataclasses import replace as _replace
+                    from main_hpc_lc_patch import build_base_index as _bbase
+                    _K1 = _bbase(spec_1)["total_params"]
+                    _p0 = jnp.array(_tobit_ols_init(data, _K1))
+                    _sol = LBFGS(
+                        fun=lambda p: mixed_model_loglik(p, data, spec_1),
+                        maxiter=1000,
+                    ).run(_p0)
+                    result_1 = _sol
+                else:
+                    result_1 = model_1.fit(use_prefit=True)
             except Exception as exc:
                 if (not _lc_fallback_applied) and has_random_structure:
                     fallback_spec = dict(manual_spec)
@@ -1018,7 +1033,19 @@ class ExperimentBuilder:
             spec = spec_c
         else:
             fitted = CountModel(spec, data)
-            result = fitted.fit(use_prefit=True)
+            if model == "tobit":
+                # OLS warm-start + direct LBFGS — bypasses Poisson-style prefit.
+                from main_hpc_lc_patch import build_base_index as _bbase
+                _K = _bbase(spec)["total_params"]
+                _p0 = jnp.array(_tobit_ols_init(data, _K))
+                _sol = LBFGS(
+                    fun=lambda p: mixed_model_loglik(p, data, spec),
+                    maxiter=1500,
+                ).run(_p0)
+                result = _sol
+                fitted.params = np.asarray(_sol.params)
+            else:
+                result = fitted.fit(use_prefit=True)
 
         objective = partial(mixed_model_loglik, data=data, spec=spec)
         param_index = build_param_index(spec)

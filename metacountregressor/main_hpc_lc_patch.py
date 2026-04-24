@@ -129,6 +129,61 @@ jax.config.update("jax_enable_x64", True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 0.  Tobit OLS initialiser
+#     Computes OLS starting values from the non-censored observations.
+#     Used by fit_manual_model to bypass the Poisson-style prefit for
+#     Tobit models (which would give completely wrong starting values).
+# ═══════════════════════════════════════════════════════════════════════
+
+def _tobit_ols_init(data: dict, K_base: int) -> np.ndarray:
+    """
+    Return an initial parameter vector of length K_base for a Tobit model.
+
+    Strategy
+    --------
+    1. Average the fixed-effect design matrix Xf and outcomes y over
+       the panel dimension to get one row per individual.
+    2. Fit OLS on the non-censored rows (y > 0).
+    3. Estimate sigma from the OLS residuals.
+    4. Pack [beta_ols, sigma_raw] where sigma_raw = log(exp(sigma)-1)
+       (inverse of softplus so that softplus(sigma_raw) = sigma).
+    """
+    y_raw = np.array(data["y"])          # (N, P, 1) or (N, P)
+    Xf    = np.array(data["Xf"])         # (N, P, Kf)
+
+    if y_raw.ndim == 3:
+        y_flat = y_raw[:, :, 0].mean(axis=1)
+    else:
+        y_flat = y_raw.mean(axis=1)
+
+    X_flat = Xf.mean(axis=1)             # (N, Kf)
+    Kf     = X_flat.shape[1]
+
+    nz = y_flat > 0
+    if nz.sum() < Kf + 2:
+        nz = np.ones(len(y_flat), dtype=bool)
+
+    y_nz = y_flat[nz]
+    X_nz = X_flat[nz]
+
+    try:
+        beta_ols = np.linalg.lstsq(X_nz, y_nz, rcond=None)[0]
+    except Exception:
+        beta_ols = np.zeros(Kf)
+
+    resid     = y_nz - X_nz @ beta_ols
+    sigma_hat = max(float(resid.std()), 0.1)
+    # inverse-softplus so that softplus(sigma_raw) ≈ sigma_hat
+    sigma_raw = float(np.log(np.exp(sigma_hat) - 1.0 + 1e-8))
+
+    params = np.zeros(K_base)
+    params[:Kf]        = beta_ols
+    params[K_base - 1] = sigma_raw       # sigma is always the last param
+
+    return params
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 1.  EXTENDED ModelSpec
 #     Adds membership_names and K_membership.
 #     Replaces the dataclass in main_hpc.

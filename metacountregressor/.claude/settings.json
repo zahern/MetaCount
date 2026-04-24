@@ -5,7 +5,9 @@
       "Bash(python experiment_lc_model_comparison.py)",
       "Bash(python -W ignore -c ' *)",
       "Bash(python -c ' *)",
-      "Bash(python test_tobit_synthetic.py)"
+      "Bash(python test_tobit_synthetic.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main_hpc_lc_patch.py',encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('experiment_package.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python run_experiment.py --experiment both --synthetic --n_classes 2 --membership_vars z1,z2 --output_dir results/smoke_test2 --seed 42)"
     ]
   }
 }
