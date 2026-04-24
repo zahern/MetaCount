@@ -1,0 +1,4 @@
+- With the offset, the median-AADT +3-curves test moves traditional NB by +2.4% and hierarchical CMF by -8.4%.
+- Without the offset, the same +3-curves test moves traditional NB by +6.3% and hierarchical CMF by +22.9%.
+- So yes, the offset helps explain why the original +1 bars looked similar: exposure normalization damped the visual gap.
+- Fit also changes: with offset, BIC favors traditional (1925.52 vs 1931.82); without offset, BIC favors hierarchical CMF (1990.21 vs 2001.01).

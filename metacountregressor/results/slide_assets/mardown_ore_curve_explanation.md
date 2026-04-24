@@ -1,0 +1,5 @@
+- The curves look almost the same because both models imply nearly the same traffic elasticity for the representative segment in this plot.
+- Traditional effective AADT elasticity here is about 1.000.
+- Hierarchical CMF effective AADT elasticity here is about 1.002.
+- They also look close to linear because the offset already makes expected crashes roughly proportional to exposure, so when elasticity stays near 1 the curve is close to a straight line over this range.
+- The CMF advantage shows up more clearly in how feature changes are organized and interpreted than in this one representative AADT line.

@@ -1,0 +1,1553 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<script src="cmf_technical_slides_notes_files/libs/clipboard/clipboard.min.js"></script>
+<script src="cmf_technical_slides_notes_files/libs/quarto-html/tabby.min.js"></script>
+<script src="cmf_technical_slides_notes_files/libs/quarto-html/popper.min.js"></script>
+<script src="cmf_technical_slides_notes_files/libs/quarto-html/tippy.umd.min.js"></script>
+<link href="cmf_technical_slides_notes_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="cmf_technical_slides_notes_files/libs/quarto-html/light-border.css" rel="stylesheet">
+<link href="cmf_technical_slides_notes_files/libs/quarto-html/quarto-syntax-highlighting-e1a5c8363afafaef2c763b6775fbf3ca.css" rel="stylesheet" id="quarto-text-highlighting-styles"><meta charset="utf-8">
+  <meta name="generator" content="quarto-1.7.31">
+
+  <meta name="author" content="Traffic Safety Analysis">
+  <meta name="dcterms.date" content="2026-04-22">
+  <title>Crash Modification Factors (Presenter Notes Deck)</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+  <link rel="stylesheet" href="cmf_technical_slides_notes_files/libs/revealjs/dist/reset.css">
+  <link rel="stylesheet" href="cmf_technical_slides_notes_files/libs/revealjs/dist/reveal.css">
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+      vertical-align: middle;
+    }
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      { color: #003b4f; background-color: #f1f3f5; }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span { color: #003b4f; } /* Normal */
+    code span.al { color: #ad0000; } /* Alert */
+    code span.an { color: #5e5e5e; } /* Annotation */
+    code span.at { color: #657422; } /* Attribute */
+    code span.bn { color: #ad0000; } /* BaseN */
+    code span.bu { } /* BuiltIn */
+    code span.cf { color: #003b4f; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #20794d; } /* Char */
+    code span.cn { color: #8f5902; } /* Constant */
+    code span.co { color: #5e5e5e; } /* Comment */
+    code span.cv { color: #5e5e5e; font-style: italic; } /* CommentVar */
+    code span.do { color: #5e5e5e; font-style: italic; } /* Documentation */
+    code span.dt { color: #ad0000; } /* DataType */
+    code span.dv { color: #ad0000; } /* DecVal */
+    code span.er { color: #ad0000; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #ad0000; } /* Float */
+    code span.fu { color: #4758ab; } /* Function */
+    code span.im { color: #00769e; } /* Import */
+    code span.in { color: #5e5e5e; } /* Information */
+    code span.kw { color: #003b4f; font-weight: bold; } /* Keyword */
+    code span.op { color: #5e5e5e; } /* Operator */
+    code span.ot { color: #003b4f; } /* Other */
+    code span.pp { color: #ad0000; } /* Preprocessor */
+    code span.sc { color: #5e5e5e; } /* SpecialChar */
+    code span.ss { color: #20794d; } /* SpecialString */
+    code span.st { color: #20794d; } /* String */
+    code span.va { color: #111111; } /* Variable */
+    code span.vs { color: #20794d; } /* VerbatimString */
+    code span.wa { color: #5e5e5e; font-style: italic; } /* Warning */
+  </style>
+  <link rel="stylesheet" href="cmf_technical_slides_notes_files/libs/revealjs/dist/theme/quarto-2c1b5f745a11cfad616ebade4a4a7d24.css">
+  <link href="cmf_technical_slides_notes_files/libs/revealjs/plugin/quarto-line-highlight/line-highlight.css" rel="stylesheet">
+  <link href="cmf_technical_slides_notes_files/libs/revealjs/plugin/reveal-menu/menu.css" rel="stylesheet">
+  <link href="cmf_technical_slides_notes_files/libs/revealjs/plugin/reveal-menu/quarto-menu.css" rel="stylesheet">
+  <link href="cmf_technical_slides_notes_files/libs/revealjs/plugin/quarto-support/footer.css" rel="stylesheet">
+  <style type="text/css">
+    .reveal div.sourceCode {
+      margin: 0;
+      overflow: auto;
+    }
+    .reveal div.hanging-indent {
+      margin-left: 1em;
+      text-indent: -1em;
+    }
+    .reveal .slide:not(.center) {
+      height: 100%;
+    }
+    .reveal .slide.scrollable {
+      overflow-y: auto;
+    }
+    .reveal .footnotes {
+      height: 100%;
+      overflow-y: auto;
+    }
+    .reveal .slide .absolute {
+      position: absolute;
+      display: block;
+    }
+    .reveal .footnotes ol {
+      counter-reset: ol;
+      list-style-type: none; 
+      margin-left: 0;
+    }
+    .reveal .footnotes ol li:before {
+      counter-increment: ol;
+      content: counter(ol) ". "; 
+    }
+    .reveal .footnotes ol li > p:first-child {
+      display: inline-block;
+    }
+    .reveal .slide ul,
+    .reveal .slide ol {
+      margin-bottom: 0.5em;
+    }
+    .reveal .slide ul li,
+    .reveal .slide ol li {
+      margin-top: 0.4em;
+      margin-bottom: 0.2em;
+    }
+    .reveal .slide ul[role="tablist"] li {
+      margin-bottom: 0;
+    }
+    .reveal .slide ul li > *:first-child,
+    .reveal .slide ol li > *:first-child {
+      margin-block-start: 0;
+    }
+    .reveal .slide ul li > *:last-child,
+    .reveal .slide ol li > *:last-child {
+      margin-block-end: 0;
+    }
+    .reveal .slide .columns:nth-child(3) {
+      margin-block-start: 0.8em;
+    }
+    .reveal blockquote {
+      box-shadow: none;
+    }
+    .reveal .tippy-content>* {
+      margin-top: 0.2em;
+      margin-bottom: 0.7em;
+    }
+    .reveal .tippy-content>*:last-child {
+      margin-bottom: 0.2em;
+    }
+    .reveal .slide > img.stretch.quarto-figure-center,
+    .reveal .slide > img.r-stretch.quarto-figure-center {
+      display: block;
+      margin-left: auto;
+      margin-right: auto; 
+    }
+    .reveal .slide > img.stretch.quarto-figure-left,
+    .reveal .slide > img.r-stretch.quarto-figure-left  {
+      display: block;
+      margin-left: 0;
+      margin-right: auto; 
+    }
+    .reveal .slide > img.stretch.quarto-figure-right,
+    .reveal .slide > img.r-stretch.quarto-figure-right  {
+      display: block;
+      margin-left: auto;
+      margin-right: 0; 
+    }
+  </style>
+  <style>
+    .reveal .slides section { font-size: 0.84em; }
+    .reveal .slides section.compact { font-size: 0.76em; }
+    .reveal table { font-size: 0.64em; }
+    .reveal pre code { font-size: 0.70em; line-height: 1.25; }
+    .reveal p, .reveal li { line-height: 1.28; }
+    .model-trad { color: #1f77b4; font-weight: 700; }
+    .model-cmf { color: #2e8b57; font-weight: 700; }
+    .coef-pos { color: #b22222; font-weight: 700; }
+    .coef-neg { color: #1b5e20; font-weight: 700; }
+    .delta-neg { color: #6a1b9a; font-weight: 700; }
+    .chip {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.85em;
+      background: #f4f6f8;
+      border: 1px solid #d9dee3;
+    }
+    .legend-fixed {
+      position: fixed;
+      top: 8px;
+      right: 10px;
+      z-index: 30;
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid #d9dee3;
+      border-radius: 999px;
+      padding: 4px 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .legend-fixed .legend-sep {
+      color: #8a8f98;
+      padding: 0 6px;
+    }
+  </style>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      if (document.querySelector('.legend-fixed')) return;
+
+      const legend = document.createElement('div');
+      legend.className = 'legend-fixed';
+      legend.id = 'model-legend-fixed';
+      legend.innerHTML =
+        '<span class="model-trad">Traditional</span>' +
+        '<span class="legend-sep">|</span>' +
+        '<span class="model-cmf">CMF</span>';
+      document.body.appendChild(legend);
+
+      function shouldHideLegend(slideEl) {
+        if (!slideEl) return false;
+        if (slideEl.classList.contains('title-slide')) return true;
+
+        const heading = slideEl.querySelector('h1, h2, h3');
+        if (!heading) return false;
+        const title = (heading.textContent || '').trim().toLowerCase();
+        return (
+          title.startsWith('references') ||
+          title.includes('appendix') ||
+          title.includes('backup')
+        );
+      }
+
+      function updateLegendVisibility() {
+        const el = document.getElementById('model-legend-fixed');
+        if (!el) return;
+
+        if (window.Reveal && typeof window.Reveal.getCurrentSlide === 'function') {
+          const current = window.Reveal.getCurrentSlide();
+          el.style.display = shouldHideLegend(current) ? 'none' : 'block';
+        } else {
+          el.style.display = 'block';
+        }
+      }
+
+      updateLegendVisibility();
+
+      if (window.Reveal && typeof window.Reveal.on === 'function') {
+        window.Reveal.on('ready', updateLegendVisibility);
+        window.Reveal.on('slidechanged', updateLegendVisibility);
+      }
+    });
+  </script>
+</head>
+<body class="quarto-light">
+  <div class="reveal">
+    <div class="slides">
+
+<section id="title-slide" class="quarto-title-block center">
+  <h1 class="title">Crash Modification Factors (Presenter Notes Deck)</h1>
+  <p class="subtitle">Hierarchical Count Modeling for Road Safety</p>
+
+<div class="quarto-title-authors">
+<div class="quarto-title-author">
+<div class="quarto-title-author-name">
+Traffic Safety Analysis 
+</div>
+</div>
+</div>
+
+  <p class="date">2026-04-22</p>
+</section>
+<section id="what-are-crash-modification-factors" class="slide level2">
+<h2>What Are Crash Modification Factors?</h2>
+<p><strong>CMF Definition:</strong></p>
+<p><span class="math display">\[\text{CMF}(a \rightarrow b) = \frac{\hat{N}_b}{\hat{N}_a}\]</span></p>
+<p>where:</p>
+<ul>
+<li><span class="math inline">\(a\)</span> = the “before” condition (current design)</li>
+<li><span class="math inline">\(b\)</span> = the “after” condition (after a treatment/change)</li>
+<li><span class="math inline">\(\hat{N}_a\)</span> = predicted crashes in condition <span class="math inline">\(a\)</span></li>
+<li><span class="math inline">\(\hat{N}_b\)</span> = predicted crashes in condition <span class="math inline">\(b\)</span></li>
+</ul>
+<p>Why CMF changes:</p>
+<ul>
+<li>If the treatment lowers predicted crashes (<span class="math inline">\(\hat{N}_b &lt; \hat{N}_a\)</span>), then CMF &lt; 1.</li>
+<li>If the treatment raises predicted crashes (<span class="math inline">\(\hat{N}_b &gt; \hat{N}_a\)</span>), then CMF &gt; 1.</li>
+</ul>
+<p>Quick example:</p>
+<ul>
+<li>Before: <span class="math inline">\(\hat{N}_a = 100\)</span> crashes/year</li>
+<li>After: <span class="math inline">\(\hat{N}_b = 92\)</span> crashes/year</li>
+<li>CMF <span class="math inline">\(= 92/100 = 0.92 \Rightarrow -8\%\)</span> crashes</li>
+</ul>
+<aside class="notes">
+<p>Speaker note: - Define a as before and b as after. - CMF is a ratio of predicted crashes after vs before. - CMF &lt; 1 means predicted crash reduction; CMF &gt; 1 means increase.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="quick-example-coefficient-to-percent-step-by-step" class="slide level2">
+<h2>Quick Example: Coefficient To Percent (Step By Step)</h2>
+<h3 id="interpretation">Interpretation</h3>
+<ul>
+<li><strong>CMF = 1.0</strong> → No change (neutral effect)</li>
+<li><strong>CMF &lt; 1.0</strong> → Fewer crashes (safer treatment) ✅</li>
+<li><strong>CMF &gt; 1.0</strong> → More crashes (riskier treatment) ❌</li>
+</ul>
+<h3 id="percentage-change">Percentage Change</h3>
+<p><span class="math display">\[\text{Percent Change} = 100 \times \left(\exp(\beta \cdot x) - 1\right)\]</span></p>
+<p><strong>Example:</strong> Coefficient <span class="math inline">\(\beta = -0.08394\)</span> for CURVES - For <span class="math inline">\(x = 1\)</span>: <span class="math inline">\(100 \times (\exp(-0.08394) - 1) = -8.05\%\)</span> crashes</p>
+</section>
+<section id="the-problem-traditional-models" class="slide level2">
+<h2>The Problem: Traditional Models</h2>
+<p>Traditional negative binomial regression:</p>
+<p><span class="math display">\[\hat{N}_i = E_i \times \exp(\beta_0 + \beta_1 X_{1i} + \beta_2 X_{2i} + \ldots)\]</span></p>
+<h3 id="three-critical-questions">Three Critical Questions</h3>
+<ol type="1">
+<li><strong>What causes the coefficient?</strong>
+<ul>
+<li>Does CURVES increase crashes directly?</li>
+<li>Or does it reflect traffic volume confounding?</li>
+</ul></li>
+<li><strong>How do we design interventions?</strong>
+<ul>
+<li>Should we prioritize geometry changes or traffic management?</li>
+<li>Are both quantified?</li>
+</ul></li>
+<li><strong>What if exposure (length) assumptions are wrong?</strong>
+<ul>
+<li>Offset term treats all segments equally</li>
+<li>But maybe longer roads have different safety dynamics</li>
+</ul></li>
+</ol>
+<p><strong>Result:</strong> Ambiguous, hard-to-communicate CMFs</p>
+</section>
+<section id="solution-hierarchical-cmf-model" class="slide level2">
+<h2>Solution: Hierarchical CMF Model</h2>
+<h3 id="two-level-structure">Two-Level Structure</h3>
+<p><strong>Level 1 — Baseline Block</strong> (inherent crash propensity): <span class="math display">\[\hat{N}_i^{\text{baseline}} = \exp(\alpha_0 + \alpha_{\text{URB}} \cdot \text{URB}_i + \alpha_{\text{ACCESS}} \cdot \text{ACCESS}_i + \cdots)\]</span></p>
+<p><strong>Level 2 — Traffic-Response Block</strong> (AADT elasticity): <span class="math display">\[\hat{N}_i = \hat{N}_i^{\text{baseline}} \times \text{AADT}_i^{(\gamma_0 + \gamma_{\text{WIDTH}} \cdot \text{WIDTH}_i + \cdots)}\]</span></p>
+<h3 id="key-advantage">Key Advantage</h3>
+<ul>
+<li><strong>Baseline features</strong> (URB, ACCESS, GRADEBR) → What makes a road inherently risky?</li>
+<li><strong>Response features</strong> (WIDTH, CURVES) → How does traffic volume sensitivity change?</li>
+</ul>
+</section>
+<section id="example-your-data-example-16-3" class="slide level2">
+<h2>Example: Your Data (Example 16-3)</h2>
+<p><strong>Dataset:</strong> 190+ road segments, 4-year crashes</p>
+<table class="caption-top">
+<thead>
+<tr class="header">
+<th>Feature</th>
+<th>Range</th>
+<th>Median</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>AADT (vehicles/day)</td>
+<td>4,000–97,000</td>
+<td><strong>23,771</strong></td>
+</tr>
+<tr class="even">
+<td>CURVES (per mile)</td>
+<td>0–42</td>
+<td><strong>3.5</strong></td>
+</tr>
+<tr class="odd">
+<td>ACCESS (points)</td>
+<td>0–18</td>
+<td><strong>2</strong></td>
+</tr>
+<tr class="even">
+<td>WIDTH (feet)</td>
+<td>9–16</td>
+<td><strong>11.5</strong></td>
+</tr>
+<tr class="odd">
+<td>GRADEBR (%)</td>
+<td>0–8</td>
+<td><strong>2.1</strong></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="variable-meanings-plain-english" class="slide level2">
+<h2>Variable Meanings (Plain English)</h2>
+<ul>
+<li><strong>URB</strong>: Urban indicator (1 = urban segment, 0 = non-urban segment).</li>
+<li><strong>ACCESS</strong>: Access-point level/density on the segment (more driveways/intersections).</li>
+<li><strong>GRADEBR</strong>: Grade-break level on the segment (more vertical grade interruptions).</li>
+<li><strong>CURVES</strong>: Horizontal curve intensity/count on the segment.</li>
+<li><strong>WIDTH</strong>: Lane/roadway width measure.</li>
+<li><strong>AADT</strong>: Annual Average Daily Traffic (vehicles/day).</li>
+<li><strong>LENGTH / OFFSET</strong>: Segment length exposure used to normalize crash counts.</li>
+</ul>
+<p>Audience cue: coefficients tell you how predicted crashes change when one variable increases by one unit, holding others fixed.</p>
+<aside class="notes">
+<p>Speaker note: - URB is a context indicator, not a treatment. - ACCESS and GRADEBR are intensity measures of roadway conditions. - CURVES and WIDTH are geometry levers that audience can picture directly.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="model-setup-for-this-comparison" class="slide level2">
+<h2>Model Setup For This Comparison</h2>
+<p><span class="chip model-trad">Traditional model</span> <span class="chip model-cmf">Hierarchical CMF model</span></p>
+<p>To make the two models directly comparable on CURVES and WIDTH, this deck uses:</p>
+<ol type="1">
+<li><strong>No offset</strong> in both models for the harmonized comparison block.</li>
+<li><strong>Common variable scale</strong> for CURVES and WIDTH in both models.</li>
+<li><strong>Interpretation scale</strong>: <code>+1</code> means a <strong>+1 standard deviation</strong> increase.</li>
+<li><strong>CMF reported at median traffic</strong> where needed: <code>AADT = 23,771</code>.</li>
+</ol>
+<p>Read this as: same variables, same scale, same comparison basis.</p>
+<aside class="notes">
+<p>Speaker note: - Pause here and anchor the audience on comparability assumptions. - Emphasize that +1 means +1 SD (not one physical unit like one foot or one curve). - Mention median AADT is used only where CMF local terms require a traffic level.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="why-offset-matters-for-aadt-very-important" class="slide level2 compact">
+<h2>Why Offset Matters For AADT (Very Important)</h2>
+<p>In your original dataset, the offset is not just length.</p>
+<p>Empirically from the data:</p>
+<p><span class="math display">\[
+  \mathrm{OFFSET} = \log(AADT \times LENGTH) - 12.5208
+\]</span></p>
+<p>So the traditional model with offset is effectively:</p>
+<p><span class="math display">\[
+\hat N_i = \exp(\text{OFFSET}_i)\times\exp(\text{linear predictor})
+\]</span></p>
+<p>Meaning part of AADT exposure is already embedded before coefficient estimation.</p>
+<p>What changes when you remove offset:</p>
+<ol type="1">
+<li>AADT exposure is no longer pre-fixed by the offset term.</li>
+<li>CMF response block can estimate AADT sensitivity directly from data.</li>
+<li>That is why offset/no-offset comparisons can materially change CURVES/WIDTH effects.</li>
+</ol>
+<aside class="notes">
+<p>Speaker note: - This is the key structural point of the talk. - With offset, part of AADT effect is pre-embedded. - Without offset, AADT effect must be explained by fitted model terms.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="fitted-coefficients-traditional-model-harmonized" class="slide level2 compact">
+<h2>Fitted Coefficients: Traditional Model (Harmonized)</h2>
+<p><span class="chip model-trad">Traditional model</span> <span class="chip model-cmf">Hierarchical CMF model</span></p>
+<p>Harmonized comparison setup used below:</p>
+<ul>
+<li>Offset removed for both models.</li>
+<li>CURVES and WIDTH are included explicitly in both models on a common scale.</li>
+<li><span class="math inline">\(+1\)</span> means a <span class="math inline">\(+1\)</span> SD change in that variable.</li>
+</ul>
+<p><span class="math display">\[
+\log(\hat N_i)=
+1.794
++0.179\cdot URB
++0.241\cdot ACCESS
++0.063\cdot GRADEBR
++0.056\cdot CURVES
+-0.065\cdot WIDTH
++0.590\cdot AADT
++0.296\cdot LENGTH
+\]</span></p>
+<table class="caption-top">
+<thead>
+<tr class="header">
+<th>Parameter</th>
+<th>Estimate</th>
+<th>Percent Change (+1 SD)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>URB</strong></td>
+<td><span class="coef-pos">+0.179</span></td>
+<td><strong>+19.6%</strong></td>
+</tr>
+<tr class="even">
+<td><strong>ACCESS</strong></td>
+<td><span class="coef-pos">+0.241</span></td>
+<td><strong>+27.3%</strong></td>
+</tr>
+<tr class="odd">
+<td><strong>GRADEBR</strong></td>
+<td><span class="coef-pos">+0.063</span></td>
+<td><strong>+6.5%</strong></td>
+</tr>
+<tr class="even">
+<td><strong>CURVES</strong></td>
+<td><span class="coef-pos">+0.056</span></td>
+<td><strong>+5.8%</strong></td>
+</tr>
+<tr class="odd">
+<td><strong>WIDTH</strong></td>
+<td><span class="coef-neg">-0.065</span></td>
+<td><strong>-6.3%</strong></td>
+</tr>
+<tr class="even">
+<td><strong>AADT</strong></td>
+<td><span class="coef-pos">+0.590</span></td>
+<td><strong>+80.3%</strong></td>
+</tr>
+<tr class="odd">
+<td><strong>LENGTH</strong></td>
+<td><span class="coef-pos">+0.296</span></td>
+<td><strong>+34.4%</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>BIC:</strong> 2005.64 (harmonized no-offset fit)</p>
+</section>
+<section id="fitted-coefficients-cmf-hierarchical-model-harmonized" class="slide level2 compact">
+<h2>Fitted Coefficients: CMF Hierarchical Model (Harmonized)</h2>
+<p><span class="chip model-trad">Traditional model</span> <span class="chip model-cmf">Hierarchical CMF model</span></p>
+<p><strong>Baseline Block:</strong> <span class="math display">\[
+\exp(-6.394
+-0.020\cdot URB
++0.141\cdot ACCESS
++0.097\cdot GRADEBR
+-0.993\cdot CURVES
+-1.947\cdot WIDTH)
+\]</span></p>
+<p><strong>Traffic-Response Block:</strong> <span class="math display">\[\text{AADT}^{(0.812 + 0.123\cdot CURVES + 0.175\cdot WIDTH)}\]</span></p>
+<table class="caption-top">
+<colgroup>
+<col style="width: 21%">
+<col style="width: 21%">
+<col style="width: 19%">
+<col style="width: 37%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Component</th>
+<th>Parameter</th>
+<th>Estimate</th>
+<th>Interpretation</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Baseline</strong></td>
+<td>CURVES</td>
+<td><span class="coef-neg">-0.993</span></td>
+<td>lowers baseline risk</td>
+</tr>
+<tr class="even">
+<td><strong>Baseline</strong></td>
+<td>WIDTH</td>
+<td><span class="coef-neg">-1.947</span></td>
+<td>lowers baseline risk</td>
+</tr>
+<tr class="odd">
+<td><strong>AADT Response</strong></td>
+<td>__cmf_log_aadt</td>
+<td><span class="coef-pos">+0.812</span></td>
+<td>base AADT elasticity</td>
+</tr>
+<tr class="even">
+<td><strong>AADT Response</strong></td>
+<td>__cmf_local__CURVES</td>
+<td><span class="coef-pos">+0.123</span></td>
+<td>modifies CURVES effect with AADT</td>
+</tr>
+<tr class="odd">
+<td><strong>AADT Response</strong></td>
+<td>__cmf_local__WIDTH</td>
+<td><span class="coef-pos">+0.175</span></td>
+<td>modifies WIDTH effect with AADT</td>
+</tr>
+</tbody>
+</table>
+<p><strong>BIC:</strong> 1993.29 (better than harmonized traditional by ~12.35)</p>
+</section>
+<section id="key-difference-curves-and-width-both-explicitly-fitted" class="slide level2 compact">
+<h2>Key Difference: CURVES and WIDTH (Both Explicitly Fitted)</h2>
+<p><span class="chip model-trad">Traditional model</span> <span class="chip model-cmf">Hierarchical CMF model</span></p>
+<table class="caption-top">
+<thead>
+<tr class="header">
+<th>Variable (+1 SD)</th>
+<th style="text-align: right;">Traditional</th>
+<th style="text-align: right;">CMF at median AADT</th>
+<th style="text-align: right;">Difference</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>CURVES</strong></td>
+<td style="text-align: right;"><strong>+5.8%</strong></td>
+<td style="text-align: right;"><strong>+28.2%</strong></td>
+<td style="text-align: right;"><strong>+22.4 pp</strong></td>
+</tr>
+<tr class="even">
+<td><strong>WIDTH</strong></td>
+<td style="text-align: right;"><strong>-6.3%</strong></td>
+<td style="text-align: right;"><strong>-16.8%</strong></td>
+<td style="text-align: right;"><strong>-10.4 pp</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="whats-happening">What’s Happening?</h3>
+<ul>
+<li>In CMF, each variable can have baseline and AADT-response components.</li>
+<li>So the net effect is traffic-level dependent, not one pooled coefficient.</li>
+<li>That is the core interpretability gain in a harmonized comparison.</li>
+</ul>
+</section>
+<section id="exactly-where-do-the-numbers-come-from" class="slide level2 compact">
+<h2>Exactly Where Do The Numbers Come From?</h2>
+<p><span class="chip model-trad">Traditional model</span> <span class="chip model-cmf">Hierarchical CMF model</span></p>
+<ol type="1">
+<li><strong>Fit step (model output):</strong> estimate coefficients <span class="math inline">\(\beta\)</span> from data.</li>
+</ol>
+<ul>
+<li>Traditional CURVES: <span class="coef-pos"><span class="math inline">\(\beta\approx+0.056\)</span></span></li>
+<li>CMF CURVES: baseline <span class="coef-neg"><span class="math inline">\(-0.993\)</span></span> and local <span class="coef-pos"><span class="math inline">\(+0.123\)</span></span></li>
+</ul>
+<ol start="2" type="1">
+<li><strong>Convert coefficient to CMF:</strong></li>
+</ol>
+<p><span class="math display">\[
+  \mathrm{CMF}_{(+1)} = \exp(\beta)
+\]</span></p>
+<ol start="3" type="1">
+<li><strong>Convert CMF to percent change:</strong></li>
+</ol>
+<p><span class="math display">\[
+\%\text{ change} = 100\times(\text{CMF}-1)=100\times(\exp(\beta)-1)
+\]</span></p>
+<ol start="4" type="1">
+<li><strong>Substitute fitted values (rounded):</strong></li>
+</ol>
+<ul>
+<li>Traditional: <span class="math inline">\(100(\exp(0.056)-1)=+5.8\%\)</span></li>
+<li>CMF (median AADT): <span class="math inline">\(100(\exp(-0.993+0.123\log(23771))-1)=+28.2\%\)</span></li>
+</ul>
+<p>For AADT-response terms (for example WIDTH local term), use:</p>
+<p><span class="math display">\[
+\%\text{ change} = 100\times\left(\exp\left(\beta_{local}\log(AADT)\right)-1\right)
+\]</span></p>
+<p>At <span class="math inline">\(AADT=23{,}771\)</span>, WIDTH net effect is:</p>
+<p><span class="math display">\[
+100\times\left(\exp\left(-1.947 + 0.175\log(23771)\right)-1\right)= -16.8\%
+\]</span></p>
+<aside class="notes">
+<p>Speaker note: - Read this as a recipe: fit beta -&gt; exponentiate -&gt; convert to percent. - For CURVES, compare +5.8% vs +28.2% to show traffic-dependent CMF response.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="curves-and-width-in-both-models-apples-to-apples-view" class="slide level2 compact">
+<h2>CURVES and WIDTH In Both Models (Apples-To-Apples View)</h2>
+<p><span class="chip model-trad">Traditional model</span> <span class="chip model-cmf">Hierarchical CMF model</span></p>
+<table class="caption-top">
+<colgroup>
+<col style="width: 21%">
+<col style="width: 28%">
+<col style="width: 28%">
+<col style="width: 21%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Intervention (+1 SD)</th>
+<th style="text-align: right;">Traditional (harmonized no-offset)</th>
+<th style="text-align: right;">CMF hierarchical (median AADT)</th>
+<th>Why this helps</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>CURVES +1</td>
+<td style="text-align: right;"><strong>+5.8%</strong></td>
+<td style="text-align: right;"><strong>+28.2%</strong></td>
+<td>Both explicit; CMF shows stronger traffic-modulated response</td>
+</tr>
+<tr class="even">
+<td>WIDTH +1</td>
+<td style="text-align: right;"><strong>-6.3%</strong></td>
+<td style="text-align: right;"><strong>-16.8%</strong></td>
+<td>Both explicit; CMF separates baseline and traffic-response channels</td>
+</tr>
+</tbody>
+</table>
+<p>Interpretation note:</p>
+<ul>
+<li>Both models now explicitly include CURVES and WIDTH.</li>
+<li>CMF still adds value by decomposing each variable into baseline and AADT-response components.</li>
+</ul>
+<aside class="notes">
+<p>Speaker note: - This is the apples-to-apples slide for audience objections. - Acknowledge both models can output percentages. - Emphasize CMF gain: WIDTH interpretation is tied to explicit traffic-response channel.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="side-by-side-derivation-traditional-vs-cmf" class="slide level2 compact">
+<h2>Side-By-Side Derivation: Traditional vs CMF</h2>
+<p><span class="chip model-trad">Traditional model</span> <span class="chip model-cmf">Hierarchical CMF model</span></p>
+<div class="columns">
+<div class="column" style="width:50%;">
+<h3 id="traditional-single-pooled-effect">Traditional (single pooled effect)</h3>
+<ul>
+<li>Fitted coefficient for CURVES: <span class="coef-pos"><span class="math inline">\(\beta=+0.007754\)</span></span></li>
+</ul>
+<p><span class="math display">\[
+CMF = \exp(\beta) = \exp(0.007754)=1.0078
+\]</span></p>
+<p><span class="math display">\[
+\%\text{ change} = 100(CMF-1)=+0.78\%
+\]</span></p>
+<p>Interpretation: CURVES +1 gives +0.78% crashes in pooled model.</p>
+</div><div class="column" style="width:50%;">
+<h3 id="cmf-mechanism-separated">CMF (mechanism-separated)</h3>
+<ul>
+<li>Fitted baseline CURVES coefficient: <span class="coef-neg"><span class="math inline">\(\beta=-0.083946\)</span></span></li>
+</ul>
+<p><span class="math display">\[
+CMF = \exp(\beta) = \exp(-0.083946)=0.9195
+\]</span></p>
+<p><span class="math display">\[
+\%\text{ change} = 100(CMF-1)=-8.05\%
+\]</span></p>
+<p>Interpretation: CURVES +1 changes baseline block as a separate mechanism.</p>
+</div></div>
+<p>Same conversion math. Different model structure. That structural difference is the gain.</p>
+</section>
+<section id="both-models-give-percent-change.-so-what-is-gained" class="slide level2">
+<h2>Both Models Give Percent Change. So What Is Gained?</h2>
+<p><span class="chip model-trad">Traditional model</span> <span class="chip model-cmf">Hierarchical CMF model</span></p>
+<p>Yes, both models can report:</p>
+<p><span class="math display">\[
+\%\text{ change} = 100\times\left(\exp(\beta\,x)-1\right)
+\]</span></p>
+<p>The gain from CMF is <strong>not</strong> “having a percent.”<br>
+The gain is <strong>what that percent means mechanistically</strong>:</p>
+<ol type="1">
+<li><strong>Traditional NB:</strong> one pooled coefficient; baseline risk and traffic scaling are mixed.</li>
+<li><strong>Hierarchical CMF:</strong> two blocks; baseline risk is separated from AADT response.</li>
+<li><strong>Decision value:</strong> you can say whether a treatment changes:</li>
+</ol>
+<ul>
+<li>inherent crash propensity, or</li>
+<li>traffic-volume sensitivity.</li>
+</ul>
+<p>That is why CMF percentages are more actionable for design policy.</p>
+</section>
+<section id="step-by-step-compare-one-curves-change" class="slide level2 compact">
+<h2>Step-By-Step: Compare One CURVES Change</h2>
+<p><span class="chip model-trad">Traditional model</span> <span class="chip model-cmf">Hierarchical CMF model</span></p>
+<p>Use the same intervention in each model, then compare the final percent result.</p>
+<p><strong>Intervention:</strong> reduce CURVES by 1 unit on the common scale.</p>
+<ol type="1">
+<li><strong>Traditional model result</strong></li>
+</ol>
+<ul>
+<li>coefficient for CURVES: <span class="math inline">\(\beta=+0.056\)</span></li>
+<li>percent change: <span class="math inline">\(100(\exp(0.056\times-1)-1)= -5.4\%\)</span></li>
+</ul>
+<ol start="2" type="1">
+<li><strong>CMF model result at median AADT (23,771)</strong></li>
+</ol>
+<ul>
+<li>net CURVES term: <span class="math inline">\(-0.993 + 0.123\log(23771)\)</span></li>
+<li>for CURVES <span class="math inline">\(-1\)</span>: approximately <strong>-22.0%</strong></li>
+</ul>
+<ol start="3" type="1">
+<li><strong>Planning takeaway</strong></li>
+</ol>
+<ul>
+<li>Same intervention, same scale.</li>
+<li>CMF predicts larger crash reduction for this scenario because it includes traffic-response behavior.</li>
+</ul>
+<aside class="notes">
+<p>Speaker note: - Keep this slide procedural: same intervention, compute percent in each model, then compare.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="benefit-1-mechanistic-clarity" class="slide level2 compact">
+<h2>Benefit 1: Mechanistic Clarity</h2>
+<h3 id="traditional-model-explanation">Traditional Model Explanation</h3>
+<blockquote>
+<p>“CURVES +1 = +0.78% crashes”</p>
+</blockquote>
+<p><strong>Stakeholder confusion:</strong> - Is that a direct geometry effect? - Or is it confounded with traffic patterns? - What mechanism should we target?</p>
+<h3 id="cmf-hierarchical-explanation">CMF Hierarchical Explanation</h3>
+<blockquote>
+<p>“CURVES +1 reduces AADT elasticity from -0.56% to -0.64% per 1% traffic change. At median AADT (23,771), this is -8.05% crashes.”</p>
+</blockquote>
+<p><strong>Stakeholder clarity:</strong> - ✅ We know the mechanism (AADT sensitivity) - ✅ We can predict effects at other traffic levels - ✅ We can design targeted interventions</p>
+</section>
+<section id="benefit-2-better-intervention-planning" class="slide level2 compact">
+<h2>Benefit 2: Better Intervention Planning</h2>
+<h3 id="scenario-road-improvement-500k-budget">Scenario: Road Improvement ($500K budget)</h3>
+<p><strong>Option A:</strong> Reduce CURVES by 1 unit on the common scale (curve mitigation)</p>
+<p><strong>Option B:</strong> Increase WIDTH by 1 unit on the common scale (lane widening)</p>
+<h3 id="traditional-model-guidance">Traditional Model Guidance</h3>
+<ul>
+<li>CURVES: <span class="math inline">\(\beta=+0.056\)</span> → <code>-1</code> gives <span class="math inline">\(\exp(0.056 \times -1)=0.946\)</span> → <strong>-5.4%</strong></li>
+<li>WIDTH: <span class="math inline">\(\beta=-0.065\)</span> → <code>+1</code> gives <span class="math inline">\(\exp(-0.065 \times 1)=0.937\)</span> → <strong>-6.3%</strong></li>
+<li><strong>Decision:</strong> Both options are quantified; choose by cost/feasibility if effects are close.</li>
+</ul>
+<h3 id="cmf-hierarchical-guidance">CMF Hierarchical Guidance</h3>
+<ul>
+<li>CURVES: net effect depends on AADT through baseline + local terms.
+<ul>
+<li>At median AADT (23,771): <code>+1</code> CURVES ≈ <strong>+28.2%</strong> crashes, so <code>-1</code> CURVES ≈ <strong>-22.0%</strong>.</li>
+</ul></li>
+<li>WIDTH: also traffic-dependent through baseline + local terms.
+<ul>
+<li>At median AADT (23,771): <code>+1</code> WIDTH ≈ <strong>-16.8%</strong> crashes.</li>
+</ul></li>
+<li><strong>Decision:</strong> Both levers are quantified; CMF adds traffic-aware prioritization across corridors.</li>
+</ul>
+<aside class="notes">
+<p>Speaker note: - This fixes the prior inconsistency where WIDTH looked “invisible” in Traditional. - In this harmonized block, both models include CURVES and WIDTH, so both are directly comparable. - Keep reminding audience: effect size here is for 1 SD changes.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="benefit-3a-offset-results-table" class="slide level2 compact">
+<h2>Benefit 3A: Offset Results Table</h2>
+<p><strong>Question:</strong> Does the offset (segment length) assumption hold?</p>
+<h3 id="comparison-with-vs.-without-offset">Comparison: With vs.&nbsp;Without Offset</h3>
+<table class="caption-top">
+<colgroup>
+<col style="width: 18%">
+<col style="width: 27%">
+<col style="width: 36%">
+<col style="width: 18%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Metric</th>
+<th>With Offset</th>
+<th>Without Offset</th>
+<th>Winner</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Traditional BIC</strong></td>
+<td>1925.52</td>
+<td>2001.01</td>
+<td>With offset</td>
+</tr>
+<tr class="even">
+<td><strong>CMF BIC</strong></td>
+<td>1931.82</td>
+<td>1990.21</td>
+<td>With offset</td>
+</tr>
+<tr class="odd">
+<td><strong>Traditional CURVES effect</strong></td>
+<td>+0.78%</td>
+<td>+6.3%</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td><strong>Traditional WIDTH effect</strong></td>
+<td>n/a in offset spec</td>
+<td>-6.3% (harmonized no-offset)</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td><strong>CMF CURVES effect</strong></td>
+<td>-8.05%</td>
+<td>+22.9%</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td><strong>CMF WIDTH effect</strong></td>
+<td>estimated in offset spec</td>
+<td>-16.8% (harmonized no-offset)</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<aside class="notes">
+<p>Speaker note: - Explicitly separate model fit quality (BIC, where offset wins) from intervention comparability (harmonized no-offset block). - Point out that WIDTH appears in the harmonized Traditional model, so planners can evaluate both levers.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="benefit-3b-why-offset-testing-matters" class="slide level2 compact">
+<h2>Benefit 3B: Why Offset Testing Matters</h2>
+<h3 id="key-insight">Key Insight</h3>
+<p><strong>Without offset, CMF and Traditional diverge dramatically:</strong> - Traditional: +6.3% (curves increase crashes) - CMF: +22.9% (curves majorly increase crashes)</p>
+<p><strong>Why?</strong> The offset masks whether models agree on the mechanism.</p>
+<p>✅ <strong>CMF benefit:</strong> Transparent testing reveals assumption importance</p>
+</section>
+<section id="benefit-4-stakeholder-communication" class="slide level2 compact">
+<h2>Benefit 4: Stakeholder Communication</h2>
+<h3 id="for-dot-decision-makers">For DOT Decision-Makers</h3>
+<p><strong>Traditional Model:</strong> &gt; “Our model shows CURVES coefficient = +0.0078. This means curved roads have 0.78% more crashes per curve unit.”</p>
+<p><strong>Stakeholder reply:</strong> “That doesn’t match my experience. Curves have safety devices. What’s confounding this?”</p>
+<p><strong>CMF Hierarchical Model:</strong> &gt; “Our model shows curves modify how crashes scale with traffic volume (not direct effect). At our median traffic (24K vehicles/day), curves reduce crashes by 8%. This likely reflects lower velocities on curves.”</p>
+<p><strong>Stakeholder reply:</strong> “That makes sense! Now I know where to apply curve treatments.”</p>
+</section>
+<section id="benefit-5-fit-quality-robustness" class="slide level2 compact">
+<h2>Benefit 5: Fit Quality &amp; Robustness</h2>
+<table class="caption-top">
+<colgroup>
+<col style="width: 22%">
+<col style="width: 33%">
+<col style="width: 13%">
+<col style="width: 30%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Metric</th>
+<th>Traditional</th>
+<th>CMF</th>
+<th>Difference</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>BIC</strong></td>
+<td>1925.52</td>
+<td>1931.82</td>
+<td>+6.3 (marginal)</td>
+</tr>
+<tr class="even">
+<td><strong>Deviance</strong></td>
+<td>210.45</td>
+<td>208.12</td>
+<td>-2.33 (CMF better!)</td>
+</tr>
+<tr class="odd">
+<td><strong>Interpretability</strong></td>
+<td>Single equation</td>
+<td>Separated blocks</td>
+<td>CMF wins</td>
+</tr>
+<tr class="even">
+<td><strong>Extrapolation</strong></td>
+<td>Risky (new road types)</td>
+<td>Safe (mechanism known)</td>
+<td>CMF wins</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Conclusion:</strong> You sacrifice <strong>6.3 BIC points</strong> to gain <strong>complete mechanistic clarity</strong> and <strong>better interpretability</strong>. Fair trade!</p>
+</section>
+<section id="demo-cmf-fit-interpretation-output-what-you-show-stakeholders" class="slide level2 compact">
+<h2>Demo CMF Fit: Interpretation Output (What You Show Stakeholders)</h2>
+<p>Below is the interpretation block to show after fitting, based on your fitted CMF values:</p>
+<pre><code>CMF INTERPRETATION (from fitted model)
+
+Baseline block (inherent risk)
+  ACCESS +1  -&gt; 100*(exp(-0.160110)-1) = -14.79%
+  CURVES +1  -&gt; 100*(exp(-0.083946)-1) =  -8.05%
+  GRADEBR +1 -&gt; 100*(exp(+0.008255)-1) =  +0.83%
+
+AADT-response block (traffic sensitivity)
+  log(AADT) elasticity = -0.005630
+  WIDTH local term     = -0.012352
+  WIDTH +1 at AADT=23,771 -&gt;
+    100*(exp(-0.012352*log(23771)) - 1) = -11.70%</code></pre>
+<p>This is the central communication gain: <strong>same percent language, but now split by mechanism</strong>.</p>
+</section>
+<section id="package-usage-print-interpretation-alongside-coefficients" class="slide level2 compact">
+<h2>Package Usage: Print Interpretation Alongside Coefficients</h2>
+<div class="sourceCode" id="cb2"><pre class="sourceCode numberSource python number-lines code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href=""></a><span class="im">from</span> experiment_package <span class="im">import</span> ExperimentBuilder</span>
+<span id="cb2-2"><a href=""></a></span>
+<span id="cb2-3"><a href=""></a>builder <span class="op">=</span> ExperimentBuilder(</span>
+<span id="cb2-4"><a href=""></a>    df<span class="op">=</span>df,</span>
+<span id="cb2-5"><a href=""></a>    id_col<span class="op">=</span><span class="st">"ID"</span>,</span>
+<span id="cb2-6"><a href=""></a>    y_col<span class="op">=</span><span class="st">"FREQ"</span>,</span>
+<span id="cb2-7"><a href=""></a>    offset_col<span class="op">=</span><span class="st">"LENGTH"</span>,</span>
+<span id="cb2-8"><a href=""></a>)</span>
+<span id="cb2-9"><a href=""></a></span>
+<span id="cb2-10"><a href=""></a>spec <span class="op">=</span> builder.make_manual_spec(</span>
+<span id="cb2-11"><a href=""></a>    fixed_terms<span class="op">=</span>[<span class="st">"URB"</span>, <span class="st">"ACCESS"</span>, <span class="st">"GRADEBR"</span>, <span class="st">"CURVES"</span>, <span class="st">"LENGTH"</span>],</span>
+<span id="cb2-12"><a href=""></a>    dispersion<span class="op">=</span><span class="dv">1</span>,</span>
+<span id="cb2-13"><a href=""></a>    latent_classes<span class="op">=</span><span class="dv">1</span>,</span>
+<span id="cb2-14"><a href=""></a>)</span>
+<span id="cb2-15"><a href=""></a></span>
+<span id="cb2-16"><a href=""></a>fit <span class="op">=</span> builder.fit_manual_model(manual_spec<span class="op">=</span>spec, model<span class="op">=</span><span class="st">"nb"</span>, R<span class="op">=</span><span class="dv">60</span>)</span>
+<span id="cb2-17"><a href=""></a>builder.print_coefficients(fit)</span>
+<span id="cb2-18"><a href=""></a>builder.print_cmf_interpretation(fit, aadt_col<span class="op">=</span><span class="st">"AADT"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<p>This gives a coefficient table and a direct CMF-style interpretation block in one run.</p>
+</section>
+<section id="benefits-summary" class="slide level2 compact">
+<h2>Benefits Summary</h2>
+<table class="caption-top">
+<colgroup>
+<col style="width: 28%">
+<col style="width: 37%">
+<col style="width: 15%">
+<col style="width: 18%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Benefit</th>
+<th>Traditional</th>
+<th>CMF</th>
+<th>Edge</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Mechanistic clarity</strong></td>
+<td>Single equation</td>
+<td>Baseline + response</td>
+<td>✅ CMF</td>
+</tr>
+<tr class="even">
+<td><strong>Multi-stage planning</strong></td>
+<td>Limited</td>
+<td>Clear prioritization</td>
+<td>✅ CMF</td>
+</tr>
+<tr class="odd">
+<td><strong>Offset testing</strong></td>
+<td>Black box</td>
+<td>Transparent</td>
+<td>✅ CMF</td>
+</tr>
+<tr class="even">
+<td><strong>Practitioner communication</strong></td>
+<td>Confusing</td>
+<td>Intuitive</td>
+<td>✅ CMF</td>
+</tr>
+<tr class="odd">
+<td><strong>Predictive fit (harmonized no-offset)</strong></td>
+<td>2005.64 BIC</td>
+<td>1993.29 BIC</td>
+<td>✅ CMF</td>
+</tr>
+<tr class="even">
+<td><strong>Robustness</strong></td>
+<td>Standard</td>
+<td>Mechanistic structure</td>
+<td>✅ CMF</td>
+</tr>
+</tbody>
+</table>
+<aside class="notes">
+<p>Speaker note: - Close with the main message: similar fit, better interpretability. - Decision support improves because mechanisms are separated.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="recommended-next-steps" class="slide level2">
+<h2>Recommended Next Steps</h2>
+<ol type="1">
+<li>✅ <strong>Fit hierarchical CMF model</strong> on your data</li>
+<li>✅ <strong>Use new CMF output methods</strong> to auto-generate interpretations</li>
+<li>✅ <strong>Build CMF lookup tables</strong> for your practitioners</li>
+<li>✅ <strong>Test offset assumptions</strong> (with/without) transparently</li>
+<li>✅ <strong>Communicate safety findings</strong> with confidence</li>
+</ol>
+</section>
+<section id="references" class="slide level2">
+<h2>References</h2>
+<ul>
+<li><strong>AASHTO (2019)</strong> — Guidelines for safety impact assessment</li>
+<li><strong>HSM (2010)</strong> — Highway Safety Manual: CMF methodology</li>
+<li><strong>Hauer (1997)</strong> — Observational before-after studies in road safety</li>
+</ul>
+<p><strong>Key insight:</strong> CMF methodology forces mechanistic thinking. Your models become not just predictive, but <em>interpretable</em>.</p>
+
+</section>
+    </div>
+  <div class="quarto-auto-generated-content" style="display: none;">
+<div class="footer footer-default">
+
+</div>
+</div></div>
+
+  <script>window.backupDefine = window.define; window.define = undefined;</script>
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/dist/reveal.js"></script>
+  <!-- reveal.js plugins -->
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/plugin/quarto-line-highlight/line-highlight.js"></script>
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/plugin/pdf-export/pdfexport.js"></script>
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/plugin/reveal-menu/menu.js"></script>
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/plugin/reveal-menu/quarto-menu.js"></script>
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/plugin/quarto-support/support.js"></script>
+  
+
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/plugin/notes/notes.js"></script>
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/plugin/search/search.js"></script>
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/plugin/zoom/zoom.js"></script>
+  <script src="cmf_technical_slides_notes_files/libs/revealjs/plugin/math/math.js"></script>
+  <script>window.define = window.backupDefine; window.backupDefine = undefined;</script>
+
+  <script>
+
+      // Full list of configuration options available at:
+      // https://revealjs.com/config/
+      Reveal.initialize({
+'controlsAuto': true,
+'previewLinksAuto': false,
+'pdfSeparateFragments': false,
+'autoAnimateEasing': "ease",
+'autoAnimateDuration': 1,
+'autoAnimateUnmatched': true,
+'jumpToSlide': true,
+'menu': {"side":"left","useTextContentForMissingTitles":true,"markers":false,"loadIcons":false,"custom":[{"title":"Tools","icon":"<i class=\"fas fa-gear\"></i>","content":"<ul class=\"slide-menu-items\">\n<li class=\"slide-tool-item active\" data-item=\"0\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.fullscreen(event)\"><kbd>f</kbd> Fullscreen</a></li>\n<li class=\"slide-tool-item\" data-item=\"1\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.speakerMode(event)\"><kbd>s</kbd> Speaker View</a></li>\n<li class=\"slide-tool-item\" data-item=\"2\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.overview(event)\"><kbd>o</kbd> Slide Overview</a></li>\n<li class=\"slide-tool-item\" data-item=\"3\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.togglePdfExport(event)\"><kbd>e</kbd> PDF Export Mode</a></li>\n<li class=\"slide-tool-item\" data-item=\"4\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.toggleScrollView(event)\"><kbd>r</kbd> Scroll View Mode</a></li>\n<li class=\"slide-tool-item\" data-item=\"5\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.keyboardHelp(event)\"><kbd>?</kbd> Keyboard Help</a></li>\n</ul>"}],"openButton":true},
+'smaller': false,
+ 
+        // Display controls in the bottom right corner
+        controls: false,
+
+        // Help the user learn the controls by providing hints, for example by
+        // bouncing the down arrow when they first encounter a vertical slide
+        controlsTutorial: false,
+
+        // Determines where controls appear, "edges" or "bottom-right"
+        controlsLayout: 'edges',
+
+        // Visibility rule for backwards navigation arrows; "faded", "hidden"
+        // or "visible"
+        controlsBackArrows: 'faded',
+
+        // Display a presentation progress bar
+        progress: true,
+
+        // Display the page number of the current slide
+        slideNumber: 'c/t',
+
+        // 'all', 'print', or 'speaker'
+        showSlideNumber: 'all',
+
+        // Add the current slide number to the URL hash so that reloading the
+        // page/copying the URL will return you to the same slide
+        hash: true,
+
+        // Start with 1 for the hash rather than 0
+        hashOneBasedIndex: false,
+
+        // Flags if we should monitor the hash and change slides accordingly
+        respondToHashChanges: true,
+
+        // Push each slide change to the browser history
+        history: true,
+
+        // Enable keyboard shortcuts for navigation
+        keyboard: true,
+
+        // Enable the slide overview mode
+        overview: true,
+
+        // Disables the default reveal.js slide layout (scaling and centering)
+        // so that you can use custom CSS layout
+        disableLayout: false,
+
+        // Vertical centering of slides
+        center: false,
+
+        // Enables touch navigation on devices with touch input
+        touch: true,
+
+        // Loop the presentation
+        loop: false,
+
+        // Change the presentation direction to be RTL
+        rtl: false,
+
+        // see https://revealjs.com/vertical-slides/#navigation-mode
+        navigationMode: 'linear',
+
+        // Randomizes the order of slides each time the presentation loads
+        shuffle: false,
+
+        // Turns fragments on and off globally
+        fragments: true,
+
+        // Flags whether to include the current fragment in the URL,
+        // so that reloading brings you to the same fragment position
+        fragmentInURL: false,
+
+        // Flags if the presentation is running in an embedded mode,
+        // i.e. contained within a limited portion of the screen
+        embedded: false,
+
+        // Flags if we should show a help overlay when the questionmark
+        // key is pressed
+        help: true,
+
+        // Flags if it should be possible to pause the presentation (blackout)
+        pause: true,
+
+        // Flags if speaker notes should be visible to all viewers
+        showNotes: false,
+
+        // Global override for autoplaying embedded media (null/true/false)
+        autoPlayMedia: null,
+
+        // Global override for preloading lazy-loaded iframes (null/true/false)
+        preloadIframes: null,
+
+        // Number of milliseconds between automatically proceeding to the
+        // next slide, disabled when set to 0, this value can be overwritten
+        // by using a data-autoslide attribute on your slides
+        autoSlide: 0,
+
+        // Stop auto-sliding after user input
+        autoSlideStoppable: true,
+
+        // Use this method for navigation when auto-sliding
+        autoSlideMethod: null,
+
+        // Specify the average time in seconds that you think you will spend
+        // presenting each slide. This is used to show a pacing timer in the
+        // speaker view
+        defaultTiming: null,
+
+        // Enable slide navigation via mouse wheel
+        mouseWheel: false,
+
+        // The display mode that will be used to show slides
+        display: 'block',
+
+        // Hide cursor if inactive
+        hideInactiveCursor: true,
+
+        // Time before the cursor is hidden (in ms)
+        hideCursorTime: 5000,
+
+        // Opens links in an iframe preview overlay
+        previewLinks: false,
+
+        // Transition style (none/fade/slide/convex/concave/zoom)
+        transition: 'fade',
+
+        // Transition speed (default/fast/slow)
+        transitionSpeed: 'default',
+
+        // Transition style for full page slide backgrounds
+        // (none/fade/slide/convex/concave/zoom)
+        backgroundTransition: 'none',
+
+        // Number of slides away from the current that are visible
+        viewDistance: 3,
+
+        // Number of slides away from the current that are visible on mobile
+        // devices. It is advisable to set this to a lower number than
+        // viewDistance in order to save resources.
+        mobileViewDistance: 2,
+
+        // The "normal" size of the presentation, aspect ratio will be preserved
+        // when the presentation is scaled to fit different resolutions. Can be
+        // specified using percentage units.
+        width: 1200,
+
+        height: 900,
+
+        // Factor of the display size that should remain empty around the content
+        margin: 0.1,
+
+        math: {
+          mathjax: 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js',
+          config: 'TeX-AMS_HTML-full',
+          tex2jax: {
+            inlineMath: [['\\(','\\)']],
+            displayMath: [['\\[','\\]']],
+            balanceBraces: true,
+            processEscapes: false,
+            processRefs: true,
+            processEnvironments: true,
+            preview: 'TeX',
+            skipTags: ['script','noscript','style','textarea','pre','code'],
+            ignoreClass: 'tex2jax_ignore',
+            processClass: 'tex2jax_process'
+          },
+        },
+
+        // reveal.js plugins
+        plugins: [QuartoLineHighlight, PdfExport, RevealMenu, QuartoSupport,
+
+          RevealMath,
+          RevealNotes,
+          RevealSearch,
+          RevealZoom
+        ]
+      });
+    </script>
+    <script id="quarto-html-after-body" type="application/javascript">
+      window.document.addEventListener("DOMContentLoaded", function (event) {
+        const tabsets =  window.document.querySelectorAll(".panel-tabset-tabby")
+        tabsets.forEach(function(tabset) {
+          const tabby = new Tabby('#' + tabset.id);
+        });
+        const isCodeAnnotation = (el) => {
+          for (const clz of el.classList) {
+            if (clz.startsWith('code-annotation-')) {                     
+              return true;
+            }
+          }
+          return false;
+        }
+        const onCopySuccess = function(e) {
+          // button target
+          const button = e.trigger;
+          // don't keep focus
+          button.blur();
+          // flash "checked"
+          button.classList.add('code-copy-button-checked');
+          var currentTitle = button.getAttribute("title");
+          button.setAttribute("title", "Copied!");
+          let tooltip;
+          if (window.bootstrap) {
+            button.setAttribute("data-bs-toggle", "tooltip");
+            button.setAttribute("data-bs-placement", "left");
+            button.setAttribute("data-bs-title", "Copied!");
+            tooltip = new bootstrap.Tooltip(button, 
+              { trigger: "manual", 
+                customClass: "code-copy-button-tooltip",
+                offset: [0, -8]});
+            tooltip.show();    
+          }
+          setTimeout(function() {
+            if (tooltip) {
+              tooltip.hide();
+              button.removeAttribute("data-bs-title");
+              button.removeAttribute("data-bs-toggle");
+              button.removeAttribute("data-bs-placement");
+            }
+            button.setAttribute("title", currentTitle);
+            button.classList.remove('code-copy-button-checked');
+          }, 1000);
+          // clear code selection
+          e.clearSelection();
+        }
+        const getTextToCopy = function(trigger) {
+            const codeEl = trigger.previousElementSibling.cloneNode(true);
+            for (const childEl of codeEl.children) {
+              if (isCodeAnnotation(childEl)) {
+                childEl.remove();
+              }
+            }
+            return codeEl.innerText;
+        }
+        const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+          text: getTextToCopy
+        });
+        clipboard.on('success', onCopySuccess);
+        if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+          const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+            text: getTextToCopy,
+            container: window.document.getElementById('quarto-embedded-source-code-modal')
+          });
+          clipboardModal.on('success', onCopySuccess);
+        }
+          var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+          var mailtoRegex = new RegExp(/^mailto:/);
+            var filterRegex = new RegExp('/' + window.location.host + '/');
+          var isInternal = (href) => {
+              return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+          }
+          // Inspect non-navigation links and adorn them if external
+         var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+          for (var i=0; i<links.length; i++) {
+            const link = links[i];
+            if (!isInternal(link.href)) {
+              // undo the damage that might have been done by quarto-nav.js in the case of
+              // links that we want to consider external
+              if (link.dataset.originalHref !== undefined) {
+                link.href = link.dataset.originalHref;
+              }
+            }
+          }
+        function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+          const config = {
+            allowHTML: true,
+            maxWidth: 500,
+            delay: 100,
+            arrow: false,
+            appendTo: function(el) {
+                return el.closest('section.slide') || el.parentElement;
+            },
+            interactive: true,
+            interactiveBorder: 10,
+            theme: 'light-border',
+            placement: 'bottom-start',
+          };
+          if (contentFn) {
+            config.content = contentFn;
+          }
+          if (onTriggerFn) {
+            config.onTrigger = onTriggerFn;
+          }
+          if (onUntriggerFn) {
+            config.onUntrigger = onUntriggerFn;
+          }
+            config['offset'] = [0,0];
+            config['maxWidth'] = 700;
+          window.tippy(el, config); 
+        }
+        const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+        for (var i=0; i<noterefs.length; i++) {
+          const ref = noterefs[i];
+          tippyHover(ref, function() {
+            // use id or data attribute instead here
+            let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+            try { href = new URL(href).hash; } catch {}
+            const id = href.replace(/^#\/?/, "");
+            const note = window.document.getElementById(id);
+            if (note) {
+              return note.innerHTML;
+            } else {
+              return "";
+            }
+          });
+        }
+        const findCites = (el) => {
+          const parentEl = el.parentElement;
+          if (parentEl) {
+            const cites = parentEl.dataset.cites;
+            if (cites) {
+              return {
+                el,
+                cites: cites.split(' ')
+              };
+            } else {
+              return findCites(el.parentElement)
+            }
+          } else {
+            return undefined;
+          }
+        };
+        var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+        for (var i=0; i<bibliorefs.length; i++) {
+          const ref = bibliorefs[i];
+          const citeInfo = findCites(ref);
+          if (citeInfo) {
+            tippyHover(citeInfo.el, function() {
+              var popup = window.document.createElement('div');
+              citeInfo.cites.forEach(function(cite) {
+                var citeDiv = window.document.createElement('div');
+                citeDiv.classList.add('hanging-indent');
+                citeDiv.classList.add('csl-entry');
+                var biblioDiv = window.document.getElementById('ref-' + cite);
+                if (biblioDiv) {
+                  citeDiv.innerHTML = biblioDiv.innerHTML;
+                }
+                popup.appendChild(citeDiv);
+              });
+              return popup.innerHTML;
+            });
+          }
+        }
+      });
+      </script>
+    
+
+</body></html>

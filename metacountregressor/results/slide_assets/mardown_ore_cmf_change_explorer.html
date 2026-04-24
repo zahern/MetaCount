@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>CMF Change Explorer</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+        body { font-family: Segoe UI, Arial, sans-serif; margin: 20px; }
+        #chart { width: 100%; height: 72vh; }
+        .toolbar { margin-bottom: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+        button { padding: 8px 12px; border: 1px solid #ccc; background: #fafafa; cursor: pointer; }
+        button:hover { background: #f0f0f0; }
+        .note { color: #444; font-size: 0.95rem; margin-top: 8px; max-width: 900px; }
+    </style>
+</head>
+<body>
+    <h2>Interactive CMF Change Explorer</h2>
+    <div class="toolbar">
+        <button onclick="showPct()">Percent Change</button>
+        <button onclick="showAbs()">Absolute Predictions</button>
+        <button onclick="setMode('With offset')">With Offset</button>
+        <button onclick="setMode('Without offset')">Without Offset</button>
+        <button onclick="setLevel('Low AADT')">Low AADT</button>
+        <button onclick="setLevel('Median AADT')">Median AADT</button>
+        <button onclick="setLevel('High AADT')">High AADT</button>
+        <button onclick="setFeature('CURVES')">Curves</button>
+        <button onclick="setFeature('ACCESS')">Access</button>
+        <button onclick="setFeature('WIDTH')">Width</button>
+    </div>
+    <div id="chart"></div>
+    <div class="note">
+        This explorer shows step changes of +0, +1, +2, and +3 for one feature at a time. Toggle the offset on and off to see how exposure normalization changes the apparent effect size and direction.
+    </div>
+    <script>
+        const payload = {"steps": [0, 1, 2, 3], "feature_order": ["CURVES", "ACCESS", "WIDTH"], "feature_labels": {"CURVES": "Curves", "ACCESS": "Access", "WIDTH": "Width"}, "modes": {"With offset": {"levels": {"Low AADT": {"CURVES": {"traditional": [4.9283963678795555, 4.966761844509439, 5.005425980112171, 5.044391099621263], "hierarchical": [4.985070339176867, 4.840886538299628, 4.700872983180414, 4.564909057289657], "traditional_pct": [0.0, 0.7784576110786829, 1.5629751846797442, 2.353599895042829], "hierarchical_pct": [0.0, -2.892312265769287, -5.700969829111378, -8.42839224524538]}, "ACCESS": {"traditional": [4.9283963678795555, 3.981433241419556, 3.2164236543946836, 2.598406276645509], "hierarchical": [4.985070339176867, 4.247528642158799, 3.6191063191574493, 3.083659146959485], "traditional_pct": [0.0, -19.214427082849078, -34.736912084476856, -47.27684052402071], "hierarchical_pct": [0.0, -14.795010839101838, -27.401098220912274, -38.14211360819721]}, "WIDTH": {"traditional": [4.9283963678795555, 4.9283963678795555, 4.9283963678795555, 4.9283963678795555], "hierarchical": [4.985070339176867, 4.947904405695962, 4.911015560905386, 4.874401738984779], "traditional_pct": [0.0, 0.0, 0.0, 0.0], "hierarchical_pct": [0.0, -0.7455448158639748, -1.4855312610034148, -2.220000775563019]}}, "Median AADT": {"CURVES": {"traditional": [10.008791974443815, 10.086706177345906, 10.165226909290588, 10.244358891849382], "hierarchical": [10.13748021151363, 9.844272627916087, 9.559545523223102, 9.28305361550313], "traditional_pct": [0.0, 0.7784576110786942, 1.5629751846797308, 2.353599895042852], "hierarchical_pct": [0.0, -2.8923122657692826, -5.700969829111371, -8.42839224524538]}, "ACCESS": {"traditional": [10.008791974443815, 8.085659938640259, 6.532046705563092, 5.276951354305028], "hierarchical": [10.13748021151363, 8.637638915408385, 7.359699301631228, 6.270830992229583], "traditional_pct": [0.0, -19.214427082849067, -34.736912084476856, -47.27684052402071], "hierarchical_pct": [0.0, -14.795010839101835, -27.401098220912335, -38.142113608197285]}, "WIDTH": {"traditional": [10.008791974443815, 10.008791974443815, 10.008791974443815, 10.008791974443815], "hierarchical": [10.13748021151363, 10.056207926768131, 9.975587202778357, 9.895612815974923], "traditional_pct": [0.0, 0.0, 0.0, 0.0], "hierarchical_pct": [0.0, -0.8017010445376124, -1.5969748434270998, -2.3858729239639467]}}, "High AADT": {"CURVES": {"traditional": [19.52032328161162, 19.672280723904493, 19.825421090472474, 19.979753589879657], "hierarchical": [19.79633438490759, 19.223762577320205, 18.66775133435401, 18.127821672767194], "traditional_pct": [0.0, 0.7784576110786943, 1.5629751846797517, 2.3535998950428505], "hierarchical_pct": [0.0, -2.892312265769279, -5.7009698291113615, -8.428392245245373]}, "ACCESS": {"traditional": [19.52032328161162, 15.769604998329944, 12.739565744672525, 10.291731173990808], "hierarchical": [19.79633438490759, 16.867464566915668, 14.371921355958833, 12.24559403355752], "traditional_pct": [0.0, -19.214427082849074, -34.73691208447685, -47.27684052402071], "hierarchical_pct": [0.0, -14.79501083910183, -27.40109822091226, -38.14211360819725]}, "WIDTH": {"traditional": [19.52032328161162, 19.52032328161162, 19.52032328161162, 19.52032328161162], "hierarchical": [19.79633438490759, 19.62715071168547, 19.45941291802511, 19.29310864713305], "traditional_pct": [0.0, 0.0, 0.0, 0.0], "hierarchical_pct": [0.0, -0.8546212138702876, -1.7019386535486245, -2.5420147386386347]}}}}, "Without offset": {"levels": {"Low AADT": {"CURVES": {"traditional": [7.146489483470894, 7.294074342227699, 7.444707031752971, 7.598450493953302], "hierarchical": [6.210134126428297, 6.651328714732227, 7.123867660627457, 7.6299778018378674], "traditional_pct": [0.0, 2.0651378428269336, 4.172923628752603, 6.324238096589208], "hierarchical_pct": [0.0, 7.104429297691812, 14.713587751842741, 22.863333488518073]}, "ACCESS": {"traditional": [7.146489483470894, 8.854696801776761, 10.971212597841207, 13.59363381509314], "hierarchical": [6.210134126428297, 6.628823106756159, 7.075740215282083, 7.552788600307092], "traditional_pct": [0.0, 23.90274724753709, 53.518907754870554, 90.2141442526969], "hierarchical_pct": [0.0, 6.7420279788492605, 13.938605370374372, 21.62037802315568]}, "WIDTH": {"traditional": [7.146489483470894, 7.146489483470894, 7.146489483470894, 7.146489483470894], "hierarchical": [6.210134126428297, 6.203902556616123, 6.197677239883437, 6.191458169955574], "traditional_pct": [0.0, 0.0, 0.0, 0.0], "hierarchical_pct": [0.0, -0.10034517266953168, -0.2005896538022836, -0.3007335444373816]}}, "Median AADT": {"CURVES": {"traditional": [8.532507705841558, 8.708715751417019, 8.88856273602376, 9.0721238087688], "hierarchical": [10.784926231331221, 11.55113369024437, 12.37177581634965, 13.250719882091149], "traditional_pct": [0.0, 2.065137842826962, 4.172923628752629, 6.324238096589216], "hierarchical_pct": [0.0, 7.104429297691851, 14.713587751842775, 22.86333348851813]}, "ACCESS": {"traditional": [8.532507705841558, 10.572011456645493, 13.099012634108126, 16.230036515961945], "hierarchical": [10.784926231331221, 11.512048975345827, 12.288194538202474, 13.116668052063513], "traditional_pct": [0.0, 23.902747247537103, 53.51890775487058, 90.21414425269695], "hierarchical_pct": [0.0, 6.742027978849279, 13.93860537037441, 21.62037802315572]}, "WIDTH": {"traditional": [8.532507705841558, 8.532507705841558, 8.532507705841558, 8.532507705841558], "hierarchical": [10.784926231331221, 10.7732860805111, 10.761658492884106, 10.75004345489081], "traditional_pct": [0.0, 0.0, 0.0, 0.0], "hierarchical_pct": [0.0, -0.10792981398709044, -0.215743139526728, -0.3234401023446439]}}, "High AADT": {"CURVES": {"traditional": [11.890667234164901, 12.136225902982261, 12.386855696795717, 12.642661341326606], "hierarchical": [18.148624747665252, 19.43798096136653, 20.818938575665634, 22.298005347303686], "traditional_pct": [0.0, 2.0651378428269136, 4.172923628752643, 6.324238096589193], "hierarchical_pct": [0.0, 7.104429297691823, 14.713587751842777, 22.863333488518105]}, "ACCESS": {"traditional": [11.890667234164901, 14.73286336919305, 18.254422462656237, 22.617730925402597], "hierarchical": [18.148624747665252, 19.372210105929206, 20.67828993139242, 22.07242602411447], "traditional_pct": [0.0, 23.90274724753711, 53.51890775487058, 90.21414425269695], "hierarchical_pct": [0.0, 6.742027978849268, 13.938605370374411, 21.620378023155716]}, "WIDTH": {"traditional": [11.890667234164901, 11.890667234164901, 11.890667234164901, 11.890667234164901], "hierarchical": [18.148624747665252, 18.12773916767112, 18.106877622966586, 18.086040085891657], "traditional_pct": [0.0, 0.0, 0.0, 0.0], "hierarchical_pct": [0.0, -0.11508078592467116, -0.23002913597647162, -0.34484520256360746]}}}}}};
+        let currentLevel = 'Median AADT';
+        let currentMode = 'pct';
+        let currentOffsetMode = 'With offset';
+        let currentFeature = 'CURVES';
+        function traces() {
+            const featureData = payload.modes[currentOffsetMode].levels[currentLevel][currentFeature];
+            const yTrad = currentMode === 'pct' ? featureData.traditional_pct : featureData.traditional;
+            const yCmf = currentMode === 'pct' ? featureData.hierarchical_pct : featureData.hierarchical;
+            return [
+                { x: payload.steps, y: yTrad, type: 'scatter', mode: 'lines+markers', name: 'Traditional', line: {color: '#1f77b4', width: 3} },
+                { x: payload.steps, y: yCmf, type: 'scatter', mode: 'lines+markers', name: 'Hierarchical CMF', line: {color: '#d62728', width: 3} },
+            ];
+        }
+        function layout() {
+            return {
+                template: 'plotly_white',
+                title: payload.feature_labels[currentFeature] + ' sensitivity: ' + currentLevel + ' / ' + currentOffsetMode,
+                yaxis: { title: currentMode === 'pct' ? '% change from base case' : 'Predicted crashes' },
+                xaxis: { title: 'Additional units', tickmode: 'array', tickvals: payload.steps },
+                legend: { orientation: 'h' }
+            };
+        }
+        Plotly.newPlot('chart', traces(), layout(), {responsive: true});
+        function redraw() { Plotly.react('chart', traces(), layout(), {responsive: true}); }
+        function setLevel(level) { currentLevel = level; redraw(); }
+        function showPct() { currentMode = 'pct'; redraw(); }
+        function showAbs() { currentMode = 'abs'; redraw(); }
+        function setMode(mode) { currentOffsetMode = mode; redraw(); }
+        function setFeature(feature) { currentFeature = feature; redraw(); }
+    </script>
+</body>
+</html>

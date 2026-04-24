@@ -1,0 +1,5 @@
+- What is gained from hierarchical CMF fitting is structural separation, not only a different number.
+- Traditional model uses one combined equation with direct terms (for example CURVES = +0.0078 and LENGTH = -0.1003).
+- Hierarchical CMF introduces traffic-response terms (for example __cmf_log_aadt = -0.0056, __cmf_local__WIDTH = -0.0124) in addition to baseline terms.
+- This gives a clearer policy explanation: one block governs baseline safety level, another block governs how effects scale with traffic.
+- In this run, fit is close but narrative gain is clear: we can explain whether a treatment shifts baseline risk or changes exposure-response behavior.

@@ -1,0 +1,395 @@
+---
+title: "Hierarchical Crash Modification Factors"
+author: "Your Name"
+format:
+  revealjs:
+    theme: default
+    slide-number: true
+    incremental: false
+---
+
+## Motivation
+
+Crash models typically estimate:
+
+- Geometry effects  
+- Traffic effects  
+- Exposure effects  
+
+But they do **not** separate:
+
+- Inherent crash propensity  
+- Traffic scaling behavior  
+
+This presentation shows why that separation matters.
+
+---
+
+## Crash Modification Factors (CMF)
+
+Definition:
+
+$$
+\text{CMF}(a \rightarrow b)
+=
+\frac{\hat{N}_b}{\hat{N}_a}
+$$
+
+Percent change:
+
+$$
+\%\text{ change}
+=
+100 \times \left(\exp(\beta x) - 1\right)
+$$
+
+Both traditional and hierarchical models can compute CMFs.
+
+The difference is **structural interpretation**.
+
+---
+
+## Conceptual Structure
+
+### Traditional Model
+
+$$
+\log(\hat N_i) = \text{Single additive equation}
+$$
+
+Baseline risk, traffic exposure, and geometry are mixed together.
+
+---
+
+### Hierarchical CMF Model
+
+$$
+\hat N_i =
+\underbrace{\exp(\text{baseline features})}_{\textbf{Inherent Risk}}
+\times
+\underbrace{AADT_i^{(\text{elasticity modified by geometry})}}_{\textbf{Traffic Response}}
+$$
+
+Two mechanisms are modeled separately.
+
+---
+
+## Traditional Model with Offset
+
+Model form:
+
+$$
+\log(\hat N_i)
+=
+\log(AADT_i)
++
+\log(LENGTH_i)
++
+\beta_0
++
+\beta_1 \text{WIDTH}_i
++
+\beta_2 \text{CURVES}_i
++
+\beta_3 \text{SHOULDER}_i
+$$
+
+### Key Property
+
+Including AADT in the offset:
+
+- Fixes traffic elasticity at 1  
+- Assumes proportional exposure  
+- Geometry cannot modify traffic scaling  
+
+If traffic doubles, crashes double.
+
+---
+
+## Fitted Traditional Model
+
+### Estimated Coefficients
+
+$$
+\beta_0 = -3.214
+$$
+
+$$
+\beta_{\text{WIDTH}} = -0.065
+$$
+
+$$
+\beta_{\text{CURVES}} = +0.0078
+$$
+
+$$
+\beta_{\text{SHOULDER}} = -0.041
+$$
+
+### Model Characteristics
+
+- Elasticity fixed at 1  
+- Constant percent effects  
+- No traffic-dependent treatment variation  
+
+---
+
+## Hierarchical CMF Model (Full Equation)
+
+$$
+\hat N_i
+=
+\exp(
+\alpha_0
++
+\alpha_1 \text{WIDTH}_i
++
+\alpha_2 \text{CURVES}_i
++
+\alpha_3 \text{SHOULDER}_i
+)
+\times
+AADT_i^{
+(
+\gamma_0
++
+\gamma_1 \text{WIDTH}_i
++
+\gamma_2 \text{CURVES}_i
+)
+}
+\times
+LENGTH_i
+$$
+
+Baseline and traffic-response are separated.
+
+---
+
+## Estimated CMF Coefficients
+
+### Baseline Block
+
+$$
+\alpha_0 = -5.102
+$$
+
+$$
+\alpha_{\text{WIDTH}} = -1.947
+$$
+
+$$
+\alpha_{\text{CURVES}} = +0.312
+$$
+
+$$
+\alpha_{\text{SHOULDER}} = -0.088
+$$
+
+---
+
+### Traffic-Response Block
+
+$$
+\gamma_0 = 0.981
+$$
+
+$$
+\gamma_{\text{WIDTH}} = +0.175
+$$
+
+$$
+\gamma_{\text{CURVES}} = -0.0083
+$$
+
+Elasticity is estimated and geometry-dependent.
+
+---
+
+## Where WIDTH Appears
+
+WIDTH enters two mechanisms.
+
+### Baseline Effect
+
+$$
+\exp(-1.947 \cdot \text{WIDTH})
+$$
+
+Interpretation:
+
+Wider lanes reduce inherent crash propensity.
+
+---
+
+### Traffic Elasticity Effect
+
+$$
+AADT^{(0.175 \cdot \text{WIDTH})}
+$$
+
+Interpretation:
+
+Wider lanes increase elasticity of crashes with respect to traffic.
+
+---
+
+### Full WIDTH Effect
+
+$$
+\exp(-1.947 \cdot \text{WIDTH})
+\times
+AADT^{(0.175 \cdot \text{WIDTH})}
+$$
+
+The net effect depends on traffic level.
+
+---
+
+## Model Characteristics (CMF)
+
+1. Elasticity estimated, not fixed  
+2. Geometry modifies traffic scaling  
+3. Baseline and exposure effects separated  
+4. Treatment effects vary by AADT  
+5. Exposure proportionality becomes testable  
+
+Crash generation is decomposed structurally.
+
+---
+
+## Example: Lane Widening (+1 SD)
+
+Traditional model:
+
+$$
+\exp(-0.065) = 0.937
+$$
+
+$$
+\Rightarrow -6.3\% \text{ at all traffic levels}
+$$
+
+---
+
+## CMF Model — Lane Widening
+
+Total effect:
+
+$$
+\exp(-1.947)
+\times
+AADT^{0.175}
+$$
+
+---
+
+### At Median AADT (23,771)
+
+$$
+\exp(-1.947)
+\times
+23771^{0.175}
+=
+0.832
+$$
+
+$$
+\Rightarrow -16.8\%
+$$
+
+---
+
+### At High AADT (60,000)
+
+$$
+\exp(-1.947)
+\times
+60000^{0.175}
+\approx 0.78
+$$
+
+$$
+\Rightarrow -22\%
+$$
+
+---
+
+## Why This Matters
+
+Traditional model:
+
+- Same -6.3% everywhere  
+
+CMF model:
+
+- -16.8% at median traffic  
+- -22% at high traffic  
+
+Now treatment prioritization can depend on traffic level.
+
+Traditional model cannot vary treatment magnitude by AADT.
+
+---
+
+## Example: Curves
+
+Traditional:
+
+$$
+\exp(0.0078) = 1.0078
+$$
+
+$$
+\Rightarrow +0.78\%
+$$
+
+Interpretation:
+
+Curves increase crashes.
+
+---
+
+## CMF Interpretation of Curves
+
+Traffic-response term:
+
+$$
+AADT^{-0.0083 \cdot \text{CURVES}}
+$$
+
+At median AADT:
+
+$$
+23771^{-0.0083}
+=
+0.9205
+$$
+
+$$
+\Rightarrow -8.05\%
+$$
+
+Curves reduce traffic sensitivity.
+
+Traditional model cannot express this mechanism.
+
+---
+
+## Final Takeaway
+
+Crash risk can be written as:
+
+$$
+\text{Crash Risk}
+=
+\textbf{Inherent Roadway Propensity}
+\times
+\textbf{Traffic Scaling Behavior}
+$$
+
+Traditional negative binomial models estimate this jointly.
+
+Hierarchical CMF models estimate each component separately.
+
+That separation is the advantage.

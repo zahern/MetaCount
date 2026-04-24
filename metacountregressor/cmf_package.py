@@ -157,6 +157,161 @@ class CMFExperimentBuilder:
             model=search_result.model,
         )
 
+    def print_cmf_interpretation(
+        self,
+        fit_result: dict[str, Any],
+    ) -> pd.DataFrame:
+        """
+        Print CMF (Crash Modification Factor) interpretations for fitted CMF model.
+
+        Converts fitted regression coefficients into intuitive CMF values and 
+        percent-change interpretations using the standard HSM formula:
+        
+        CMF(a → b) = exp(β · (b - a))
+        Percent Change = 100 × (exp(β · (b - a)) - 1)
+
+        Parameters
+        ----------
+        fit_result
+            Dictionary returned by fit_best_model() containing fitted parameters
+            and summary statistics.
+
+        Returns
+        -------
+        pd.DataFrame
+            CMF interpretation table with columns:
+            - Parameter: Variable name
+            - Coefficient: Fitted β value
+            - CMF(+1): exp(β) for one-unit increase
+            - Percent Change: 100 × (exp(β) - 1)
+            - Interpretation: Plain-language explanation
+
+        Example
+        -------
+        cmf_table = builder.print_cmf_interpretation(fit_result)
+        print(cmf_table)
+        """
+        import math
+        
+        summary = fit_result.get("summary", {})
+        aadt_median = self.df[self.aadt_col].median()
+        
+        cmf_rows = []
+        
+        # Extract baseline coefficients
+        if "baseline" in summary:
+            baseline_vars = summary.get("baseline", {})
+            for param_name, param_info in baseline_vars.items():
+                if isinstance(param_info, dict):
+                    coef_value = param_info.get("coef", np.nan)
+                else:
+                    coef_value = float(param_info)
+                
+                if np.isfinite(coef_value):
+                    try:
+                        cmf_one_unit = math.exp(coef_value)
+                        percent_change = 100.0 * (cmf_one_unit - 1.0)
+                        
+                        if percent_change < 0:
+                            interpretation = f"{param_name} +1 → {percent_change:.2f}% crashes"
+                        elif percent_change > 0:
+                            interpretation = f"{param_name} +1 → +{percent_change:.2f}% crashes"
+                        else:
+                            interpretation = f"{param_name} +1 → No change"
+                        
+                        cmf_rows.append({
+                            "Parameter": param_name,
+                            "Component": "Baseline (Inherent Risk)",
+                            "Coefficient": coef_value,
+                            "CMF(+1)": cmf_one_unit,
+                            "Percent Change": percent_change,
+                            "Interpretation": interpretation,
+                        })
+                    except (ValueError, OverflowError):
+                        pass
+        
+        # Extract local (AADT-dependent) coefficients
+        if "local" in summary:
+            local_vars = summary.get("local", {})
+            for param_name, param_info in local_vars.items():
+                if isinstance(param_info, dict):
+                    coef_value = param_info.get("coef", np.nan)
+                else:
+                    coef_value = float(param_info)
+                
+                if np.isfinite(coef_value):
+                    try:
+                        # For AADT-dependent terms, compute effect at median AADT
+                        if aadt_median and aadt_median > 0:
+                            cmf_at_median = math.exp(coef_value * math.log(aadt_median))
+                            percent_change = 100.0 * (cmf_at_median - 1.0)
+                            interpretation = (f"{param_name} +1 → Reduces AADT elasticity; "
+                                            f"at median AADT ({aadt_median:,.0f}): {percent_change:.2f}% crashes")
+                        else:
+                            percent_change = 100.0 * (math.exp(coef_value) - 1.0)
+                            interpretation = f"{param_name} +1 → {percent_change:+.2f}% (AADT-dependent)"
+                        
+                        cmf_rows.append({
+                            "Parameter": param_name,
+                            "Component": "AADT Response (Traffic Sensitivity)",
+                            "Coefficient": coef_value,
+                            "CMF(+1)": math.exp(coef_value) if percent_change is not None else np.nan,
+                            "Percent Change": percent_change,
+                            "Interpretation": interpretation,
+                        })
+                    except (ValueError, OverflowError):
+                        pass
+        
+        cmf_df = pd.DataFrame(cmf_rows)
+        
+        print("\n" + "=" * 110)
+        print(f"  CMF INTERPRETATION  —  HIERARCHICAL CMF MODEL")
+        print("=" * 110 + "\n")
+        
+        if len(cmf_df) > 0:
+            # Print baseline block
+            baseline_rows = cmf_df[cmf_df["Component"] == "Baseline (Inherent Risk)"]
+            if len(baseline_rows) > 0:
+                print("  BASELINE BLOCK (Inherent Crash Risk Factors):")
+                print("  " + "─" * 106)
+                for _, row in baseline_rows.iterrows():
+                    print(f"  {row['Parameter']:25s} β = {row['Coefficient']:+.6f}")
+                    print(f"    CMF(+1 unit)     : {row['CMF(+1)']:.4f}")
+                    print(f"    Effect (+1 unit) : {row['Percent Change']:+.2f}%")
+                    print(f"    ➜ {row['Interpretation']}")
+                    print()
+            
+            # Print AADT-response block
+            aadt_rows = cmf_df[cmf_df["Component"] == "AADT Response (Traffic Sensitivity)"]
+            if len(aadt_rows) > 0:
+                print("  AADT-RESPONSE BLOCK (Traffic-Dependent Factors):")
+                print("  " + "─" * 106)
+                for _, row in aadt_rows.iterrows():
+                    print(f"  {row['Parameter']:25s} β = {row['Coefficient']:+.6f}")
+                    print(f"    Elasticity effect: {row['CMF(+1)']:.4f}")
+                    print(f"    Effect at {aadt_median:,.0f} AADT: {row['Percent Change']:+.2f}%")
+                    print(f"    ➜ {row['Interpretation']}")
+                    print()
+        else:
+            print("  (No coefficients found in summary)")
+            print()
+        
+        print("=" * 110)
+        print("  CMF INTERPRETATION GUIDE:")
+        print("  ─────────────────────────────────────────────────────────────────────────────────────────────────────")
+        print("  Baseline Block:")
+        print("    • Shows which features directly affect inherent crash risk")
+        print("    • CMF < 1.0 (negative percent change) → Safer design/context (fewer crashes)")
+        print("    • CMF > 1.0 (positive percent change) → Riskier design/context (more crashes)")
+        print()
+        print("  AADT-Response Block:")
+        print("    • Shows how crash-volume elasticity changes with each feature")
+        print("    • Negative coefficient → Reduces how sensitive crashes are to traffic volume")
+        print("    • Effects are AADT-dependent and computed at median traffic")
+        print("=" * 110 + "\n")
+        
+        return cmf_df
+
     def to_experiment_builder(
         self,
         id_col: str,

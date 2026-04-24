@@ -1,0 +1,3 @@
+- Predictive winner: the traditional baseline NB is still slightly better on fit statistics in this example.
+- CMF advantage: it separates baseline roadway risk from the AADT-response block, so the engineering story is cleaner even when predictions are similar.
+- On the smooth AADT curve, the largest gap between the two baseline models is only 1.63%.

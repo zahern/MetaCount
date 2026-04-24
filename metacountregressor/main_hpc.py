@@ -62,6 +62,39 @@ def gaussian_loglik(y, eta, sigma):
     return ll
 
 
+def tobit_loglik(y, eta, sigma_raw):
+    """
+    Left-censored (at 0) Tobit log-likelihood.
+
+    Implements Eqs. (9)-(10) from Chand & Dixit (2018).
+
+    Y_i = Y*_i  if Y*_i > 0,  else  0
+    Y*_i = eta_i + eps_i,   eps_i ~ N(0, sigma^2)
+
+    Censored  (y == 0): log P(Y* <= 0) = log Phi(-eta/sigma)
+    Uncensored (y > 0): log phi((y - eta)/sigma) - log(sigma)
+
+    Parameters
+    ----------
+    y         : (N, P, 1)  observed outcome
+    eta       : (N, P, R)  linear predictor (mean of latent Y*)
+    sigma_raw : scalar     raw scale — transformed via softplus to sigma > 0
+
+    Returns
+    -------
+    ll : (N, P, R)  per-observation log-likelihoods
+    """
+    sigma = jax.nn.softplus(sigma_raw)
+
+    ll_cens   = jsp.special.log_ndtr(-eta / sigma)           # log Phi(-z)
+
+    ll_uncens = (
+        -0.5 * jnp.log(2.0 * jnp.pi * sigma ** 2)
+        - (y - eta) ** 2 / (2.0 * sigma ** 2)
+    )
+
+    return jnp.where(y <= 0.0, ll_cens, ll_uncens)
+
 
 def check_structure_recovery(
     pareto_solutions,
@@ -784,12 +817,12 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
 
         for c in range(C):
 
-            ll_c = -mixed_model_loglik(
+            ll_c = mixed_model_loglik(
                 theta_all[c],
                 data,
                 base_spec,
-                indivi = True           
-            )
+                indivi = True
+            )                                               # (N,) log-likelihoods (negative)
 
             ll_classes.append(ll_c + jnp.log(pi[c]))
 
@@ -807,8 +840,14 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
 
     eta = build_eta(params, data, spec)
 
-    # Clip for numerical stability
-    eta = jnp.clip(eta, -25, 25)
+    # Clip for numerical stability.
+    # Count/log-normal models work in log-scale so ±25 prevents exp overflow.
+    # Linear-predictor models (gaussian, tobit) work in data scale — use a
+    # wider clip that still prevents NaN but doesn't strangle their gradients.
+    if spec.model in {"gaussian", "tobit"}:
+        eta = jnp.clip(eta, -500.0, 500.0)
+    else:
+        eta = jnp.clip(eta, -25.0, 25.0)
 
     if eta.ndim == 2:
         eta = eta[..., None]
@@ -832,12 +871,15 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
         alpha = blocks["alpha"]
         ll_count = nb2_loglik(y, eta, alpha)
     elif spec.model == "lognormal":
-        sigma = blocks["sigma"]
+        sigma    = blocks["sigma"]
         ll_count = lognormal_loglik(y, eta, sigma)
     elif spec.model == "gaussian":
-        sigma = blocks["sigma"]
+        sigma    = blocks["sigma"]
         ll_count = gaussian_loglik(y, eta, sigma)
-
+    elif spec.model == "tobit":
+        # Left-censored at 0; eta is the linear predictor for the latent Y*
+        sigma    = blocks["sigma"]
+        ll_count = tobit_loglik(y, eta, sigma)
     else:
         raise ValueError("Unknown model")
 
@@ -1257,8 +1299,8 @@ def build_base_index(spec):
     if spec.model == "nb":
         index["dispersion"] = idx
         idx += 1
-    
-    if spec.model in {"lognormal", "gaussian"}:
+
+    if spec.model in {"lognormal", "gaussian", "tobit"}:
         index["sigma"] = idx
         idx += 1
 
@@ -1375,9 +1417,11 @@ def print_summary(result, objective, data, spec, param_index):
             for z in spec.hetro_names:
                 names.append(f"hetro({rnd}|{z})")
 
-    # NB dispersion
+    # NB dispersion / Tobit-Gaussian scale
     if spec.model == "nb":
         names.append("dispersion")
+    elif spec.model in {"lognormal", "gaussian", "tobit"}:
+        names.append("sigma")
 
     summary_df = pd.DataFrame({
         "Parameter": names,
@@ -1699,9 +1743,11 @@ def print_summary(result, objective, data, spec, param_index):
             for z in spec.hetro_names:
                 names.append(f"hetro({rnd}|{z})")
 
-    # Dispersion
+    # NB dispersion / Tobit-Gaussian scale
     if spec.model == "nb":
         names.append("dispersion")
+    elif spec.model in {"lognormal", "gaussian", "tobit"}:
+        names.append("sigma")
 
     summary_df = pd.DataFrame({
         "Parameter": names,
@@ -2495,9 +2541,11 @@ def print_summary(result, objective, data, spec, param_index):
             for z in spec.hetro_names:
                 names.append(f"hetro({rnd}|{z})")
 
-    # Dispersion
+    # NB dispersion / Tobit-Gaussian scale
     if spec.model == "nb":
         names.append("dispersion")
+    elif spec.model in {"lognormal", "gaussian", "tobit"}:
+        names.append("sigma")
 
     summary_df = pd.DataFrame({
         "Parameter": names,
@@ -2769,8 +2817,8 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
 
     if spec.model == "nb":
         names.append("dispersion")
-    elif spec.model == 'lognormal':
-        names.append('lognormal')
+    elif spec.model in {"lognormal", "gaussian", "tobit"}:
+        names.append("sigma")
 
     df = pd.DataFrame({
         "Parameter": names,
@@ -3104,6 +3152,15 @@ class CountModel:
         eta = build_eta(self.params, self.data, self.spec)
         if self.spec.model == "gaussian":
             return eta.mean(axis=-1)
+        if self.spec.model == "tobit":
+            # E[Y_obs | X] = Phi(z)*eta + sigma*phi(z),  z = eta/sigma
+            # Eq. (11) in Chand & Dixit (2018)
+            blocks = unpack_params(self.params, self.spec)
+            sigma  = jax.nn.softplus(blocks["sigma"])
+            eta_m  = eta.mean(axis=-1)                  # (N, P)
+            z      = eta_m / sigma
+            phi_z  = jnp.exp(-0.5 * z ** 2) / jnp.sqrt(2.0 * jnp.pi)
+            return jsp.special.ndtr(z) * eta_m + sigma * phi_z
         mu = jnp.exp(eta)
         return mu.mean(axis=-1)
 
@@ -3573,11 +3630,11 @@ def unpack_params(params, spec: ModelSpec):
         else:
             out["gamma"] = None
 
-        # NB DISPERSION
+        # NB DISPERSION / SCALE
         if spec.model == "nb":
             out["alpha"] = params[idx]
             idx += 1
-        elif spec.model in {"lognormal", "gaussian"}:
+        elif spec.model in {"lognormal", "gaussian", "tobit"}:
             out["sigma"] = params[idx]
             idx += 1
         else:

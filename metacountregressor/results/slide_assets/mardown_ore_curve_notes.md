@@ -1,0 +1,3 @@
+- The old pointwise table is only a readable summary at low, median, and high AADT.
+- The main figure is now the smooth model-based curve: predictions are evaluated on a dense AADT grid while the other variables stay at a representative roadway profile.
+- The pointwise table remains in the deck as three anchor values sampled from that smooth curve.

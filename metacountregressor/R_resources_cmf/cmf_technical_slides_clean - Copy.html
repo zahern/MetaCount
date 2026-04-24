@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<script src="cmf_technical_slides_clean - Copy_files/libs/clipboard/clipboard.min.js"></script>
+<script src="cmf_technical_slides_clean - Copy_files/libs/quarto-html/tabby.min.js"></script>
+<script src="cmf_technical_slides_clean - Copy_files/libs/quarto-html/popper.min.js"></script>
+<script src="cmf_technical_slides_clean - Copy_files/libs/quarto-html/tippy.umd.min.js"></script>
+<link href="cmf_technical_slides_clean - Copy_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="cmf_technical_slides_clean - Copy_files/libs/quarto-html/light-border.css" rel="stylesheet">
+<link href="cmf_technical_slides_clean - Copy_files/libs/quarto-html/quarto-syntax-highlighting-e1a5c8363afafaef2c763b6775fbf3ca.css" rel="stylesheet" id="quarto-text-highlighting-styles"><meta charset="utf-8">
+  <meta name="generator" content="quarto-1.7.31">
+
+  <meta name="author" content="Traffic Safety Analysis">
+  <meta name="dcterms.date" content="2026-04-22">
+  <title>Crash Modification Functions</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui">
+  <link rel="stylesheet" href="cmf_technical_slides_clean - Copy_files/libs/revealjs/dist/reset.css">
+  <link rel="stylesheet" href="cmf_technical_slides_clean - Copy_files/libs/revealjs/dist/reveal.css">
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+      vertical-align: middle;
+    }
+  </style>
+  <link rel="stylesheet" href="cmf_technical_slides_clean - Copy_files/libs/revealjs/dist/theme/quarto-2c1b5f745a11cfad616ebade4a4a7d24.css">
+  <link href="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/quarto-line-highlight/line-highlight.css" rel="stylesheet">
+  <link href="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/reveal-menu/menu.css" rel="stylesheet">
+  <link href="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/reveal-menu/quarto-menu.css" rel="stylesheet">
+  <link href="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/quarto-support/footer.css" rel="stylesheet">
+  <style type="text/css">
+    .reveal div.sourceCode {
+      margin: 0;
+      overflow: auto;
+    }
+    .reveal div.hanging-indent {
+      margin-left: 1em;
+      text-indent: -1em;
+    }
+    .reveal .slide:not(.center) {
+      height: 100%;
+    }
+    .reveal .slide.scrollable {
+      overflow-y: auto;
+    }
+    .reveal .footnotes {
+      height: 100%;
+      overflow-y: auto;
+    }
+    .reveal .slide .absolute {
+      position: absolute;
+      display: block;
+    }
+    .reveal .footnotes ol {
+      counter-reset: ol;
+      list-style-type: none; 
+      margin-left: 0;
+    }
+    .reveal .footnotes ol li:before {
+      counter-increment: ol;
+      content: counter(ol) ". "; 
+    }
+    .reveal .footnotes ol li > p:first-child {
+      display: inline-block;
+    }
+    .reveal .slide ul,
+    .reveal .slide ol {
+      margin-bottom: 0.5em;
+    }
+    .reveal .slide ul li,
+    .reveal .slide ol li {
+      margin-top: 0.4em;
+      margin-bottom: 0.2em;
+    }
+    .reveal .slide ul[role="tablist"] li {
+      margin-bottom: 0;
+    }
+    .reveal .slide ul li > *:first-child,
+    .reveal .slide ol li > *:first-child {
+      margin-block-start: 0;
+    }
+    .reveal .slide ul li > *:last-child,
+    .reveal .slide ol li > *:last-child {
+      margin-block-end: 0;
+    }
+    .reveal .slide .columns:nth-child(3) {
+      margin-block-start: 0.8em;
+    }
+    .reveal blockquote {
+      box-shadow: none;
+    }
+    .reveal .tippy-content>* {
+      margin-top: 0.2em;
+      margin-bottom: 0.7em;
+    }
+    .reveal .tippy-content>*:last-child {
+      margin-bottom: 0.2em;
+    }
+    .reveal .slide > img.stretch.quarto-figure-center,
+    .reveal .slide > img.r-stretch.quarto-figure-center {
+      display: block;
+      margin-left: auto;
+      margin-right: auto; 
+    }
+    .reveal .slide > img.stretch.quarto-figure-left,
+    .reveal .slide > img.r-stretch.quarto-figure-left  {
+      display: block;
+      margin-left: 0;
+      margin-right: auto; 
+    }
+    .reveal .slide > img.stretch.quarto-figure-right,
+    .reveal .slide > img.r-stretch.quarto-figure-right  {
+      display: block;
+      margin-left: auto;
+      margin-right: 0; 
+    }
+  </style>
+  <style>
+    .reveal .slides section { font-size: 0.84em; }
+    .reveal .slides section.compact { font-size: 0.76em; }
+    .reveal table { font-size: 0.64em; }
+    .reveal pre code { font-size: 0.70em; line-height: 1.25; }
+    .reveal p, .reveal li { line-height: 1.28; }
+    .model-trad { color: #1f77b4; font-weight: 700; }
+    .model-cmf { color: #2e8b57; font-weight: 700; }
+    .coef-pos { color: #b22222; font-weight: 700; }
+    .coef-neg { color: #1b5e20; font-weight: 700; }
+    .delta-neg { color: #6a1b9a; font-weight: 700; }
+    .chip {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.85em;
+      background: #f4f6f8;
+      border: 1px solid #d9dee3;
+    }
+    .legend-fixed {
+      position: fixed;
+      top: 8px;
+      right: 10px;
+      z-index: 30;
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid #d9dee3;
+      border-radius: 999px;
+      padding: 4px 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .legend-fixed .legend-sep {
+      color: #8a8f98;
+      padding: 0 6px;
+    }
+  </style>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      if (document.querySelector('.legend-fixed')) return;
+
+      const legend = document.createElement('div');
+      legend.className = 'legend-fixed';
+      legend.id = 'model-legend-fixed';
+      legend.innerHTML =
+        '<span class="model-trad">Traditional</span>' +
+        '<span class="legend-sep">|</span>' +
+        '<span class="model-cmf">CMF</span>';
+      document.body.appendChild(legend);
+
+      function shouldHideLegend(slideEl) {
+        if (!slideEl) return false;
+        if (slideEl.classList.contains('title-slide')) return true;
+
+        const heading = slideEl.querySelector('h1, h2, h3');
+        if (!heading) return false;
+        const title = (heading.textContent || '').trim().toLowerCase();
+        return (
+          title.startsWith('references') ||
+          title.includes('appendix') ||
+          title.includes('backup')
+        );
+      }
+
+      function updateLegendVisibility() {
+        const el = document.getElementById('model-legend-fixed');
+        if (!el) return;
+
+        if (window.Reveal && typeof window.Reveal.getCurrentSlide === 'function') {
+          const current = window.Reveal.getCurrentSlide();
+          el.style.display = shouldHideLegend(current) ? 'none' : 'block';
+        } else {
+          el.style.display = 'block';
+        }
+      }
+
+      updateLegendVisibility();
+
+      if (window.Reveal && typeof window.Reveal.on === 'function') {
+        window.Reveal.on('ready', updateLegendVisibility);
+        window.Reveal.on('slidechanged', updateLegendVisibility);
+      }
+    });
+  </script>
+</head>
+<body class="quarto-light">
+  <div class="reveal">
+    <div class="slides">
+
+<section id="title-slide" class="quarto-title-block center">
+  <h1 class="title">Crash Modification Functions</h1>
+  <p class="subtitle">Hierarchical Count Modeling for Road Safety</p>
+
+<div class="quarto-title-authors">
+<div class="quarto-title-author">
+<div class="quarto-title-author-name">
+Traffic Safety Analysis 
+</div>
+</div>
+</div>
+
+  <p class="date">2026-04-22</p>
+</section>
+<section id="what-are-crash-modification-factors" class="slide level2">
+<h2>What Are Crash Modification Factors?</h2>
+<p><strong>CMF Definition:</strong></p>
+<p><span class="math display">\[\text{CMF}(a \rightarrow b) = \frac{\hat{N}_b}{\hat{N}_a}\]</span></p>
+<p>where:</p>
+<ul>
+<li><span class="math inline">\(a\)</span> = the current condition a.</li>
+<li><span class="math inline">\(b\)</span> = after a treatment/change</li>
+<li><span class="math inline">\(\hat{N}_a\)</span> = predicted crashes in condition <span class="math inline">\(a\)</span></li>
+<li><span class="math inline">\(\hat{N}_b\)</span> = predicted crashes in condition <span class="math inline">\(b\)</span></li>
+</ul>
+<p>Why CMF changes:</p>
+<ul>
+<li>If the treatment lowers predicted crashes (<span class="math inline">\(\hat{N}_b &lt; \hat{N}_a\)</span>), then CMF &lt; 1.</li>
+<li>If the treatment raises predicted crashes (<span class="math inline">\(\hat{N}_b &gt; \hat{N}_a\)</span>), then CMF &gt; 1.</li>
+</ul>
+</section>
+<section id="quick-example-coefficient-to-percent" class="slide level2">
+<h2>Quick Example: Coefficient To Percent</h2>
+<h3 id="interpretation">Interpretation</h3>
+<ul>
+<li><strong>CMF = 1.0</strong> → No change (neutral effect)</li>
+<li><strong>CMF &lt; 1.0</strong> → Fewer crashes (safer treatment)</li>
+<li><strong>CMF &gt; 1.0</strong> → More crashes (riskier treatment)</li>
+</ul>
+<h3 id="percentage-change">Percentage Change</h3>
+<p><span class="math display">\[\text{Percent Change} = 100 \times \left(\exp(\beta \cdot x) - 1\right)\]</span></p>
+<p><strong>Example:</strong></p>
+<ul>
+<li>Coefficient <span class="math inline">\(\beta = -0.08394\)</span> for CURVES<br>
+</li>
+<li>For when <span class="math inline">\(x = 1\)</span>:
+<ul>
+<li><span class="math inline">\(100 \times (\exp(-0.08394) - 1) = -8.05\%\)</span> crashes</li>
+</ul></li>
+</ul>
+</section>
+<section id="conceptual-structure-core-difference" class="slide level2">
+<h2>Conceptual Structure (Core Difference)</h2>
+<h3 id="traditional-model">Traditional Model</h3>
+<p><span class="math display">\[
+\log(\hat N_i) = \text{Single additive equation}
+\]</span></p>
+<p>That is</p>
+<p><span class="math display">\[\hat{N}_i = E_i \times \exp(\beta_0 + \beta_1 X_{1i} + \beta_2 X_{2i} + \ldots)\]</span></p>
+<p>Everything is estimated together:</p>
+<ul>
+<li>Baseline crash propensity<br>
+</li>
+<li>Traffic exposure<br>
+</li>
+<li>Traffic elasticity<br>
+</li>
+<li>Geometry effects</li>
+</ul>
+<p>Mechanisms are mixed.</p>
+</section>
+<section class="slide level2">
+
+<h3 id="hierarchical-cmf-model">Hierarchical CMF Model</h3>
+<p><span class="math display">\[
+\hat N_i =
+\underbrace{\exp(\text{baseline features})}_{\textbf{Inherent Risk}}
+\times
+\underbrace{AADT^{(\text{elasticity modified by geometry})}}_{\textbf{Traffic Response}}
+\]</span></p>
+<p>Two distinct mechanisms:</p>
+<ul>
+<li><strong>Baseline block</strong> → inherent crash propensity<br>
+</li>
+<li><strong>Traffic-response block</strong> → how crashes scale with traffic</li>
+</ul>
+<p>This structural separation is the advantage. As we can explicitly model In response to AADT</p>
+<blockquote>
+<p>Traditional model typically models with respect to Exposure of ADDT</p>
+</blockquote>
+</section>
+<section id="what-the-exposure-offset-really-does" class="slide level2 compact">
+<h2>What the Exposure (Offset) Really Does</h2>
+<p>Traditional model with exposure:</p>
+<p><span class="math display">\[
+\hat N_i = E_i \times \exp(\beta_0 + \beta_1 X_{1i} + \dots)
+\]</span></p>
+<p>If we assume AADT by segmentation length to be the exposure:</p>
+<p><span class="math display">\[
+E_i = AADT_i \times LENGTH_i
+\]</span></p>
+<p>Then:</p>
+<p><span class="math display">\[
+\log(\hat N_i) =
+\log(AADT_i) + \log(LENGTH_i) + \text{linear predictor}
+\]</span></p>
+<h3 id="important">Important</h3>
+<p>Including AADT in the offset:</p>
+<ul>
+<li>Fixes traffic elasticity at 1<br>
+</li>
+<li>Assumes proportional exposure<br>
+</li>
+<li>Prevents geometry from modifying traffic scaling directly as its mixed in with other exposure effects</li>
+</ul>
+<p>It assumes:</p>
+<blockquote>
+<p>If traffic doubles, crashes double — regardless of geometry.</p>
+</blockquote>
+</section>
+<section id="if-we-remove-aadt-from-the-offset" class="slide level2">
+<h2>If We Remove AADT from the Offset</h2>
+<p>Without offset:</p>
+<p><span class="math display">\[
+\log(\hat N_i)
+=
+\beta_0 + \beta_1 X_{1i} + \beta_{AADT} \log(AADT_i)
+\]</span></p>
+<p>Now traffic elasticity is estimated.</p>
+<p>But:</p>
+<ul>
+<li>Still one pooled coefficient<br>
+</li>
+<li>Geometry does not structurally modify elasticity<br>
+</li>
+<li>Baseline and traffic effects remain mixed</li>
+</ul>
+<blockquote>
+<p>Traditional can estimate elasticity, but only relative to its indivodual components. It cannot separate mechanisms. Ie geometric effects change crash likilohood neglicting traffic</p>
+</blockquote>
+</section>
+<section id="what-the-hierarchical-cmf-structure-allows" class="slide level2 compact">
+<h2>What the Hierarchical CMF Structure Allows</h2>
+<p>Baseline block:</p>
+<p><span class="math display">\[
+\hat N_i^{\text{baseline}}
+=
+\exp(\alpha_0 + \alpha_1 X_{1i} + \dots)
+\]</span></p>
+<p>Traffic-response block:</p>
+<p><span class="math display">\[
+\hat N_i
+=
+\hat N_i^{\text{baseline}}
+\times
+AADT_i^{(\gamma_0 + \gamma_1 \text{WIDTH}_i + \gamma_2 \text{CURVES}_i)}
+\]</span></p>
+<p>Now geometry can:</p>
+<ul>
+<li>Affect inherent crash risk through the baseline</li>
+<li>Independently modify traffic elasticity</li>
+</ul>
+<blockquote>
+<p>Traffic scaling becomes geometry-dependent. Eg,showes how changes in width and cuves adjust the elasticity directly in response to AADT</p>
+</blockquote>
+</section>
+<section id="the-problem-traditional-models" class="slide level2">
+<h2>The Problem: Traditional Models</h2>
+<p>Traditional negative binomial regression:</p>
+<p><span class="math display">\[\hat{N}_i = E_i \times \exp(\beta_0 + \beta_1 X_{1i} + \beta_2 X_{2i} + \ldots)\]</span></p>
+<h3 id="three-critical-questions">Three Critical Questions</h3>
+<ol type="1">
+<li><strong>What causes the coefficient?</strong>
+<ul>
+<li>Does CURVES increase crashes directly?</li>
+<li>Or does it reflect traffic volume confounding (AADT)?</li>
+</ul></li>
+<li><strong>How do we design interventions?</strong>
+<ul>
+<li>Should we prioritize geometry changes or traffic management?</li>
+<li>Are both quantified?</li>
+</ul></li>
+<li><strong>What if exposure assumptions are wrong?</strong>
+<ul>
+<li>Exposure effect should account for differences in road segmentation</li>
+<li>But maybe longer roads have different safety dynamics</li>
+</ul></li>
+</ol>
+</section>
+<section id="solution-hierarchical-cmf-model" class="slide level2">
+<h2>Solution: Hierarchical CMF Model</h2>
+<h3 id="two-level-structure">Two-Level Structure</h3>
+<p><strong>Level 1 — Baseline Block</strong> (inherent crash propensity): <span class="math display">\[\hat{N}_i^{\text{baseline}} = \exp(\alpha_0 + \alpha_{\text{URB}} \cdot \text{URB}_i + \alpha_{\text{ACCESS}} \cdot \text{ACCESS}_i + \cdots)\]</span></p>
+<p><strong>Level 2 — Traffic-Response Block</strong> (AADT elasticity): <span class="math display">\[\hat{N}_i = \hat{N}_i^{\text{baseline}} \times \text{AADT}_i^{(\gamma_0 + \gamma_{\text{WIDTH}} \cdot \text{WIDTH}_i + \cdots)}\]</span></p>
+<h3 id="key-advantage">Key Advantage</h3>
+<ul>
+<li><strong>Baseline features</strong> (URB, ACCESS, …) → What geometric factors directly explain the crash process</li>
+<li><strong>AADT features</strong> (WIDTH, CURVES, …) → How does the geometric factors affect the traffic volume sensitivity change?</li>
+</ul>
+</section>
+<section id="experiment" class="slide level2">
+<h2>Experiment</h2>
+</section>
+<section id="example-wahshiton-1990-example-16-3" class="slide level2">
+<h2>Example: Wahshiton 1990 (Example 16-3)</h2>
+<p><strong>Dataset:</strong> 275 road segments, 4-year crashes Highlighted Features</p>
+<table class="caption-top">
+<thead>
+<tr class="header">
+<th>Feature</th>
+<th>Range</th>
+<th>Median</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>AADT (vehicles/day)</td>
+<td>4,000–97,000</td>
+<td><strong>23,771</strong></td>
+</tr>
+<tr class="even">
+<td>CURVES (per mile)</td>
+<td>0–42</td>
+<td><strong>3.5</strong></td>
+</tr>
+<tr class="odd">
+<td>ACCESS (points)</td>
+<td>0–18</td>
+<td><strong>2</strong></td>
+</tr>
+<tr class="even">
+<td>WIDTH (feet)</td>
+<td>9–16</td>
+<td><strong>11.5</strong></td>
+</tr>
+<tr class="odd">
+<td>GRADEBR (%)</td>
+<td>0–8</td>
+<td><strong>2.1</strong></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="variable-meanings" class="slide level2">
+<h2>Variable Meanings</h2>
+<ul>
+<li><strong>URB</strong>: Urban indicator (1 = urban segment, 0 = non-urban segment).</li>
+<li><strong>ACCESS</strong>: Access-point level/density on the segment (more driveways/intersections).</li>
+<li><strong>GRADEBR</strong>: Grade-break level on the segment (more vertical grade interruptions).</li>
+<li><strong>CURVES</strong>: Horizontal curve intensity/count on the segment.</li>
+<li><strong>WIDTH</strong>: Lane/roadway width measure.</li>
+<li><strong>AADT</strong>: Annual Average Daily Traffic (vehicles/day).</li>
+<li><strong>LENGTH</strong>: Segment length exposure used to normalize crash counts.</li>
+<li><strong>OFFSET</strong>: log(AADT*LENGTH)</li>
+</ul>
+<p>Traditional Model Had Offset with AADT and Length CMF Had Offset with Length Both models had same variables fitted except width and curves fitted in geometric and traffic related variables</p>
+</section>
+<section id="fitted-traditional-model" class="slide level2">
+<h2>Fitted Traditional Model</h2>
+<h3 id="estimated-coefficients">Estimated Coefficients</h3>
+<p><span class="math display">\[
+\beta_0 = -3.214
+\]</span></p>
+<p><span class="math display">\[
+\beta_{\text{WIDTH}} = -0.065
+\]</span></p>
+<p><span class="math display">\[
+\beta_{\text{CURVES}} = +0.0078
+\]</span></p>
+<p><span class="math display">\[
+\beta_{\text{SHOULDER}} = -0.041
+\]</span></p>
+<h3 id="model-characteristics">Model Characteristics</h3>
+<ul>
+<li>Elasticity fixed at 1<br>
+</li>
+<li>Constant percent effects<br>
+</li>
+<li>traffic-dependent treatment variation held in offset but also affect by length</li>
+</ul>
+<blockquote>
+<p>This means we don’t know direclty what affects crash risk changes, only the individual charactersitics in relation to AADT</p>
+</blockquote>
+</section>
+<section id="hierarchical-cmf-model-full-equation" class="slide level2 compact">
+<h2>Hierarchical CMF Model (Full Equation)</h2>
+<p><span class="math display">\[
+\begin{align}
+\hat N_i
+=
+\exp(
+\alpha_0
++
+\alpha_1 \text{WIDTH}_i
++
+\alpha_2 \text{CURVES}_i
++
+\alpha_3 \text{SHOULDER}_i
+)
+\times\\
+AADT_i^{
+(
+\gamma_0
++
+\gamma_1 \text{WIDTH}_i
++
+\gamma_2 \text{CURVES}_i
+)
+}
+\times
+LENGTH_i
+\end{align}
+\]</span></p>
+<blockquote>
+<p>Baseline and traffic-response are separated.</p>
+</blockquote>
+<blockquote>
+<p>WIDTH and CURVES appear in both responses</p>
+</blockquote>
+</section>
+<section id="estimated-cmf-coefficients" class="slide level2">
+<h2>Estimated CMF Coefficients</h2>
+<h3 id="baseline-block">Baseline Block</h3>
+<p><span class="math display">\[
+\alpha_0 = -5.102
+\]</span></p>
+<p><span class="math display">\[
+\alpha_{\text{WIDTH}} = -1.947
+\]</span></p>
+<p><span class="math display">\[
+\alpha_{\text{CURVES}} = +0.312
+\]</span></p>
+<p><span class="math display">\[
+\alpha_{\text{SHOULDER}} = -0.088
+\]</span></p>
+</section>
+<section class="slide level2">
+
+<h3 id="traffic-response-block">Traffic-Response Block</h3>
+<p><span class="math display">\[
+\gamma_0 = 0.981
+\]</span></p>
+<p><span class="math display">\[
+\gamma_{\text{WIDTH}} = +0.175
+\]</span></p>
+<p><span class="math display">\[
+\gamma_{\text{CURVES}} = -0.0083
+\]</span></p>
+<p>Elasticity is estimated and geometry-dependent.</p>
+</section>
+<section id="where-width-appears" class="slide level2">
+<h2>Where WIDTH Appears</h2>
+<p>WIDTH enters two mechanisms.</p>
+<h3 id="baseline-effect">Baseline Effect</h3>
+<p><span class="math display">\[
+\exp(-1.947 \cdot \text{WIDTH})
+\]</span></p>
+<p>Interpretation:</p>
+<p>Wider lanes reduce inherent crash propensity.</p>
+</section>
+<section class="slide level2">
+
+<h3 id="traffic-elasticity-effect">Traffic Elasticity Effect</h3>
+<p><span class="math display">\[
+AADT^{(0.175 \cdot \text{WIDTH})}
+\]</span></p>
+<p>Interpretation:</p>
+<p>Wider lanes increase elasticity of crashes with respect to traffic.</p>
+</section>
+<section class="slide level2">
+
+<h3 id="full-width-effect">Full WIDTH Effect</h3>
+<p><span class="math display">\[
+\exp(-1.947 \cdot \text{WIDTH})
+\times
+AADT^{(0.175 \cdot \text{WIDTH})}
+\]</span></p>
+<p>The net effect depends on traffic level.</p>
+</section>
+<section id="model-characteristics-cmf" class="slide level2">
+<h2>Model Characteristics (CMF)</h2>
+<ol type="1">
+<li>Elasticity estimated, not fixed<br>
+</li>
+<li>Geometry modifies traffic scaling<br>
+</li>
+<li>Baseline and exposure effects separated<br>
+</li>
+<li>Treatment effects vary by AADT<br>
+</li>
+<li>Exposure proportionality becomes testable</li>
+</ol>
+<p>Crash generation is decomposed structurally.</p>
+</section>
+<section class="slide level2">
+
+</section>
+<section id="benefit-fit-quality-robustness" class="slide level2 compact">
+<h2>Benefit Fit Quality &amp; Robustness</h2>
+<table class="caption-top">
+<colgroup>
+<col style="width: 22%">
+<col style="width: 33%">
+<col style="width: 13%">
+<col style="width: 30%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Metric</th>
+<th>Traditional</th>
+<th>CMF</th>
+<th>Difference</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>BIC</strong></td>
+<td>1925.52</td>
+<td>1931.82</td>
+<td>+6.3</td>
+</tr>
+<tr class="even">
+<td><strong>Deviance</strong></td>
+<td>210.45</td>
+<td>208.12</td>
+<td>-2.33</td>
+</tr>
+<tr class="odd">
+<td><strong>Interpretability</strong></td>
+<td>Elasticity Fixed</td>
+<td>Traffic related and Geometric Elasticity</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Conclusion:</strong> You sacrifice <strong>6.3 BIC points</strong> to gain <strong>complete mechanistic clarity</strong> and <strong>better interpretability</strong>. Fair trade!</p>
+</section>
+<section id="example-lane-widening-at-different-traffic-levels" class="slide level2">
+<h2>Example: Lane Widening at Different Traffic Levels</h2>
+<p><strong>Intervention:</strong> Increase WIDTH by +1 SD</p>
+<p>Median AADT = 23,771<br>
+Consider also a high-traffic site: AADT = 60,000</p>
+</section>
+<section class="slide level2">
+
+<h3 id="traditional-model-1">Traditional Model</h3>
+<p>WIDTH coefficient:</p>
+<p><span class="math display">\[
+\beta = -0.065
+\]</span></p>
+<p>Percent change:</p>
+<p><span class="math display">\[
+100(\exp(-0.065) - 1) = -6.3\%
+\]</span></p>
+<p>Interpretation:</p>
+<blockquote>
+<p>Lane widening reduces crashes by 6.3% — regardless of traffic level.</p>
+</blockquote>
+<p>Same effect at 10,000 AADT and 60,000 AADT.</p>
+<p>Traffic does not modify the treatment effect.</p>
+</section>
+<section id="cmf-hierarchical-model" class="slide level2">
+<h2>CMF Hierarchical Model</h2>
+<p>WIDTH appears in two places:</p>
+<p>Baseline block:</p>
+<p><span class="math display">\[
+-1.947
+\]</span></p>
+<p>Traffic-response block:</p>
+<p><span class="math display">\[
++0.175 \cdot \log(AADT)
+\]</span></p>
+<p>Net effect depends on traffic level.</p>
+</section>
+<section class="slide level2">
+
+<h3 id="at-median-aadt-23771">At Median AADT (23,771)</h3>
+<p><span class="math display">\[
+100\left(\exp\left(-1.947 + 0.175\log(23771)\right)-1\right)
+=
+-16.8\%
+\]</span></p>
+</section>
+<section class="slide level2">
+
+<h3 id="at-high-aadt-60000">At High AADT (60,000)</h3>
+<p><span class="math display">\[
+100\left(\exp\left(-1.947 + 0.175\log(60000)\right)-1\right)
+\approx
+-22\%
+\]</span></p>
+</section>
+<section id="cmf-hierarchical-model-1" class="slide level2">
+<h2>CMF Hierarchical Model</h2>
+<p>WIDTH appears in two places:</p>
+<p>Baseline block:</p>
+<p><span class="math display">\[
+-1.947
+\]</span></p>
+<p>Traffic-response block:</p>
+<p><span class="math display">\[
++0.175 \cdot \log(AADT)
+\]</span></p>
+<p>Net effect depends on traffic level.</p>
+</section>
+<section class="slide level2">
+
+<h3 id="at-median-aadt-23771-1">At Median AADT (23,771)</h3>
+<p><span class="math display">\[
+100\left(\exp\left(-1.947 + 0.175\log(23771)\right)-1\right)
+=
+-16.8\%
+\]</span></p>
+</section>
+<section class="slide level2">
+
+<h3 id="at-high-aadt-60000-1">At High AADT (60,000)</h3>
+<p><span class="math display">\[
+100\left(\exp\left(-1.947 + 0.175\log(60000)\right)-1\right)
+\approx
+-22\%
+\]</span></p>
+</section>
+<section id="example-curve-density-why-the-story-changes" class="slide level2">
+<h2>Example: Curve Density — Why the Story Changes</h2>
+<p>Traditional model (with offset):</p>
+<p>CURVES coefficient:</p>
+<p><span class="math display">\[
+\beta = +0.0078
+\]</span></p>
+<p><span class="math display">\[
+100(\exp(0.0078)-1)=+0.78\%
+\]</span></p>
+<p>Interpretation:</p>
+<blockquote>
+<p>More curves increase crashes.</p>
+</blockquote>
+</section>
+<section class="slide level2">
+
+<p>CMF hierarchical model:</p>
+<p>CURVES modifies AADT elasticity:</p>
+<p><span class="math display">\[
+AADT^{(-0.0083 \cdot CURVES)}
+\]</span></p>
+<p>At median AADT (23,771):</p>
+<p><span class="math display">\[
+23771^{-0.0083} = 0.9205
+\]</span></p>
+<p><span class="math display">\[
+\Rightarrow -8.05\% \text{ crashes}
+\]</span></p>
+<p>Interpretation:</p>
+<blockquote>
+<p>Curves reduce traffic sensitivity.</p>
+</blockquote>
+</section>
+<section id="example-curve-density-why-the-story-changes-1" class="slide level2">
+<h2>Example: Curve Density — Why the Story Changes</h2>
+<p>Traditional model (with offset):</p>
+<p>CURVES coefficient:</p>
+<p><span class="math display">\[
+\beta = +0.0078
+\]</span></p>
+<p><span class="math display">\[
+100(\exp(0.0078)-1)=+0.78\%
+\]</span></p>
+<p>Interpretation:</p>
+<blockquote>
+<p>More curves increase crashes.</p>
+</blockquote>
+</section>
+<section class="slide level2">
+
+<p>CMF hierarchical model:</p>
+<p>CURVES modifies AADT elasticity:</p>
+<p><span class="math display">\[
+AADT^{(-0.0083 \cdot CURVES)}
+\]</span></p>
+<p>At median AADT (23,771):</p>
+<p><span class="math display">\[
+23771^{-0.0083} = 0.9205
+\]</span></p>
+<p><span class="math display">\[
+\Rightarrow -8.05\% \text{ crashes}
+\]</span></p>
+<p>Interpretation:</p>
+<blockquote>
+<p>Curves reduce traffic sensitivity.</p>
+</blockquote>
+</section>
+<section id="what-is-gained" class="slide level2">
+<h2>What Is Gained?</h2>
+<p>Not better percentages.</p>
+<p>Not dramatic BIC improvement.</p>
+<p>What is gained:</p>
+<ul>
+<li>Separation of baseline vs traffic mechanisms<br>
+</li>
+<li>Traffic-dependent CMFs<br>
+</li>
+<li>Transparent exposure testing<br>
+</li>
+<li>Policy-level prioritization capability</li>
+</ul>
+<p>Crash risk can be written as:</p>
+<p><span class="math display">\[
+\text{Crash Risk}
+=
+\textbf{Inherent Roadway Propensity}
+\times
+\textbf{Traffic Scaling Behavior}
+\]</span></p>
+<p>Traditional NB estimates this jointly.</p>
+</section>
+<section id="hierarchical-cmf-estimates-each-component-separately." class="slide level2">
+<h2>Hierarchical CMF estimates each component separately.</h2>
+</section>
+<section id="final-takeaway" class="slide level2">
+<h2>Final Takeaway</h2>
+<p>Crash risk can be written as:</p>
+<p><span class="math display">\[
+\text{Crash Risk}
+=
+\textbf{Inherent Roadway Propensity}
+\times
+\textbf{Traffic Scaling Behavior}
+\]</span></p>
+<p>Traditional negative binomial models estimate this jointly.</p>
+<p>Hierarchical CMF models estimate each component separately.</p>
+
+</section>
+    </div>
+  <div class="quarto-auto-generated-content" style="display: none;">
+<div class="footer footer-default">
+
+</div>
+</div></div>
+
+  <script>window.backupDefine = window.define; window.define = undefined;</script>
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/dist/reveal.js"></script>
+  <!-- reveal.js plugins -->
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/quarto-line-highlight/line-highlight.js"></script>
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/pdf-export/pdfexport.js"></script>
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/reveal-menu/menu.js"></script>
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/reveal-menu/quarto-menu.js"></script>
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/quarto-support/support.js"></script>
+  
+
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/notes/notes.js"></script>
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/search/search.js"></script>
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/zoom/zoom.js"></script>
+  <script src="cmf_technical_slides_clean - Copy_files/libs/revealjs/plugin/math/math.js"></script>
+  <script>window.define = window.backupDefine; window.backupDefine = undefined;</script>
+
+  <script>
+
+      // Full list of configuration options available at:
+      // https://revealjs.com/config/
+      Reveal.initialize({
+'controlsAuto': true,
+'previewLinksAuto': false,
+'pdfSeparateFragments': false,
+'autoAnimateEasing': "ease",
+'autoAnimateDuration': 1,
+'autoAnimateUnmatched': true,
+'jumpToSlide': true,
+'menu': {"side":"left","useTextContentForMissingTitles":true,"markers":false,"loadIcons":false,"custom":[{"title":"Tools","icon":"<i class=\"fas fa-gear\"></i>","content":"<ul class=\"slide-menu-items\">\n<li class=\"slide-tool-item active\" data-item=\"0\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.fullscreen(event)\"><kbd>f</kbd> Fullscreen</a></li>\n<li class=\"slide-tool-item\" data-item=\"1\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.speakerMode(event)\"><kbd>s</kbd> Speaker View</a></li>\n<li class=\"slide-tool-item\" data-item=\"2\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.overview(event)\"><kbd>o</kbd> Slide Overview</a></li>\n<li class=\"slide-tool-item\" data-item=\"3\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.togglePdfExport(event)\"><kbd>e</kbd> PDF Export Mode</a></li>\n<li class=\"slide-tool-item\" data-item=\"4\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.toggleScrollView(event)\"><kbd>r</kbd> Scroll View Mode</a></li>\n<li class=\"slide-tool-item\" data-item=\"5\"><a href=\"#\" onclick=\"RevealMenuToolHandlers.keyboardHelp(event)\"><kbd>?</kbd> Keyboard Help</a></li>\n</ul>"}],"openButton":true},
+'smaller': false,
+ 
+        // Display controls in the bottom right corner
+        controls: false,
+
+        // Help the user learn the controls by providing hints, for example by
+        // bouncing the down arrow when they first encounter a vertical slide
+        controlsTutorial: false,
+
+        // Determines where controls appear, "edges" or "bottom-right"
+        controlsLayout: 'edges',
+
+        // Visibility rule for backwards navigation arrows; "faded", "hidden"
+        // or "visible"
+        controlsBackArrows: 'faded',
+
+        // Display a presentation progress bar
+        progress: true,
+
+        // Display the page number of the current slide
+        slideNumber: 'c/t',
+
+        // 'all', 'print', or 'speaker'
+        showSlideNumber: 'all',
+
+        // Add the current slide number to the URL hash so that reloading the
+        // page/copying the URL will return you to the same slide
+        hash: true,
+
+        // Start with 1 for the hash rather than 0
+        hashOneBasedIndex: false,
+
+        // Flags if we should monitor the hash and change slides accordingly
+        respondToHashChanges: true,
+
+        // Push each slide change to the browser history
+        history: true,
+
+        // Enable keyboard shortcuts for navigation
+        keyboard: true,
+
+        // Enable the slide overview mode
+        overview: true,
+
+        // Disables the default reveal.js slide layout (scaling and centering)
+        // so that you can use custom CSS layout
+        disableLayout: false,
+
+        // Vertical centering of slides
+        center: false,
+
+        // Enables touch navigation on devices with touch input
+        touch: true,
+
+        // Loop the presentation
+        loop: false,
+
+        // Change the presentation direction to be RTL
+        rtl: false,
+
+        // see https://revealjs.com/vertical-slides/#navigation-mode
+        navigationMode: 'linear',
+
+        // Randomizes the order of slides each time the presentation loads
+        shuffle: false,
+
+        // Turns fragments on and off globally
+        fragments: true,
+
+        // Flags whether to include the current fragment in the URL,
+        // so that reloading brings you to the same fragment position
+        fragmentInURL: false,
+
+        // Flags if the presentation is running in an embedded mode,
+        // i.e. contained within a limited portion of the screen
+        embedded: false,
+
+        // Flags if we should show a help overlay when the questionmark
+        // key is pressed
+        help: true,
+
+        // Flags if it should be possible to pause the presentation (blackout)
+        pause: true,
+
+        // Flags if speaker notes should be visible to all viewers
+        showNotes: false,
+
+        // Global override for autoplaying embedded media (null/true/false)
+        autoPlayMedia: null,
+
+        // Global override for preloading lazy-loaded iframes (null/true/false)
+        preloadIframes: null,
+
+        // Number of milliseconds between automatically proceeding to the
+        // next slide, disabled when set to 0, this value can be overwritten
+        // by using a data-autoslide attribute on your slides
+        autoSlide: 0,
+
+        // Stop auto-sliding after user input
+        autoSlideStoppable: true,
+
+        // Use this method for navigation when auto-sliding
+        autoSlideMethod: null,
+
+        // Specify the average time in seconds that you think you will spend
+        // presenting each slide. This is used to show a pacing timer in the
+        // speaker view
+        defaultTiming: null,
+
+        // Enable slide navigation via mouse wheel
+        mouseWheel: false,
+
+        // The display mode that will be used to show slides
+        display: 'block',
+
+        // Hide cursor if inactive
+        hideInactiveCursor: true,
+
+        // Time before the cursor is hidden (in ms)
+        hideCursorTime: 5000,
+
+        // Opens links in an iframe preview overlay
+        previewLinks: false,
+
+        // Transition style (none/fade/slide/convex/concave/zoom)
+        transition: 'fade',
+
+        // Transition speed (default/fast/slow)
+        transitionSpeed: 'default',
+
+        // Transition style for full page slide backgrounds
+        // (none/fade/slide/convex/concave/zoom)
+        backgroundTransition: 'none',
+
+        // Number of slides away from the current that are visible
+        viewDistance: 3,
+
+        // Number of slides away from the current that are visible on mobile
+        // devices. It is advisable to set this to a lower number than
+        // viewDistance in order to save resources.
+        mobileViewDistance: 2,
+
+        // The "normal" size of the presentation, aspect ratio will be preserved
+        // when the presentation is scaled to fit different resolutions. Can be
+        // specified using percentage units.
+        width: 1200,
+
+        height: 900,
+
+        // Factor of the display size that should remain empty around the content
+        margin: 0.1,
+
+        math: {
+          mathjax: 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js',
+          config: 'TeX-AMS_HTML-full',
+          tex2jax: {
+            inlineMath: [['\\(','\\)']],
+            displayMath: [['\\[','\\]']],
+            balanceBraces: true,
+            processEscapes: false,
+            processRefs: true,
+            processEnvironments: true,
+            preview: 'TeX',
+            skipTags: ['script','noscript','style','textarea','pre','code'],
+            ignoreClass: 'tex2jax_ignore',
+            processClass: 'tex2jax_process'
+          },
+        },
+
+        // reveal.js plugins
+        plugins: [QuartoLineHighlight, PdfExport, RevealMenu, QuartoSupport,
+
+          RevealMath,
+          RevealNotes,
+          RevealSearch,
+          RevealZoom
+        ]
+      });
+    </script>
+    <script id="quarto-html-after-body" type="application/javascript">
+      window.document.addEventListener("DOMContentLoaded", function (event) {
+        const tabsets =  window.document.querySelectorAll(".panel-tabset-tabby")
+        tabsets.forEach(function(tabset) {
+          const tabby = new Tabby('#' + tabset.id);
+        });
+        const isCodeAnnotation = (el) => {
+          for (const clz of el.classList) {
+            if (clz.startsWith('code-annotation-')) {                     
+              return true;
+            }
+          }
+          return false;
+        }
+        const onCopySuccess = function(e) {
+          // button target
+          const button = e.trigger;
+          // don't keep focus
+          button.blur();
+          // flash "checked"
+          button.classList.add('code-copy-button-checked');
+          var currentTitle = button.getAttribute("title");
+          button.setAttribute("title", "Copied!");
+          let tooltip;
+          if (window.bootstrap) {
+            button.setAttribute("data-bs-toggle", "tooltip");
+            button.setAttribute("data-bs-placement", "left");
+            button.setAttribute("data-bs-title", "Copied!");
+            tooltip = new bootstrap.Tooltip(button, 
+              { trigger: "manual", 
+                customClass: "code-copy-button-tooltip",
+                offset: [0, -8]});
+            tooltip.show();    
+          }
+          setTimeout(function() {
+            if (tooltip) {
+              tooltip.hide();
+              button.removeAttribute("data-bs-title");
+              button.removeAttribute("data-bs-toggle");
+              button.removeAttribute("data-bs-placement");
+            }
+            button.setAttribute("title", currentTitle);
+            button.classList.remove('code-copy-button-checked');
+          }, 1000);
+          // clear code selection
+          e.clearSelection();
+        }
+        const getTextToCopy = function(trigger) {
+            const codeEl = trigger.previousElementSibling.cloneNode(true);
+            for (const childEl of codeEl.children) {
+              if (isCodeAnnotation(childEl)) {
+                childEl.remove();
+              }
+            }
+            return codeEl.innerText;
+        }
+        const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+          text: getTextToCopy
+        });
+        clipboard.on('success', onCopySuccess);
+        if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+          const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+            text: getTextToCopy,
+            container: window.document.getElementById('quarto-embedded-source-code-modal')
+          });
+          clipboardModal.on('success', onCopySuccess);
+        }
+          var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+          var mailtoRegex = new RegExp(/^mailto:/);
+            var filterRegex = new RegExp('/' + window.location.host + '/');
+          var isInternal = (href) => {
+              return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+          }
+          // Inspect non-navigation links and adorn them if external
+         var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+          for (var i=0; i<links.length; i++) {
+            const link = links[i];
+            if (!isInternal(link.href)) {
+              // undo the damage that might have been done by quarto-nav.js in the case of
+              // links that we want to consider external
+              if (link.dataset.originalHref !== undefined) {
+                link.href = link.dataset.originalHref;
+              }
+            }
+          }
+        function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+          const config = {
+            allowHTML: true,
+            maxWidth: 500,
+            delay: 100,
+            arrow: false,
+            appendTo: function(el) {
+                return el.closest('section.slide') || el.parentElement;
+            },
+            interactive: true,
+            interactiveBorder: 10,
+            theme: 'light-border',
+            placement: 'bottom-start',
+          };
+          if (contentFn) {
+            config.content = contentFn;
+          }
+          if (onTriggerFn) {
+            config.onTrigger = onTriggerFn;
+          }
+          if (onUntriggerFn) {
+            config.onUntrigger = onUntriggerFn;
+          }
+            config['offset'] = [0,0];
+            config['maxWidth'] = 700;
+          window.tippy(el, config); 
+        }
+        const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+        for (var i=0; i<noterefs.length; i++) {
+          const ref = noterefs[i];
+          tippyHover(ref, function() {
+            // use id or data attribute instead here
+            let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+            try { href = new URL(href).hash; } catch {}
+            const id = href.replace(/^#\/?/, "");
+            const note = window.document.getElementById(id);
+            if (note) {
+              return note.innerHTML;
+            } else {
+              return "";
+            }
+          });
+        }
+        const findCites = (el) => {
+          const parentEl = el.parentElement;
+          if (parentEl) {
+            const cites = parentEl.dataset.cites;
+            if (cites) {
+              return {
+                el,
+                cites: cites.split(' ')
+              };
+            } else {
+              return findCites(el.parentElement)
+            }
+          } else {
+            return undefined;
+          }
+        };
+        var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+        for (var i=0; i<bibliorefs.length; i++) {
+          const ref = bibliorefs[i];
+          const citeInfo = findCites(ref);
+          if (citeInfo) {
+            tippyHover(citeInfo.el, function() {
+              var popup = window.document.createElement('div');
+              citeInfo.cites.forEach(function(cite) {
+                var citeDiv = window.document.createElement('div');
+                citeDiv.classList.add('hanging-indent');
+                citeDiv.classList.add('csl-entry');
+                var biblioDiv = window.document.getElementById('ref-' + cite);
+                if (biblioDiv) {
+                  citeDiv.innerHTML = biblioDiv.innerHTML;
+                }
+                popup.appendChild(citeDiv);
+              });
+              return popup.innerHTML;
+            });
+          }
+        }
+      });
+      </script>
+    
+
+</body></html>

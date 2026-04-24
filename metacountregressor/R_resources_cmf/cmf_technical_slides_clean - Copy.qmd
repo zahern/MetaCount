@@ -1,0 +1,774 @@
+---
+title: "Crash Modification Functions"
+subtitle: "Hierarchical Count Modeling for Road Safety"
+author: "Traffic Safety Analysis"
+date: today
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    transition: fade
+    incremental: false
+    scrollable: false
+    height: 900
+    width: 1200
+    margin: 0.1
+include-in-header:
+  text: |
+    <style>
+      .reveal .slides section { font-size: 0.84em; }
+      .reveal .slides section.compact { font-size: 0.76em; }
+      .reveal table { font-size: 0.64em; }
+      .reveal pre code { font-size: 0.70em; line-height: 1.25; }
+      .reveal p, .reveal li { line-height: 1.28; }
+      .model-trad { color: #1f77b4; font-weight: 700; }
+      .model-cmf { color: #2e8b57; font-weight: 700; }
+      .coef-pos { color: #b22222; font-weight: 700; }
+      .coef-neg { color: #1b5e20; font-weight: 700; }
+      .delta-neg { color: #6a1b9a; font-weight: 700; }
+      .chip {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.85em;
+        background: #f4f6f8;
+        border: 1px solid #d9dee3;
+      }
+      .legend-fixed {
+        position: fixed;
+        top: 8px;
+        right: 10px;
+        z-index: 30;
+        font-size: 12px;
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid #d9dee3;
+        border-radius: 999px;
+        padding: 4px 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      }
+      .legend-fixed .legend-sep {
+        color: #8a8f98;
+        padding: 0 6px;
+      }
+    </style>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        if (document.querySelector('.legend-fixed')) return;
+
+        const legend = document.createElement('div');
+        legend.className = 'legend-fixed';
+        legend.id = 'model-legend-fixed';
+        legend.innerHTML =
+          '<span class="model-trad">Traditional</span>' +
+          '<span class="legend-sep">|</span>' +
+          '<span class="model-cmf">CMF</span>';
+        document.body.appendChild(legend);
+
+        function shouldHideLegend(slideEl) {
+          if (!slideEl) return false;
+          if (slideEl.classList.contains('title-slide')) return true;
+
+          const heading = slideEl.querySelector('h1, h2, h3');
+          if (!heading) return false;
+          const title = (heading.textContent || '').trim().toLowerCase();
+          return (
+            title.startsWith('references') ||
+            title.includes('appendix') ||
+            title.includes('backup')
+          );
+        }
+
+        function updateLegendVisibility() {
+          const el = document.getElementById('model-legend-fixed');
+          if (!el) return;
+
+          if (window.Reveal && typeof window.Reveal.getCurrentSlide === 'function') {
+            const current = window.Reveal.getCurrentSlide();
+            el.style.display = shouldHideLegend(current) ? 'none' : 'block';
+          } else {
+            el.style.display = 'block';
+          }
+        }
+
+        updateLegendVisibility();
+
+        if (window.Reveal && typeof window.Reveal.on === 'function') {
+          window.Reveal.on('ready', updateLegendVisibility);
+          window.Reveal.on('slidechanged', updateLegendVisibility);
+        }
+      });
+    </script>
+editor: source
+---
+
+## What Are Crash Modification Factors?
+
+**CMF Definition:**
+
+$$\text{CMF}(a \rightarrow b) = \frac{\hat{N}_b}{\hat{N}_a}$$
+
+where:
+
+- $a$ = the current condition a.
+- $b$ = after a treatment/change
+- $\hat{N}_a$ = predicted crashes in condition $a$
+- $\hat{N}_b$ = predicted crashes in condition $b$
+
+Why CMF changes:
+
+- If the treatment lowers predicted crashes ($\hat{N}_b < \hat{N}_a$), then CMF < 1.
+- If the treatment raises predicted crashes ($\hat{N}_b > \hat{N}_a$), then CMF > 1.
+
+
+
+
+---
+
+## Quick Example: Coefficient To Percent
+
+### Interpretation
+
+- **CMF = 1.0** → No change (neutral effect)
+- **CMF < 1.0** → Fewer crashes (safer treatment) 
+- **CMF > 1.0** → More crashes (riskier treatment)
+
+### Percentage Change
+
+$$\text{Percent Change} = 100 \times \left(\exp(\beta \cdot x) - 1\right)$$
+
+**Example:** 
+
+- Coefficient $\beta = -0.08394$ for CURVES \
+- For when $x = 1$: 
+  - $100 \times (\exp(-0.08394) - 1) = -8.05\%$ crashes
+
+---
+
+
+
+## Conceptual Structure (Core Difference)
+
+### Traditional Model
+
+$$
+\log(\hat N_i) = \text{Single additive equation}
+$$
+
+
+That is 
+
+$$\hat{N}_i = E_i \times \exp(\beta_0 + \beta_1 X_{1i} + \beta_2 X_{2i} + \ldots)$$
+
+Everything is estimated together:
+
+- Baseline crash propensity  
+- Traffic exposure  
+- Traffic elasticity  
+- Geometry effects  
+
+Mechanisms are mixed.
+
+---
+
+### Hierarchical CMF Model
+
+$$
+\hat N_i =
+\underbrace{\exp(\text{baseline features})}_{\textbf{Inherent Risk}}
+\times
+\underbrace{AADT^{(\text{elasticity modified by geometry})}}_{\textbf{Traffic Response}}
+$$
+
+Two distinct mechanisms:
+
+- **Baseline block** → inherent crash propensity  
+- **Traffic-response block** → how crashes scale with traffic  
+
+This structural separation is the advantage. As we can explicitly model In response to AADT
+
+> Traditional model typically models with respect to Exposure of ADDT
+
+---
+
+
+
+## What the Exposure (Offset)  Really Does {.compact}
+
+Traditional model with exposure:
+
+$$
+\hat N_i = E_i \times \exp(\beta_0 + \beta_1 X_{1i} + \dots)
+$$
+
+If we assume AADT by segmentation length to be the exposure:
+
+$$
+E_i = AADT_i \times LENGTH_i
+$$
+
+Then:
+
+$$
+\log(\hat N_i) =
+\log(AADT_i) + \log(LENGTH_i) + \text{linear predictor}
+$$
+
+### Important
+
+Including AADT in the offset:
+
+- Fixes traffic elasticity at 1  
+- Assumes proportional exposure  
+- Prevents geometry from modifying traffic scaling directly as its mixed in with other exposure effects 
+
+It assumes:
+
+> If traffic doubles, crashes double — regardless of geometry.
+
+---
+
+
+## If We Remove AADT from the Offset
+
+Without offset:
+
+$$
+\log(\hat N_i)
+=
+\beta_0 + \beta_1 X_{1i} + \beta_{AADT} \log(AADT_i)
+$$
+
+Now traffic elasticity is estimated.
+
+But:
+
+- Still one pooled coefficient  
+- Geometry does not structurally modify elasticity  
+- Baseline and traffic effects remain mixed  
+
+> Traditional can estimate elasticity, but only relative to its indivodual components.  It cannot separate mechanisms.
+> Ie geometric effects change crash likilohood neglicting traffic
+
+---
+
+
+## What the Hierarchical CMF Structure Allows {.compact}
+
+Baseline block:
+
+$$
+\hat N_i^{\text{baseline}}
+=
+\exp(\alpha_0 + \alpha_1 X_{1i} + \dots)
+$$
+
+Traffic-response block:
+
+$$
+\hat N_i
+=
+\hat N_i^{\text{baseline}}
+\times
+AADT_i^{(\gamma_0 + \gamma_1 \text{WIDTH}_i + \gamma_2 \text{CURVES}_i)}
+$$
+
+Now geometry can:
+
+- Affect inherent crash risk  through the baseline
+- Independently modify traffic elasticity  
+
+> Traffic scaling becomes geometry-dependent. Eg,showes how changes in width and cuves adjust the elasticity directly in response to AADT
+
+
+---
+
+
+## The Problem: Traditional Models
+
+Traditional negative binomial regression:
+
+$$\hat{N}_i = E_i \times \exp(\beta_0 + \beta_1 X_{1i} + \beta_2 X_{2i} + \ldots)$$
+
+### Three Critical Questions
+
+1. **What causes the coefficient?**
+   - Does CURVES increase crashes directly?
+   - Or does it reflect traffic volume confounding (AADT)?
+
+2. **How do we design interventions?**
+   - Should we prioritize geometry changes or traffic management?
+   - Are both quantified?
+
+3. **What if exposure assumptions are wrong?**
+   - Exposure effect should account for differences in road segmentation
+   - But maybe longer roads have different safety dynamics
+
+
+
+---
+
+## Solution: Hierarchical CMF Model
+
+### Two-Level Structure
+
+**Level 1 — Baseline Block** (inherent crash propensity):
+$$\hat{N}_i^{\text{baseline}} = \exp(\alpha_0 + \alpha_{\text{URB}} \cdot \text{URB}_i + \alpha_{\text{ACCESS}} \cdot \text{ACCESS}_i + \cdots)$$
+
+**Level 2 — Traffic-Response Block** (AADT elasticity):
+$$\hat{N}_i = \hat{N}_i^{\text{baseline}} \times \text{AADT}_i^{(\gamma_0 + \gamma_{\text{WIDTH}} \cdot \text{WIDTH}_i + \cdots)}$$
+
+### Key Advantage
+
+- **Baseline features** (URB, ACCESS, ...) → What geometric factors directly explain the crash process
+- **AADT features** (WIDTH, CURVES, ...) → How does the geometric factors affect the traffic volume sensitivity change?
+
+
+
+
+## Experiment
+
+## Example: Wahshiton 1990 (Example 16-3)
+
+**Dataset:** 275 road segments, 4-year crashes
+Highlighted Features
+
+| Feature | Range | Median |
+|---------|-------|--------|
+| AADT (vehicles/day) | 4,000–97,000 | **23,771** |
+| CURVES (per mile) | 0–42 | **3.5** |
+| ACCESS (points) | 0–18 | **2** |
+| WIDTH (feet) | 9–16 | **11.5** |
+| GRADEBR (%) | 0–8 | **2.1** |
+
+
+
+## Variable Meanings
+
+- **URB**: Urban indicator (1 = urban segment, 0 = non-urban segment).
+- **ACCESS**: Access-point level/density on the segment (more driveways/intersections).
+- **GRADEBR**: Grade-break level on the segment (more vertical grade interruptions).
+- **CURVES**: Horizontal curve intensity/count on the segment.
+- **WIDTH**: Lane/roadway width measure.
+- **AADT**: Annual Average Daily Traffic (vehicles/day).
+- **LENGTH**: Segment length exposure used to normalize crash counts.
+- **OFFSET**: log(AADT*LENGTH)
+
+Traditional Model Had Offset with AADT and Length
+CMF Had Offset with Length
+Both models had same variables fitted except width and curves fitted in geometric and traffic related variables
+
+
+## Fitted Traditional Model
+
+### Estimated Coefficients
+
+$$
+\beta_0 = -3.214
+$$
+
+$$
+\beta_{\text{WIDTH}} = -0.065
+$$
+
+$$
+\beta_{\text{CURVES}} = +0.0078
+$$
+
+$$
+\beta_{\text{SHOULDER}} = -0.041
+$$
+
+### Model Characteristics
+
+- Elasticity fixed at 1  
+- Constant percent effects  
+- traffic-dependent treatment variation  held in offset but also affect by length
+
+> This means we don't know direclty what affects crash risk changes, only the individual charactersitics in relation to AADT
+
+---
+
+## Hierarchical CMF Model (Full Equation) {.compact}
+
+$$
+\begin{align}
+\hat N_i
+=
+\exp(
+\alpha_0
++
+\alpha_1 \text{WIDTH}_i
++
+\alpha_2 \text{CURVES}_i
++
+\alpha_3 \text{SHOULDER}_i
+)
+\times\\
+AADT_i^{
+(
+\gamma_0
++
+\gamma_1 \text{WIDTH}_i
++
+\gamma_2 \text{CURVES}_i
+)
+}
+\times
+LENGTH_i
+\end{align}
+$$
+
+>Baseline and traffic-response are separated. 
+
+
+> WIDTH and CURVES appear in both responses
+
+---
+
+## Estimated CMF Coefficients
+
+### Baseline Block
+
+$$
+\alpha_0 = -5.102
+$$
+
+$$
+\alpha_{\text{WIDTH}} = -1.947
+$$
+
+$$
+\alpha_{\text{CURVES}} = +0.312
+$$
+
+$$
+\alpha_{\text{SHOULDER}} = -0.088
+$$
+
+---
+
+### Traffic-Response Block
+
+$$
+\gamma_0 = 0.981
+$$
+
+$$
+\gamma_{\text{WIDTH}} = +0.175
+$$
+
+$$
+\gamma_{\text{CURVES}} = -0.0083
+$$
+
+Elasticity is estimated and geometry-dependent.
+
+---
+
+## Where WIDTH Appears
+
+WIDTH enters two mechanisms.
+
+### Baseline Effect
+
+$$
+\exp(-1.947 \cdot \text{WIDTH})
+$$
+
+Interpretation:
+
+Wider lanes reduce inherent crash propensity.
+
+---
+
+### Traffic Elasticity Effect
+
+$$
+AADT^{(0.175 \cdot \text{WIDTH})}
+$$
+
+Interpretation:
+
+Wider lanes increase elasticity of crashes with respect to traffic.
+
+---
+
+### Full WIDTH Effect
+
+$$
+\exp(-1.947 \cdot \text{WIDTH})
+\times
+AADT^{(0.175 \cdot \text{WIDTH})}
+$$
+
+The net effect depends on traffic level.
+
+---
+
+## Model Characteristics (CMF)
+
+1. Elasticity estimated, not fixed  
+2. Geometry modifies traffic scaling  
+3. Baseline and exposure effects separated  
+4. Treatment effects vary by AADT  
+5. Exposure proportionality becomes testable  
+
+
+
+---
+
+
+
+
+
+
+
+
+---
+
+## Benefit Fit Quality & Robustness {.compact}
+
+| Metric | Traditional | CMF | Difference |
+|--------|------------|-----|-----------|
+| **BIC** | 1925.52 | 1931.82 | +6.3  |
+| **Deviance** | 210.45 | 208.12 | -2.33  |
+| **Interpretability** | Elasticity Fixed | Traffic related and Geometric Elasticity |
+
+
+**Conclusion:** You sacrifice **6.3 BIC points** to gain **complete mechanistic clarity** and **better interpretability**. Fair trade!
+
+---
+
+
+## Example: Lane Widening at Different Traffic Levels
+
+**Intervention:** Increase WIDTH by +1 unit
+
+ - Median AADT = 23,771  
+ - Max AADT = 63,251   
+
+---
+
+### Traditional Model 
+
+WIDTH coefficient:
+
+$$
+\beta = -0.065
+$$
+
+Percent change:
+
+$$
+100(\exp(-0.065) - 1) = -6.3\%
+$$
+
+Interpretation:
+
+> Lane widening reduces crashes by 6.3%.
+
+
+
+Traffic response is mixed in with length to see observed effect of the treatment effect. Also the the exposure could lead to errors as we cannot directly observe how AADT influences crashes.
+
+---
+
+
+
+
+
+---
+
+
+
+## CMF Hierarchical Model
+
+WIDTH appears in two places:
+
+Baseline block:
+
+$$
+-1.947
+$$
+
+Traffic-response block:
+
+$$
++0.175 \cdot \log(AADT)
+$$
+
+Net effect depends on traffic level.
+
+---
+
+### At Median AADT (23,771)
+
+$$
+100\left(\exp\left(-1.947 + 0.175\log(23771)\right)-1\right)
+=
+-16.8\%
+$$
+
+---
+
+### At High AADT (60,000)
+
+$$
+100\left(\exp\left(-1.947 + 0.175\log(60000)\right)-1\right)
+\approx
+-22\%
+$$
+
+
+> We also haven't mised in our exposure effect, so in terms of road segmentation lenght, a net effect is observable in terms of cost applied to segmentation length
+
+---
+
+
+
+## Example: Curve Density
+
+Traditional model (with offset):
+
+CURVES coefficient:
+
+$$
+\beta = +0.0078
+$$
+
+$$
+100(\exp(0.0078)-1)=+0.78\%
+$$
+
+Interpretation:
+
+> More curves increase crashes.
+
+---
+
+CMF hierarchical model:
+
+Curves increase crashes at core:
+$$
+\alpha_{\text{CURVES}} = +0.312
+$$
+
+CURVES modifies AADT elasticity:
+
+$$
+AADT^{(-0.0083 \cdot CURVES)}
+$$
+
+At median AADT (23,771):
+
+$$
+23771^{-0.0083} = 0.9205
+$$
+
+$$
+\Rightarrow -8.05\% \text{ crashes}
+$$
+
+Interpretation:
+
+> Curves reduce traffic sensitivity.
+
+---
+
+
+
+## Example: Curve Density — Why the Story Changes
+
+Traditional model (with offset):
+
+CURVES coefficient:
+
+$$
+\beta = +0.0078
+$$
+
+$$
+100(\exp(0.0078)-1)=+0.78\%
+$$
+
+Interpretation:
+
+> More curves increase crashes.
+
+---
+
+CMF hierarchical model:
+
+CURVES modifies AADT elasticity:
+
+$$
+AADT^{(-0.0083 \cdot CURVES)}
+$$
+
+At median AADT (23,771):
+
+$$
+23771^{-0.0083} = 0.9205
+$$
+
+$$
+\Rightarrow -8.05\% \text{ crashes}
+$$
+
+Interpretation:
+
+> Curves reduce traffic sensitivity.
+
+---
+
+
+
+## What Is Gained?
+
+Not better percentages.
+
+Not dramatic BIC improvement.
+
+What is gained:
+
+- Separation of baseline vs traffic mechanisms  
+- Traffic-dependent CMFs  
+- Transparent exposure testing  
+- Policy-level prioritization capability  
+
+Crash risk can be written as:
+
+$$
+\text{Crash Risk}
+=
+\textbf{Inherent Roadway Propensity}
+\times
+\textbf{Traffic Scaling Behavior}
+$$
+
+Traditional NB estimates this jointly.
+
+Hierarchical CMF estimates each component separately.
+---
+
+
+
+
+
+## Final Takeaway
+
+Crash risk can be written as:
+
+$$
+\text{Crash Risk}
+=
+\textbf{Inherent Roadway Propensity}
+\times
+\textbf{Traffic Scaling Behavior}
+$$
+
+Traditional negative binomial models estimate this jointly.
+
+Hierarchical CMF models estimate each component separately.
+
+

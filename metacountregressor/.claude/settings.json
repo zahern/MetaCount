@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_latent_class_synthetic.py)",
+      "Bash(python experiment_lc_model_comparison.py)",
+      "Bash(python -W ignore -c ' *)",
+      "Bash(python -c ' *)",
+      "Bash(python test_tobit_synthetic.py)"
+    ]
+  }
+}

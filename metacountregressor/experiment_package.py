@@ -58,6 +58,7 @@ except ImportError as exc:
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
+import math
 from dataclasses import replace
 from functools import partial
 import io
@@ -99,6 +100,7 @@ try:
         build_model_from_manual_spec,
         mixed_model_loglik,
         print_summary,
+        _seed_classes_from_clusters,
     )
 except ImportError:
     from family_search import (
@@ -132,6 +134,7 @@ except ImportError:
         build_model_from_manual_spec,
         mixed_model_loglik,
         print_summary,
+        _seed_classes_from_clusters,
     )
 try:
     from .output_config import SearchOutputConfig, save_search_result
@@ -447,11 +450,17 @@ class StructureEvaluatorLC(StructureEvaluator):
                 theta_1   = np.array(result_1.params)
                 K_base    = build_param_index(spec_1)["total_params"]
 
-                # Step 2 — perturb to seed each class
+                # Step 2 — cluster-based seeding for well-separated class starts
                 rng = np.random.default_rng(abs(hash(sig)) % (2**31))
-                theta_init = np.concatenate([
-                    theta_1 + rng.normal(0, 0.05, K_base) for _ in range(C)
-                ])
+                try:
+                    per_class_thetas = _seed_classes_from_clusters(
+                        theta_1, data_train, spec_1, C, K_base, rng
+                    )
+                    theta_init = np.concatenate(per_class_thetas)
+                except Exception:
+                    theta_init = np.concatenate([
+                        theta_1 + rng.normal(0, 0.05, K_base) for _ in range(C)
+                    ])
 
                 # gamma init: zeros → equal class probs, membership coeffs=0
                 gamma_init = np.zeros((C - 1) * (K_mem + 1))
@@ -523,7 +532,7 @@ class ForcedModelStructureEvaluatorLC(StructureEvaluatorLC):
         if spec is None:
             return None
         spec["model"] = self.forced_model
-        if self.forced_model in {"lognormal", "gaussian"}:
+        if self.forced_model in {"lognormal", "gaussian", "tobit"}:
             spec["dispersion"] = 0
         return spec
 
@@ -904,17 +913,30 @@ class ExperimentBuilder:
             best_value = np.inf
             last_error: Optional[Exception] = None
 
+            # Attempt 0 uses cluster-based seeding; remaining attempts fall
+            # back to decreasing noise perturbations of the single-class fit.
             retry_configs = [
-                (0.05, 0),
-                (0.02, 1),
-                (0.01, 2),
+                ("cluster", 0),
+                (0.05, 1),
+                (0.02, 2),
                 (0.00, 3),
             ]
 
             for noise_scale, seed in retry_configs:
                 try:
                     rng = np.random.default_rng(seed)
-                    if noise_scale > 0.0:
+                    if noise_scale == "cluster":
+                        try:
+                            per_class = _seed_classes_from_clusters(
+                                theta_1, data, spec_1, C, K_base, rng
+                            )
+                            theta_init = np.concatenate(per_class)
+                        except Exception:
+                            theta_init = np.concatenate([
+                                theta_1 + rng.normal(0.0, 0.05, K_base)
+                                for _ in range(C)
+                            ])
+                    elif noise_scale > 0.0:
                         theta_init = np.concatenate([
                             theta_1 + rng.normal(0.0, noise_scale, K_base)
                             for _ in range(C)
@@ -1236,6 +1258,158 @@ class ExperimentBuilder:
 
         return coef_df[["Parameter", "Type", "Estimate"]]
 
+    # ── print_cmf_interpretation ────────────────────────────────────
+
+    def print_cmf_interpretation(self, fit_result: Dict[str, Any], aadt_col: Optional[str] = None, aadt_median: Optional[float] = None) -> pd.DataFrame:
+        """
+        Print CMF (Crash Modification Factor) interpretations for fitted model coefficients.
+
+        For each fixed coefficient, this method computes and displays:
+        - The coefficient value (β)
+        - The CMF for a one-unit increase: CMF = exp(β)
+        - The percent change: 100 × (exp(β) - 1)
+        - Plain-language interpretation
+
+        Parameters
+        ----------
+        fit_result
+            Dictionary returned by fit_manual_model()
+        aadt_col
+            Optional: Column name containing AADT values for context.
+            If provided, AADT-dependent interpretations are generated.
+        aadt_median
+            Optional: Median AADT value for computing traffic-dependent effects.
+            If not provided, will compute from aadt_col if available.
+
+        Returns
+        -------
+        pd.DataFrame
+            CMF interpretation table with columns:
+            - Parameter: Coefficient name
+            - Coefficient: Estimated value (β)
+            - CMF (+1): exp(β) for one-unit increase
+            - Percent Change: 100 × (exp(β) - 1)
+            - Interpretation: Plain-language explanation
+
+        Example
+        -------
+        cmf_table = builder.print_cmf_interpretation(
+            fit_result=fit_result,
+            aadt_col='AADT',
+            aadt_median=23771
+        )
+        print(cmf_table)
+        """
+        import math
+        
+        spec = fit_result["spec"]
+        result = fit_result["result"]
+        param_index = fit_result["param_index"]
+        params = np.asarray(result.params)
+
+        # Compute AADT median if provided column but no explicit median
+        if aadt_col is not None and aadt_col in self.df.columns and aadt_median is None:
+            aadt_median = self.df[aadt_col].median()
+
+        cmf_rows = []
+
+        def _extract_fixed_coefs(index_map: Dict[str, Any], local_params: np.ndarray, class_label: Optional[str] = None) -> None:
+            label_suffix = f" [{class_label}]" if class_label else ""
+
+            if spec.Kf > 0 and "fixed" in index_map:
+                fixed_names = list(spec.fixed_names)
+                fixed_start, fixed_end = index_map["fixed"]
+                
+                for name, value in zip(fixed_names, local_params[fixed_start:fixed_end]):
+                    try:
+                        if str(name) == "__INTERCEPT__":
+                            continue
+
+                        coef_value = float(value)
+                        
+                        # Compute CMF for one-unit change
+                        if math.isfinite(coef_value):
+                            cmf_one_unit = math.exp(max(min(coef_value, 700.0), -700.0))
+                            percent_change = 100.0 * (cmf_one_unit - 1.0)
+                            
+                            # Generate interpretation
+                            lower_name = str(name).lower()
+                            is_cmf_local_term = "__cmf_local__" in lower_name
+                            is_log_aadt_term = "__cmf_log_aadt" in lower_name or lower_name == "aadt"
+
+                            aadt_context = ""
+                            if is_log_aadt_term:
+                                interpretation = (
+                                    f"{name}: traffic elasticity = {coef_value:+.4f}; "
+                                    f"1% AADT change implies about {coef_value:+.2f}% crash change"
+                                )
+                            elif is_cmf_local_term and aadt_median is not None and aadt_median > 0:
+                                try:
+                                    exponent = max(min(coef_value * math.log(aadt_median), 700.0), -700.0)
+                                    aadt_effect = 100.0 * (math.exp(exponent) - 1.0)
+                                    aadt_context = f" (at median AADT {aadt_median:,.0f}: {aadt_effect:+.2f}%)"
+                                except (ValueError, OverflowError):
+                                    pass
+                                interpretation = f"{name} +1 adjusts AADT-response scaling{aadt_context}"
+                            else:
+                                if percent_change < 0:
+                                    interpretation = f"{name} +1 → {percent_change:.2f}% crashes (safer)"
+                                elif percent_change > 0:
+                                    interpretation = f"{name} +1 → +{percent_change:.2f}% crashes (riskier)"
+                                else:
+                                    interpretation = f"{name} +1 → No change (neutral)"
+                            
+                            cmf_rows.append({
+                                "Parameter": f"{name}{label_suffix}",
+                                "Type": "Fixed" if class_label is None else f"Fixed ({class_label})",
+                                "Coefficient": coef_value,
+                                "CMF(+1)": cmf_one_unit,
+                                "Percent Change": percent_change,
+                                "Interpretation": interpretation,
+                            })
+                    except (ValueError, OverflowError):
+                        pass
+
+        if spec.latent_classes > 1 and "class_params" in param_index:
+            base_spec = replace(spec, latent_classes=1)
+            base_index = build_base_index(base_spec)
+            K_base = param_index.get("K_base", base_index.get("total_params"))
+            C = int(spec.latent_classes)
+
+            for c in range(C):
+                class_slice = params[c * K_base:(c + 1) * K_base]
+                _extract_fixed_coefs(base_index, class_slice, class_label=f"Class {c + 1}")
+        else:
+            _extract_fixed_coefs(param_index, params)
+
+        cmf_df = pd.DataFrame(cmf_rows)
+
+        print("\n" + "=" * 100)
+        print(f"  CMF INTERPRETATIONS  —  {spec.model.upper()} MODEL")
+        print("=" * 100 + "\n")
+
+        if len(cmf_df) > 0:
+            for _, row in cmf_df.iterrows():
+                print(f"  {row['Parameter']:25s}")
+                print(f"    Coefficient (β)     : {row['Coefficient']:+.6f}")
+                print(f"    CMF for +1 unit     : {row['CMF(+1)']:.4f}")
+                print(f"    Percent Change      : {row['Percent Change']:+.2f}%")
+                print(f"    ➜ {row['Interpretation']}")
+                print()
+        else:
+            print("  (No fixed coefficients found for CMF interpretation)")
+            print()
+
+        print("=" * 100)
+        print("  INTERPRETATION GUIDE:")
+        print("  ─────────────────────────────────────────────────────────────────────────────────────────────────────")
+        print("  CMF < 1.0  (Percent Change < 0)  →  Safer treatment (crashes decrease)")
+        print("  CMF = 1.0  (Percent Change = 0)  →  Neutral effect (no change)")
+        print("  CMF > 1.0  (Percent Change > 0)  →  Riskier treatment (crashes increase)")
+        print("=" * 100 + "\n")
+
+        return cmf_df[["Parameter", "Type", "Coefficient", "CMF(+1)", "Percent Change", "Interpretation"]]
+
     # ── describe ────────────────────────────────────────────────────
 
     def describe(self):
@@ -1555,6 +1729,51 @@ class ExperimentBuilder:
                 variables=variables,
                 id_col=self.id_col,
                 budget_col=budget_col,
+            )
+
+        if model_family == "tobit":
+            # Left-censored (at 0) linear model — random-parameters and
+            # latent-class variants are fully supported.
+            mode               = kwargs.pop("mode", "single")
+            max_latent_classes = kwargs.pop("max_latent_classes", 2)
+            R                  = kwargs.pop("R", 200)
+            default_roles      = kwargs.pop("default_roles", None)
+            fixed_override     = self._normalize_override_map(
+                kwargs.pop("fixed_override", None), "fixed_override")
+            membership_override = self._normalize_override_map(
+                kwargs.pop("membership_override", None), "membership_override")
+            if default_roles is None:
+                default_roles = [0, 1, 2, 3, 4, 5, 6]
+                if max_latent_classes > 1:
+                    default_roles.extend([7, 8])
+            evaluator = ForcedModelStructureEvaluatorLC(
+                df=self.df,
+                id_col=self.id_col,
+                y_col=self.y_col,
+                offset_col=self.offset_col,
+                all_variables=variables,
+                allowed_roles=populate_allowed_roles(
+                    variables,
+                    {**fixed_override, **membership_override},
+                    default_roles=default_roles,
+                ),
+                allowed_distributions=populate_allowed_distributions(variables, None),
+                group_id_col=self.group_id_col,
+                mode=mode,
+                R=R,
+                max_latent_classes=max_latent_classes,
+                forced_model="tobit",
+            )
+            self._raise_on_unused_kwargs(kwargs, "tobit search")
+            # Re-use LinearSearchProblem as the search wrapper (same SA driver)
+            return LinearSearchProblem(
+                builder=self,
+                evaluator=evaluator,
+                metadata={
+                    "model": "tobit",
+                    "variables": variables,
+                    "max_latent_classes": max_latent_classes,
+                },
             )
 
         if model_family == "cmf":

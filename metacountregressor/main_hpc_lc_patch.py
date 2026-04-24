@@ -95,6 +95,7 @@ try:
         nb2_loglik,
         gaussian_loglik,
         lognormal_loglik,
+        tobit_loglik,
         build_eta,
         ensure_3d,
         unpack_params,
@@ -117,6 +118,7 @@ except ImportError:
         nb2_loglik,
         gaussian_loglik,
         lognormal_loglik,
+        tobit_loglik,
         build_eta,
         ensure_3d,
         unpack_params,
@@ -469,9 +471,9 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
         # Per-class individual log-likelihoods
         ll_classes = []
         for c in range(C):
-            ll_c = -mixed_model_loglik(
+            ll_c = mixed_model_loglik(
                 theta_all[c], data, base_spec, indivi=True
-            )                                               # (N,) positive LL
+            )                                               # (N,) log-likelihoods (negative)
             ll_classes.append(ll_c + log_pi[:, c])
 
         ll_stack = jnp.stack(ll_classes, axis=1)            # (N, C)
@@ -484,7 +486,11 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
     # ── SINGLE-CLASS BRANCH (unchanged from main_hpc) ───────────────
     blocks = unpack_params(params, spec)
     eta    = build_eta(params, data, spec)
-    eta    = jnp.clip(eta, -25, 25)
+    # Linear-predictor models work in data scale — wider clip to preserve gradients.
+    if spec.model in {"gaussian", "tobit"}:
+        eta = jnp.clip(eta, -500.0, 500.0)
+    else:
+        eta = jnp.clip(eta, -25.0, 25.0)
 
     if eta.ndim == 2:
         eta = eta[..., None]
@@ -507,7 +513,10 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
     elif spec.model == "gaussian":
         sigma    = blocks["sigma"]
         ll_count = gaussian_loglik(y, eta, sigma)
-
+    elif spec.model == "tobit":
+        # Left-censored at 0; eta is the linear predictor for the latent Y*
+        sigma    = blocks["sigma"]
+        ll_count = tobit_loglik(y, eta, sigma)
     else:
         raise ValueError(f"Unknown model: {spec.model}")
 
@@ -634,6 +643,16 @@ def fit_em(init_params, data, spec: ModelSpec,
         w = np.exp(log_num - max_log)
         w /= w.sum(axis=1, keepdims=True)
 
+        # Collapse guard: if any class captures < 2% of total weight the
+        # solution has degenerated — stop early rather than waste M-step
+        # budget pushing classes further apart.
+        mean_w = w.mean(axis=0)                     # (C,)
+        if np.any(mean_w < 0.02):
+            if verbose:
+                print(f"  [EM] class collapse detected at iter {iteration} "
+                      f"(min mean weight {mean_w.min():.4f}) — stopping early")
+            break
+
         # ==========================================================
         # M-STEP
         # ==========================================================
@@ -691,6 +710,99 @@ _hpc.fit_em = fit_em
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 7b. _seed_classes_from_clusters
+#
+#     Given a single-class warm-start theta_1, cluster observations in
+#     the space of (fixed covariates, per-obs LL) and fit a per-cluster
+#     weighted model.  Returns C genuinely differentiated theta vectors,
+#     which prevents EM from collapsing all classes onto the same solution.
+# ═══════════════════════════════════════════════════════════════════════
+
+def _seed_classes_from_clusters(
+    theta_1: np.ndarray,
+    data: dict,
+    base_spec: ModelSpec,
+    C: int,
+    K_base: int,
+    rng: np.random.Generator,
+) -> list:
+    """
+    Returns a list of C numpy arrays (each shape (K_base,)) to use as
+    per-class starting parameters.
+
+    Strategy
+    --------
+    1. Compute per-observation log-likelihoods under the single-class fit.
+    2. Build a feature matrix from the mean fixed-effect covariates Xf
+       and the individual LLs.
+    3. K-means cluster observations into C groups.
+    4. For each cluster, shift only the intercept (params[0]) by the
+       log-ratio of cluster mean outcome to overall mean outcome.
+       All other parameters stay at theta_1 + small noise.
+       This is numerically stable and avoids per-cluster LBFGS divergence.
+    """
+    from sklearn.cluster import KMeans
+
+    ll_ind = np.array(
+        mixed_model_loglik(theta_1, data, base_spec, indivi=True)
+    )                                                       # (N,)
+
+    Xf = np.array(data["Xf"])                              # (N, P, Kf)
+    if Xf.ndim == 3:
+        Xf_mean = Xf.mean(axis=1)                          # (N, Kf)
+    else:
+        Xf_mean = Xf
+
+    features = np.concatenate([Xf_mean, ll_ind[:, None]], axis=1)
+    col_std  = features.std(0) + 1e-8
+    features_scaled = (features - features.mean(0)) / col_std
+
+    try:
+        km = KMeans(
+            n_clusters=C,
+            n_init=10,
+            max_iter=300,
+            random_state=int(rng.integers(2**31)),
+        )
+        labels = km.fit_predict(features_scaled)
+    except Exception:
+        labels = np.arange(features_scaled.shape[0]) % C
+
+    # Overall mean outcome (collapse panel dimension first)
+    y_all = np.array(data["y"])                            # (N, P, 1) or (N,)
+    if y_all.ndim == 3:
+        y_all = y_all.mean(axis=1).squeeze(-1)             # (N,)
+    elif y_all.ndim == 2:
+        y_all = y_all.mean(axis=1)
+    y_global_mean = float(np.maximum(y_all.mean(), 1e-3))
+
+    thetas = []
+    for c in range(C):
+        in_cluster = labels == c
+        n_c = int(in_cluster.sum())
+
+        theta_c = theta_1.copy()
+
+        if n_c >= 3:
+            y_c_mean = float(np.maximum(y_all[in_cluster].mean(), 1e-3))
+            # Shift intercept so the class predicts y_c_mean at the
+            # global covariate average — prevents EM collapse.
+            delta_intercept = np.log(y_c_mean) - np.log(y_global_mean)
+            theta_c[0] = theta_1[0] + delta_intercept
+        else:
+            theta_c[0] = theta_1[0] + rng.normal(0, 0.3)
+
+        # Small noise on all other structural parameters (not dispersion)
+        n_struct = min(K_base - 1, base_spec.Kf - 1)
+        if n_struct > 0:
+            theta_c[1:1 + n_struct] += rng.normal(0, 0.05, n_struct)
+
+        thetas.append(theta_c)
+
+    return thetas
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # 8.  print_summary — extended with membership gamma section
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -740,7 +852,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
             pass
 
         for c in range(C):
-            print(f"\n{'#' * 20}  CLASS {c+1}  (π = {pi[c]:.4f})  {'#' * 20}\n")
+            print(f"\n{'#' * 20}  CLASS {c+1}  (pi = {pi[c]:.4f})  {'#' * 20}\n")
             dummy       = DummyRes()
             dummy.params = theta_all[c]
             dummy.x      = theta_all[c]
@@ -758,7 +870,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
         # ── Membership gamma ─────────────────────────────────────
         print("\n" + "=" * 65)
         print("   CLASS-MEMBERSHIP EQUATION")
-        print("   log[π_c(n) / π_1(n)] = γ_c0  +  Σ_k γ_ck · z_nk")
+        print("   log[pi_c(n) / pi_1(n)] = g_c0  +  sum_k g_ck * z_nk")
         print("   (Class 1 is the reference; all coefficients vs class 1)")
         print("=" * 65)
 
@@ -784,15 +896,15 @@ def print_summary(result, objective, data, spec: ModelSpec,
                 row  += f"  {g:>+14.4f}  {sg:>8.4f}  {z_val:>7.3f}  {p_val:>7.4f}{stars}"
             print(row)
 
-        print(f"\n  NOTE: γ_c0 is the class-{c+1} log-odds intercept vs class 1.")
+        print(f"\n  NOTE: g_c0 is the class-{c+1} log-odds intercept vs class 1.")
         if K_mem > 0:
-            print("  γ_ck > 0: higher value of z_k → higher probability of class c+1.")
+            print("  g_ck > 0: higher value of z_k -> higher probability of class c+1.")
 
         # ── Class shares ─────────────────────────────────────────
         print("\n" + "-" * 65)
         print("  MARGINAL CLASS PROBABILITIES (at sample-mean covariates)\n")
         for c in range(C):
-            print(f"  π_{c+1} = {pi[c]:.6f}")
+            print(f"  pi_{c+1} = {pi[c]:.6f}")
 
         print("\n" + "=" * 65 + "\n")
 

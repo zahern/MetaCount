@@ -1,0 +1,4 @@
+- Traditional NB gives one combined prediction equation.
+- Hierarchical CMF splits the problem into baseline risk and traffic-response adjustments.
+- In this fit, a one-unit curve change is about -8.1% in the CMF baseline block and a one-unit ACCESS change is about -14.8%.
+- That separation is the main payoff: easier CMF-style interpretation and cleaner policy discussion, even when headline fit is close.

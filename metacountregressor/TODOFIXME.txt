@@ -1,0 +1,5 @@
+Inspect the latent class method.
+
+Prefit the latent class first with one class. Then maybe try to apply some kidn of claster method to split the classes with preinjected coeffients
+
+Then run the EM + > that or find some kidn of enhance heuristic to get good intial coefficients to the latent class model. also with all these models inspect if theres a problem with the offset term.. so as to to ensure the models are capable of fittings.
