@@ -54,14 +54,7 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 
-# ─── locate the metacountregressor package ────────────────────────────────────
-HERE     = Path(__file__).resolve().parent            # hpc_ready/
-PKG_ROOT = HERE.parent                                # metacountregressor/
-REPO_ROOT = PKG_ROOT.parent                           # MetaCount/
-
-for p in [str(PKG_ROOT), str(REPO_ROOT)]:
-    if p not in sys.path:
-        sys.path.insert(0, p)
+HERE = Path(__file__).resolve().parent
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Synthetic data generators (self-contained — no external data required)
@@ -170,7 +163,7 @@ def run_lc_count(args, df: pd.DataFrame, out_dir: Path):
     print("  LATENT-CLASS COUNT MODEL  (NB2)")
     print("="*65)
 
-    from experiment_package import ExperimentBuilder
+    from metacountregressor import ExperimentBuilder
 
     builder = ExperimentBuilder(
         df=df,
@@ -213,7 +206,7 @@ def run_lc_count(args, df: pd.DataFrame, out_dir: Path):
             max_latent_classes = args.max_classes,
             R                  = R,
         )
-        from experiment_package import ExperimentBuilder as _EB
+        from metacountregressor import ExperimentBuilder as _EB
         result = builder.run(evaluator, algo="sa", max_iter=args.search_iter)
         (out_dir / "search_result.json").write_text(
             json.dumps(result, indent=2, default=str))
@@ -240,7 +233,7 @@ def run_lc_tobit(args, df: pd.DataFrame, out_dir: Path):
     print("  LATENT-CLASS TOBIT MODEL  (left-censored at 0)")
     print("="*65)
 
-    from experiment_package import ExperimentBuilder
+    from metacountregressor import ExperimentBuilder
 
     builder = ExperimentBuilder(
         df=df,

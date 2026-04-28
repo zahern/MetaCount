@@ -86,6 +86,15 @@ echo "[env] JAX: $(python -c 'import jax; print(jax.__version__)' 2>/dev/null ||
 echo "[env] Host: $(hostname)  Cores: ${SLURM_CPUS_PER_TASK:-$(nproc)}"
 echo ""
 
+# ── Ensure metacountregressor is installed (latest from PyPI) ────────────────
+if ! python -c "import metacountregressor" 2>/dev/null; then
+    echo "[setup] metacountregressor not found — installing latest from PyPI..."
+    pip install --upgrade metacountregressor
+else
+    echo "[setup] metacountregressor: $(python -c 'import metacountregressor; print(metacountregressor.__version__)' 2>/dev/null || echo 'installed')"
+fi
+echo ""
+
 # ── Parse positional experiment argument ────────────────────────────────────
 EXPERIMENT="${1:-synthetic_both}"
 shift || true          # remove first arg so remaining are passed through
