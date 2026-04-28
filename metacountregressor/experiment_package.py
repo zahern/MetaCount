@@ -886,8 +886,7 @@ class ExperimentBuilder:
                     # Bypass Poisson-style prefit: use OLS starting values
                     # and a direct LBFGS on the single-class Tobit likelihood.
                     from dataclasses import replace as _replace
-                    from main_hpc_lc_patch import build_base_index as _bbase
-                    _K1 = _bbase(spec_1)["total_params"]
+                    _K1 = build_base_index(spec_1)["total_params"]
                     _p0 = jnp.array(_tobit_ols_init(data, _K1))
                     _sol = LBFGS(
                         fun=lambda p: mixed_model_loglik(p, data, spec_1),
@@ -1035,8 +1034,7 @@ class ExperimentBuilder:
             fitted = CountModel(spec, data)
             if model == "tobit":
                 # OLS warm-start + direct LBFGS — bypasses Poisson-style prefit.
-                from main_hpc_lc_patch import build_base_index as _bbase
-                _K = _bbase(spec)["total_params"]
+                _K = build_base_index(spec)["total_params"]
                 _p0 = jnp.array(_tobit_ols_init(data, _K))
                 _sol = LBFGS(
                     fun=lambda p: mixed_model_loglik(p, data, spec),
