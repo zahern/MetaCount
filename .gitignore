@@ -30,6 +30,9 @@ env/
 __pycache__/
 .vs/
 .fleet/
+.metacountregressor/data/Stage5A_1848_All_Initial_Columns.csv
+.metacountregressor/data/confidential
+
 .ipynb_checkpoints/
 
 
