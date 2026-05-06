@@ -53,6 +53,7 @@ py-modules = [
   "sample_data",
   "solution",
   "solvers_meta",
+  "survival_models",
 ]
 
 [tool.setuptools.packages.find]

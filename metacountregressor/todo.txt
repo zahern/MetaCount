@@ -1,0 +1,4 @@
+add in lifelilines models that can uou the correlated random paramaters make it adopt the larch architecture use "- **Purpose:** Stages 3 (duration models)
+- **referebce lpackage ** `lifelines` 
+- **Key classes:** `WeibullAFTFitter`, `LogNormalAFTFitter`, `LogLogisticAFTFitter`
+- **Integration effort:** Low — `fit(df, duration_col, event_col)` interface) as a references.
