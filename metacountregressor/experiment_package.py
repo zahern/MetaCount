@@ -93,6 +93,7 @@ try:
         decode_distribution,
         refit_and_print,
         save_run_summary_to_txt,
+        check_identification,
     )
     from .main_hpc_lc_patch import (
         ModelSpec,
@@ -128,6 +129,7 @@ except ImportError:
         decode_distribution,
         refit_and_print,
         save_run_summary_to_txt,
+        check_identification,
     )
     from main_hpc_lc_patch import (
         ModelSpec,
@@ -256,6 +258,10 @@ class StructureEvaluatorLC(StructureEvaluator):
         for i, var in enumerate(self.vars):
             role = int(roles[i])
             if role not in self.allowed_roles.get(var, [0]):
+                return None
+
+            # ── Skip unidentifiable variables regardless of role ─────────
+            if var in self._unidentifiable and role != 0:
                 return None
 
             if role == 0:
@@ -1627,10 +1633,10 @@ class ExperimentBuilder:
         )
 
         D   = len(variables)
-        dim = 2 * D + 2
+        dim = 2 * D + 1
         print(f"\n  Evaluator ready:")
         print(f"    Variables          : {D}")
-        print(f"    Decision dimension : {dim}  (2×{D} + 2)")
+        print(f"    Decision dimension : {dim}  (2×{D} + 1)")
         print(f"    Max latent classes : {max_latent_classes}")
         print(f"    Mode               : {mode}")
         print(f"    Draws (R)          : {R}")
@@ -1893,7 +1899,7 @@ class ExperimentBuilder:
             raise RuntimeError("Call build_evaluator() first.")
 
         D   = len(evaluator.vars)
-        dim = 2 * D + 2
+        dim = 2 * D + 1
 
         print(f"\n  Running {algo.upper()} | dim={dim} | max_iter={max_iter} | seed={seed}")
 
