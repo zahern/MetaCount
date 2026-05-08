@@ -78,8 +78,8 @@ def load_example_panel_data() -> pd.DataFrame:
 
 def load_example_platform_speed_data() -> pd.DataFrame:
     rng = np.random.default_rng(123)
-    n_platforms = 18
-    obs_per_platform = 20
+    n_platforms = 50
+    obs_per_platform = 30
     platform_ids = np.repeat(np.arange(1, n_platforms + 1), obs_per_platform)
     distances = np.tile(np.linspace(-120, 120, obs_per_platform), n_platforms)
 
@@ -103,6 +103,7 @@ def load_example_platform_speed_data() -> pd.DataFrame:
         {
             "PLATFORM_ID": platform_ids,
             "DIST_TO_PLATFORM": distances,
+            "SPEED": vehicle_speed,
             "VEHICLE_SPEED": vehicle_speed,
             "RELATIVE_SPEED": relative_speed,
             "POSTED_SPEED": posted_speed,
@@ -117,8 +118,8 @@ def load_example_platform_speed_data() -> pd.DataFrame:
 
 def load_example_platform_gap_duration_data() -> pd.DataFrame:
     rng = np.random.default_rng(456)
-    n_platforms = 18
-    obs_per_platform = 16
+    n_platforms = 40
+    obs_per_platform = 24
     platform_ids = np.repeat(np.arange(1, n_platforms + 1), obs_per_platform)
 
     posted_speed = np.repeat(rng.choice([30, 40, 50, 60], size=n_platforms), obs_per_platform)

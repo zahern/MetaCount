@@ -300,6 +300,15 @@ def build_jax_data(
     df = df.copy()
     df[intercept_name] = 1.0
 
+    # ── Standardise continuous predictors (membership cols too) ──────────
+    _predictor_cols = list(set(
+        fixed_cols + random_ind_cols + random_cor_cols
+        + grouped_cols + hetro_cols + zi_cols + membership_cols
+    ))
+    _scaler = _hpc.compute_scaler(df, _predictor_cols)
+    if _scaler:
+        df = _hpc.apply_scaler(df, _scaler)
+
     all_features = list(set(
         [intercept_name]
         + fixed_cols + random_ind_cols + random_cor_cols
@@ -357,6 +366,8 @@ def build_jax_data(
         "draws_g":  jnp.zeros((N, 0, R)) if draws_g   is None else jnp.array(draws_g),
         "group_ids":jnp.array(group_codes) if group_codes is not None
                     else jnp.zeros(N, dtype=int),
+        # Plain Python dict — used by print_summary for back-transformation.
+        "scaler": _scaler,
     }
 
     spec = ModelSpec(

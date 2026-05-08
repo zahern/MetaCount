@@ -1,0 +1,13 @@
+| Parameter | Component | Variable | Scale Type | Estimate (standardized fit scale) | Std. Error | Estimate (original variable scale) |
+| --- | --- | --- | --- | --- | --- | --- |
+| const | core | const | native | -8.098719698256552 | 0.4670861654806361 | -8.098719698256552 |
+| log_aadt | core | log_aadt | native | -0.3282939539977913 | 0.05091833055359886 | -0.3282939539977913 |
+| upper::DX32_Z | upper | DX32 | standardized-continuous | 0.24688222165937873 | 0.03494008903768845 | 0.031539188831847795 |
+| upper::PRCP_Z | upper | PRCP | standardized-continuous | 0.11741342776147626 | 0.024523818534505522 | 0.0797093197163305 |
+| upper::SNOW_Z | upper | SNOW | standardized-continuous | 0.13494018617168757 | 0.032631381736750634 | 0.011062175850696642 |
+| upper::dummy_winter | upper | dummy_winter | binary | 0.12211233765055542 | 0.07037464401694549 | 0.12211233765055542 |
+| upper::segment_length_Z | upper | segment_length | standardized-continuous | -0.03171465388494614 | 0.016385714617153622 | -0.052058426130400126 |
+| upper::speed_Z | upper | speed | standardized-continuous | -1.353486916026045 | 0.34024342672587227 | -0.30350721097818656 |
+| lower::left_shoulder_width_Z*log_aadt | lower | left_shoulder_width | standardized-continuous | 0.0032836203857229363 | 0.00272355229656709 | 0.0010465071434750484 |
+| lower::speed_Z*log_aadt | lower | speed | standardized-continuous | 0.17211697736489337 | 0.037971880457475196 | 0.03859567694632168 |
+| alpha | other | alpha | native | 0.6903626233358154 | 0.12028859893950412 | 0.6903626233358154 |

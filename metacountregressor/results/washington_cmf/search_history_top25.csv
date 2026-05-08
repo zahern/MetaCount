@@ -1,0 +1,26 @@
+Iteration,Upper Vars,Lower Vars,Val Poisson Dev,Val RMSE,AIC,BIC
+75,"DX32_Z, PRCP_Z, SNOW_Z, dummy_winter, segment_length_Z, speed_Z","left_shoulder_width_Z, speed_Z",2209.6089233843327,0.2653400332442381,9267.34860581874,9355.458687173792
+113,"DP01_Z, SNOW_Z, right_shoulder_width_Z, speed_Z","DX32_Z, dummy_winter, has_rumble, paved_shoulder_Z, speed_Z",2214.646599148152,0.26549619146230635,9287.035150898046,9383.155239649011
+10,"SNOW_Z, TAVG_Z, num_lanes_Z, paved_shoulder_Z, right_shoulder_width_Z, speed_Z","DP01_Z, DX32_Z, dummy_winter, left_shoulder_width_Z, right_shoulder_width_Z",2216.1760664407534,0.26570631555232543,9278.388812928177,9390.52891647097
+45,"PRCP_Z, SNOW_Z, has_rumble, num_lanes_Z, paved_shoulder_Z","DX32_Z, dummy_winter, left_shoulder_width_Z, paved_shoulder_Z, right_shoulder_width_Z",2216.2268978850416,0.2657161203155355,9280.700246091796,9384.830342238674
+109,"PRCP_Z, SNOW_Z, TAVG_Z, dummy_winter, left_shoulder_width_Z, right_shoulder_width_Z","DX32_Z, curve, num_lanes_Z, speed_Z",2216.667496637454,0.26587384598883307,9232.7716387029,9336.901734849778
+14,"PRCP_Z, SNOW_Z, right_shoulder_width_Z","DX32_Z, speed_Z",2216.7635443925524,0.2655625925914649,9274.70227799852,9338.78233716583
+117,"PRCP_Z, SNOW_Z, TAVG_Z, left_shoulder_width_Z, num_lanes_Z, right_shoulder_width_Z, speed_Z","DX32_Z, curve, dummy_winter, paved_shoulder_Z",2217.399456885651,0.2658881196283491,9235.418218065828,9347.558321608622
+7,"DX32_Z, SNOW_Z, dummy_winter, num_lanes_Z, paved_shoulder_Z, speed_Z",paved_shoulder_Z,2217.7627081443566,0.2653263759709764,9285.53154949207,9365.631623451209
+77,"DP01_Z, PRCP_Z, SNOW_Z, curve, left_shoulder_width_Z, num_lanes_Z, speed_Z","DX32_Z, paved_shoulder_Z, right_shoulder_width_Z",2218.857354235767,0.2655809290480864,9252.492606714968,9356.622702861847
+32,"DX32_Z, SNOW_Z, dummy_winter, segment_length_Z","DP01_Z, DX32_Z, dummy_winter, paved_shoulder_Z, speed_Z",2219.0050433495853,0.26554174759384347,9287.851911487,9383.972000237965
+20,"DP01_Z, DX32_Z, SNOW_Z, has_rumble, right_shoulder_width_Z","DX32_Z, dummy_winter, left_shoulder_width_Z, speed_Z",2219.404070655877,0.2655447990176555,9293.17885077741,9389.298939528377
+98,"PRCP_Z, SNOW_Z, TAVG_Z, dummy_winter, speed_Z","DP01_Z, curve, dummy_winter, speed_Z",2219.492362649363,0.2660471885928684,9232.60343934048,9328.723528091446
+89,"PRCP_Z, dummy_winter","DX32_Z, left_shoulder_width_Z, right_shoulder_width_Z, speed_Z",2219.7690139585384,0.265964296827111,9281.69701151728,9353.787078080504
+49,"PRCP_Z, TAVG_Z, curve, has_rumble, left_shoulder_width_Z, num_lanes_Z, segment_length_Z","DP01_Z, DX32_Z, dummy_winter, paved_shoulder_Z, speed_Z",2221.451755302363,0.2662879101011813,9240.141371816564,9360.29148275527
+69,"DX32_Z, PRCP_Z, dummy_winter, has_rumble, left_shoulder_width_Z, right_shoulder_width_Z, speed_Z",(none),2223.1770232651006,0.2659664672667438,9287.459284703431,9367.55935866257
+87,"SNOW_Z, curve, dummy_winter, num_lanes_Z, right_shoulder_width_Z","DX32_Z, dummy_winter, left_shoulder_width_Z, paved_shoulder_Z, speed_Z",2223.844251162909,0.26564662738795913,9266.089955973972,9370.22005212085
+114,"left_shoulder_width_Z, speed_Z","DP01_Z, DX32_Z, dummy_winter, num_lanes_Z, speed_Z",2223.8905584149093,0.2660862639058732,9291.568229677861,9371.668303637
+94,"SNOW_Z, TAVG_Z, curve, left_shoulder_width_Z, right_shoulder_width_Z, speed_Z","curve, dummy_winter, speed_Z",2224.4945475132968,0.26601735707798846,9257.336423926343,9353.456512677309
+86,"DP01_Z, DX32_Z, dummy_winter, has_rumble, left_shoulder_width_Z, num_lanes_Z","DP01_Z, dummy_winter, speed_Z",2224.76055051834,0.2659147155949509,9295.314032763989,9391.434121514954
+85,"DP01_Z, PRCP_Z, SNOW_Z, left_shoulder_width_Z",num_lanes_Z,2224.872993099887,0.2656094666115796,9314.83635945481,9378.91641862212
+73,"DX32_Z, SNOW_Z, dummy_winter, num_lanes_Z, paved_shoulder_Z, segment_length_Z",(none),2224.8879961041634,0.26584539614430663,9287.063523186338,9359.153589749561
+13,"PRCP_Z, SNOW_Z, dummy_winter, num_lanes_Z, right_shoulder_width_Z, segment_length_Z",(none),2224.9293131016984,0.2655591144595036,9316.619533255789,9388.709599819013
+41,"DX32_Z, PRCP_Z, curve, dummy_winter, left_shoulder_width_Z, segment_length_Z, speed_Z","left_shoulder_width_Z, num_lanes_Z, speed_Z",2225.332021881539,0.26604384318407726,9257.858428413927,9361.988524560806
+35,"PRCP_Z, TAVG_Z, curve, dummy_winter, has_rumble, segment_length_Z, speed_Z","curve, dummy_winter, speed_Z",2225.4426287635406,0.2665661751415342,9238.940692917065,9343.070789063944
+116,"SNOW_Z, right_shoulder_width_Z","DX32_Z, speed_Z",2225.6793156737995,0.2657670425990825,9291.230637467499,9347.300689238895

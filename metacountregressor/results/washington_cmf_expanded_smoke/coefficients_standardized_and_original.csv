@@ -1,0 +1,8 @@
+Parameter,Component,Variable,Scale Type,Estimate (standardized fit scale),Std. Error,Estimate (original variable scale)
+const,core,const,native,-6.793740408314555,0.32225475085123834,-6.793740408314555
+log_aadt,core,log_aadt,native,-0.48525522152679584,0.03517256630474421,-0.48525522152679584
+upper::DX32_Z,upper,DX32,standardized-continuous,-0.18062489050351252,0.26316005739141823,-0.02307481879834137
+upper::SNOW_Z,upper,SNOW,standardized-continuous,0.15117561006944483,0.031377433832120556,0.012393129358787149
+lower::DX32_Z*log_aadt,lower,DX32,standardized-continuous,0.041384671496115535,0.02862754486490196,0.005286889271681959
+lower::paved_shoulder_Z*log_aadt,lower,paved_shoulder,standardized-continuous,-0.009936189283429778,0.006290436297415755,-0.01167670947400988
+alpha,other,alpha,native,0.7688255135639233,0.12599745394566308,0.7688255135639233

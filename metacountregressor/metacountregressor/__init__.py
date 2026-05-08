@@ -45,6 +45,7 @@ __all__ = [
     "extract_summary",
     "extract_search_best",
     "compare_models",
+    "check_identification",
 ]
 
 _EXPORTS = {
@@ -86,6 +87,7 @@ _EXPORTS = {
     "extract_summary": ("experiment_package", "extract_summary"),
     "extract_search_best": ("experiment_package", "extract_search_best"),
     "compare_models": ("experiment_package", "compare_models"),
+    "check_identification": ("main_hpc", "check_identification"),
 }
 
 _LEGACY_EXPORTS = {

@@ -1,0 +1,3 @@
+Profile,Top upper vars,Top lower vars
+core,"DX32_Z, PRCP_Z, SNOW_Z, dummy_winter, segment_length_Z, speed_Z","left_shoulder_width_Z, speed_Z"
+expanded,"DP01_Z, DP10_Z, SNOW_Z, TMAX_Z, segment_length_Z, speed_Z","DP01_Z, DX32_Z, left_shoulder_width_Z, speed_Z"

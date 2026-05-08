@@ -1,0 +1,25 @@
+Washington Core vs Expanded Profile Comparison
+
+Recommendation: expanded (lower test Poisson deviance (2118.8294 < 2124.4504))
+
+Top selected structures
+| Profile | Top upper vars | Top lower vars |
+| --- | --- | --- |
+| core | DX32_Z, PRCP_Z, SNOW_Z, dummy_winter, segment_length_Z, speed_Z | left_shoulder_width_Z, speed_Z |
+| expanded | DP01_Z, DP10_Z, SNOW_Z, TMAX_Z, segment_length_Z, speed_Z | DP01_Z, DX32_Z, left_shoulder_width_Z, speed_Z |
+
+Metric deltas (expanded relative to core)
+| Split | Metric | Core | Expanded | Expanded - Core | Pct Delta vs Core |
+| --- | --- | --- | --- | --- | --- |
+| validation | rmse | 0.2653400332442381 | 0.2649382342277859 | -0.00040179901645220895 | -0.1514279664246383 |
+| validation | mae | 0.1072464071424147 | 0.1069381790115112 | -0.0003082281309034901 | -0.28740182456106683 |
+| validation | bias | -0.0024113934173189 | -0.0024288007130133 | -1.7407295694400055e-05 | -0.7218770512260211 |
+| validation | corr | 0.3157083398562605 | 0.3200695931160139 | 0.004361253259753395 | 1.381418451517321 |
+| validation | r2 | 0.0983622423801146 | 0.1010908383278151 | 0.0027285959477005017 | 2.774027799362297 |
+| validation | poisson_dev | 2209.6089233843327 | 2192.715986741655 | -16.892936642677796 | -0.7645215614355795 |
+| test | rmse | 0.2482077230337236 | 0.2475652639307674 | -0.000642459102956211 | -0.25883928795757943 |
+| test | mae | 0.1043746813994952 | 0.1040523214707645 | -0.00032235992873069774 | -0.3088487786581707 |
+| test | bias | 0.0058445858088649 | 0.0058882191049101 | 4.3633296045200026e-05 | 0.7465592511109734 |
+| test | corr | 0.2485310443560165 | 0.2573580102338499 | 0.00882696587783341 | 3.551655247216895 |
+| test | r2 | 0.0560107681946334 | 0.0608912736886319 | 0.004880505493998495 | 8.71351286780979 |
+| test | poisson_dev | 2124.450405434952 | 2118.829384176289 | -5.6210212586629495 | -0.2645870783466053 |

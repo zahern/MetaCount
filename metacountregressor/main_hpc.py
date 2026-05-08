@@ -1142,7 +1142,18 @@ def build_jax_data(
 
     df = df.copy()
     df[intercept_name] = 1.0
-    
+
+    # ── Standardise continuous predictors before building arrays ─────────
+    # The scaler is stored in the returned data dict so that print_summary
+    # can back-transform to original-scale coefficients for reporting.
+    _predictor_cols = list(set(
+        fixed_cols + random_ind_cols + random_cor_cols
+        + grouped_cols + hetro_cols + zi_cols
+    ))
+    _scaler = compute_scaler(df, _predictor_cols)
+    if _scaler:
+        df = apply_scaler(df, _scaler)
+
     all_features = list(set(
         ["__INTERCEPT__"] + fixed_cols + random_ind_cols + random_cor_cols + grouped_cols + hetro_cols +zi_cols
     ))
@@ -1216,6 +1227,9 @@ def build_jax_data(
         "draws_g": jnp.zeros((N, 0, R)) if draws_g is None else jnp.array(draws_g),
 
         "group_ids": jnp.array(group_codes) if group_codes is not None else jnp.zeros(N, dtype=int),
+        # Plain Python dict — not a JAX array.  Used by print_summary to
+        # back-transform standardised coefficients to original scale.
+        "scaler": _scaler,
     }
 
     
@@ -1349,10 +1363,58 @@ def compute_predictions(params, data, spec):
 
     
 def compute_standard_errors(params, objective):
-    hess = jax.hessian(objective)(params)
-    cov = jnp.linalg.pinv(hess)
-    se = jnp.sqrt(jnp.diag(cov))
-    return se
+    """
+    Compute standard errors from the Hessian of the negative log-likelihood
+    using JAX reverse-mode autodiff.
+
+    Strategy
+    --------
+    1. Compute the exact Hessian via jax.hessian (O(p^2) VJPs).
+    2. Regularise by projecting out near-zero eigenvalues so that the
+       matrix inverse is numerically stable.  Parameters with eigenvalue
+       contributions below the tolerance are flagged with nan SEs.
+    3. Take sqrt of the diagonal of the inverse (Fisher information matrix).
+
+    Notes
+    -----
+    - For large models the Hessian can be mildly indefinite due to
+      simulation noise in the log-likelihood.  The eigenvalue clipping
+      below handles this robustly without silently returning zeros.
+    - Parameters that are genuinely unidentified (flat likelihood direction)
+      will have nan SE — this is the correct statistical answer and is
+      surfaced in the summary table.
+    """
+    params_np = np.asarray(params, dtype=float)
+    hess_np   = np.asarray(jax.hessian(objective)(jnp.asarray(params_np)), dtype=float)
+
+    # Replace any non-finite entries (can happen with simulation noise)
+    hess_np = np.where(np.isfinite(hess_np), hess_np, 0.0)
+
+    # Eigenvalue decomposition for robust inversion
+    try:
+        eigvals, eigvecs = np.linalg.eigh(hess_np)
+    except np.linalg.LinAlgError:
+        return jnp.full(len(params_np), jnp.nan)
+
+    # Threshold: eigenvalues below this are treated as zero (unidentified)
+    max_ev = float(np.max(np.abs(eigvals)))
+    tol    = max(max_ev * 1e-8, 1e-10)
+
+    identified = eigvals > tol
+
+    # Inverse via truncated eigen-decomposition
+    inv_eigvals              = np.where(identified, 1.0 / eigvals, 0.0)
+    cov_np                   = (eigvecs * inv_eigvals) @ eigvecs.T
+
+    # Mark unidentified directions with nan
+    # A parameter is unidentified if it loads primarily onto a zero-eigenvalue direction
+    unidentified_loading = np.abs(eigvecs[:, ~identified]).max(axis=1) > 0.1
+    diag_cov             = np.diag(cov_np)
+    diag_cov             = np.where(unidentified_loading, np.nan, diag_cov)
+    diag_cov             = np.where(diag_cov < 0,         np.nan, diag_cov)
+
+    se = np.where(np.isnan(diag_cov), np.nan, np.sqrt(diag_cov))
+    return jnp.asarray(se, dtype=float)
 
 def build_cholesky_from_params(chol_params, K):
     L = np.zeros((K, K))
@@ -2873,10 +2935,21 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
         df.at[i, "Estimate"] = float(phi)
         df.at[i, "Std.Err"] = float(se_theta * abs(deriv))
 
-    # Recompute z and p
-    df["z-value"] = df["Estimate"] / df["Std.Err"]
-    df["p-value"] = 2 * (1 - stats.norm.cdf(np.abs(df["z-value"])))
+    # ── Back-transform to original predictor scale ────────────────────────
+    # If build_jax_data standardised the predictors, undo the standardisation
+    # so that every coefficient is interpretable in the original data units.
+    _scaler = data.get("scaler", {}) if isinstance(data, dict) else {}
+    if _scaler:
+        df = unstandardize_summary_df(df, _scaler, spec)
 
+    # Recompute z and p (after possible back-transformation)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        df["z-value"] = np.where(
+            df["Std.Err"] > 1e-15,
+            df["Estimate"] / df["Std.Err"],
+            0.0,
+        )
+    df["p-value"] = 2 * (1 - stats.norm.cdf(np.abs(df["z-value"])))
     # ==========================================================
     # CLEAN DISPLAY (remove raw columns)
     # ==========================================================
@@ -3270,6 +3343,172 @@ class CountModel:
 
 
 
+def compute_scaler(df, cols, exclude_binary=True):
+    """Return {col: (mean, std)} for continuous predictor columns only."""
+    scaler = {}
+    for col in cols:
+        if col == "__INTERCEPT__" or col not in df.columns:
+            continue
+        vals = df[col].dropna()
+        if len(vals) < 2:
+            continue
+        if exclude_binary:
+            unique_vals = set(float(v) for v in vals.unique())
+            if unique_vals.issubset({0.0, 1.0}):
+                continue
+        mu = float(vals.mean())
+        sd = float(vals.std())
+        if sd < 1e-10:
+            continue
+        scaler[col] = (mu, sd)
+    return scaler
+
+
+def apply_scaler(df, scaler):
+    """Return a copy of df with columns in scaler standardised to N(0,1)."""
+    df = df.copy()
+    for col, (mu, sd) in scaler.items():
+        if col in df.columns:
+            df[col] = (df[col] - mu) / sd
+    return df
+
+
+def unstandardize_summary_df(df_params, scaler, spec):
+    """Back-transform summary estimates and SEs to original predictor units."""
+    if not scaler:
+        return df_params
+
+    df = df_params.copy()
+    fixed_set = set(getattr(spec, "fixed_names", ())) - {"__INTERCEPT__"}
+
+    intercept_correction = 0.0
+    for _, row in df.iterrows():
+        name = row["Parameter"]
+        if name in fixed_set and name in scaler:
+            mu_k, sigma_k = scaler[name]
+            intercept_correction += float(row["Estimate"]) * mu_k / sigma_k
+
+    for i, row in df.iterrows():
+        name = row["Parameter"]
+        est = float(row["Estimate"])
+        se = float(row["Std.Err"])
+        nan_se = np.isnan(se)
+
+        if name == "__INTERCEPT__":
+            df.at[i, "Estimate"] = est - intercept_correction
+
+        elif name in fixed_set and name in scaler:
+            _, s = scaler[name]
+            df.at[i, "Estimate"] = est / s
+            df.at[i, "Std.Err"] = (se / s) if not nan_se else se
+
+        elif name.startswith("zi("):
+            inner = name[3:-1]
+            if inner in scaler:
+                _, s = scaler[inner]
+                df.at[i, "Estimate"] = est / s
+                df.at[i, "Std.Err"] = (se / s) if not nan_se else se
+
+        elif name.startswith(("cor_mean(", "mean(", "group_mean(")):
+            inner = name.split("(", 1)[1].rstrip(")")
+            if inner in scaler:
+                _, s = scaler[inner]
+                df.at[i, "Estimate"] = est / s
+                df.at[i, "Std.Err"] = (se / s) if not nan_se else se
+
+        elif name.startswith(("sd(", "group_sd(")):
+            inner = name.split("(", 1)[1].rstrip(")")
+            if inner in scaler:
+                _, s = scaler[inner]
+                df.at[i, "Estimate"] = est / s
+                df.at[i, "Std.Err"] = (se / s) if not nan_se else se
+
+    return df
+
+
+def check_identification(df, id_col, variable_names, min_variance=1e-6, collinearity_tol=1e-4):
+    """
+    Pre-screen a set of candidate variables for identification problems.
+
+    Returns a set of variable names that are unidentifiable and should be
+    excluded from the model specification before attempting estimation.
+
+    Checks performed
+    ----------------
+    1. Near-constant columns  — variance below *min_variance*.
+    2. Perfect / near-perfect collinearity — smallest singular value of the
+       mean-centred design matrix is below *collinearity_tol*.
+    3. Insufficient unique values — fewer than 2 distinct values (cannot
+       contribute information to any likelihood).
+
+    Parameters
+    df : pd.DataFrame
+        The data used for estimation.
+    id_col : str
+        Panel / observation ID column (excluded from screening).
+    variable_names : list[str]
+        Candidate predictor columns to screen.
+    min_variance : float
+        Variance threshold below which a variable is considered constant.
+    collinearity_tol : float
+        Singular-value threshold for near-perfect collinearity detection.
+
+    Returns
+    -------
+    bad_vars : set[str]
+        Names of variables that fail at least one identification check.
+    reason : dict[str, str]
+        Human-readable reason for each excluded variable.
+    """
+    bad_vars = set()
+    reason   = {}
+
+    candidate = [v for v in variable_names if v in df.columns and v != id_col]
+    if not candidate:
+        return bad_vars, reason
+
+    # ── 1. Per-column checks ────────────────────────────────────────────
+    for v in candidate:
+        col = df[v].dropna()
+        if len(col) == 0:
+            bad_vars.add(v); reason[v] = "all-NA column"; continue
+        n_unique = col.nunique()
+        if n_unique < 2:
+            bad_vars.add(v); reason[v] = "only one unique value"; continue
+        var = float(col.var())
+        if var < min_variance:
+            bad_vars.add(v); reason[v] = f"near-constant (var={var:.2e})"; continue
+
+    # ── 2. Collinearity among the surviving candidates ──────────────────
+    surviving = [v for v in candidate if v not in bad_vars]
+    if len(surviving) >= 2:
+        try:
+            X = df[surviving].dropna().values.astype(float)
+            X_c = X - X.mean(axis=0)
+            # Normalise columns to unit scale so different units don't dominate
+            col_scale = np.maximum(X_c.std(axis=0), 1e-12)
+            X_n = X_c / col_scale
+            _, sv, Vt = np.linalg.svd(X_n, full_matrices=False)
+            # Find near-zero singular values
+            sv_tol = max(sv.max() * collinearity_tol, 1e-8)
+            zero_sv_idx = np.where(sv < sv_tol)[0]
+            for idx in zero_sv_idx:
+                # The right singular vector identifies the collinear combination
+                vec = np.abs(Vt[idx])
+                # Blame the variable with the highest loading in the null space
+                dominant = int(np.argmax(vec))
+                v_bad = surviving[dominant]
+                if v_bad not in bad_vars:
+                    bad_vars.add(v_bad)
+                    reason[v_bad] = (
+                        f"near-perfect collinearity (sv={sv[idx]:.2e}, "
+                        f"dominant loading on '{v_bad}')"
+                    )
+        except Exception:
+            pass  # SVD failure is non-fatal; just skip this check
+
+    return bad_vars, reason
+
 
 class StructureEvaluator:
 
@@ -3321,7 +3560,23 @@ class StructureEvaluator:
                 seed=123
             )
 
-        # ✅ simple cache
+        # ✅ Pre-compute unidentifiable variables once so build_spec can
+        # reject them cheaply before any likelihood evaluation.
+        self._unidentifiable, self._unid_reason = check_identification(
+            self.df_train, id_col, all_variables
+        )
+        if self._unidentifiable:
+            import warnings
+            warnings.warn(
+                f"StructureEvaluator: the following variables will be excluded "
+                f"from all model structures because they are unidentifiable "
+                f"in the training data:\n"
+                + "\n".join(f"  {v}: {self._unid_reason[v]}"
+                            for v in sorted(self._unidentifiable)),
+                UserWarning,
+                stacklevel=2,
+            )
+
         self.cache = {}
         self.structure_cache = set()
 
@@ -3343,6 +3598,11 @@ class StructureEvaluator:
 
             role = roles[i]
             if role not in self.allowed_roles.get(var, [0]):
+                return None
+
+
+            # ── Skip unidentifiable variables regardless of role ─────────
+            if var in self._unidentifiable and role != 0:
                 return None
 
             if role == 1:
