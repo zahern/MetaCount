@@ -8,7 +8,8 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('scripts/generate_washington_hierarchical_cmf_assets.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
       "Bash(python scripts/generate_washington_hierarchical_cmf_assets.py --output-dir results/ex16_3_cmf_v2 --family nb --search-iter 80 --candidate-profile core --allow-nonmonotonic-fallback)",
       "Bash(python -c \"import subprocess; r=subprocess.run\\(['quarto','--version'],capture_output=True,text=True\\); print\\('quarto:', r.stdout.strip\\(\\) or r.stderr.strip\\(\\)\\)\")",
-      "Bash(python scripts/run_washington_presentation.py --smoke-test --no-render)"
+      "Bash(python scripts/run_washington_presentation.py --smoke-test --no-render)",
+      "Bash(python build_washington_presentation.py)"
     ]
   }
 }
