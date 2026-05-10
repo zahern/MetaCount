@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Search Convergence — Ex-16-3</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body { margin: 0; background: #0f1923; color: #e8edf2; font-family: 'Segoe UI', sans-serif; }
+  .header { padding: 18px 24px 6px; }
+  .header h2 { margin: 0; font-size: 1.3rem; color: #7fdee8; }
+  .header p { margin: 4px 0 0; font-size: 0.9rem; color: #8fa3b3; }
+  .legend-row { display: flex; gap: 18px; padding: 0 24px 10px; font-size: 0.82rem; color: #8fa3b3; align-items: center; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100vh - 110px); }
+  #bic_chart, #dev_chart { height: 100%; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h2>Ex-16-3 — Search Convergence</h2>
+  <p>Each point = one candidate model. Running minimum = thick line. Star = best-ever.</p>
+</div>
+<div class="legend-row">
+  <span><span class="dot" style="background:#2a7f4f;"></span>Monotonic AADT OK</span>
+  <span><span class="dot" style="background:#8c959f;"></span>Not monotonic</span>
+  <span><span class="dot" style="background:#d96f32; border-radius:0; transform:rotate(45deg);"></span>Best ever</span>
+</div>
+<div class="charts">
+  <div id="bic_chart"></div>
+  <div id="dev_chart"></div>
+</div>
+<script>
+const D = {"iterations": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22], "bic": [51766.77857294646, 71654.26563586373, 53795.23584335555, 69939.42497420774, 71212.52910578875, 42934.34670521658, 69037.39360117188, 66236.96531087442, 69781.24963464694, 66780.36138655119, 65558.0399621423, 50387.04677139249, 69615.76894269328, 69799.49875850498, 68032.58417125237, 44552.59930018952, 68815.37590926411, 70207.25055470562, 63184.07733686197, 46890.392674043746, 58782.19902363533, 61815.861573033835], "val_dev": [19182.127116594947, 23137.02503563643, 178202.5427504526, 25458.925556428818, 22961.339125082905, 1528920.5563164898, 22769.06245873799, 57867.588572005916, 21885.24855447278, 37164.299100796925, 91713.11242599439, 16881.711248808064, 21527.007236353154, 24156.566093845486, 25141.493491606994, 17491.535878274884, 33872.856537815045, 21756.233920362967, 562313.732506915, 47448.56174371954, 27532.892818464552, 8054271.357265761], "bic_running_min": [51766.77857294646, 51766.77857294646, 51766.77857294646, 51766.77857294646, 51766.77857294646, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658, 42934.34670521658], "dev_running_min": [19182.127116594947, 19182.127116594947, 19182.127116594947, 19182.127116594947, 19182.127116594947, 19182.127116594947, 19182.127116594947, 19182.127116594947, 19182.127116594947, 19182.127116594947, 19182.127116594947, 16881.711248808064, 16881.711248808064, 16881.711248808064, 16881.711248808064, 16881.711248808064, 16881.711248808064, 16881.711248808064, 16881.711248808064, 16881.711248808064, 16881.711248808064, 16881.711248808064], "best_bic_idx": 5, "best_dev_idx": 11, "upper_vars": ["LENGTH_Z", "(none)", "AVESNOW_Z, CURVES_Z, MXGRADE_Z, MXMEDSH_Z, WIDTH_Z", "DECLANES_Z, MINRAD_Z, MXMEDSH_Z, TRAIN_Z", "FRICTION_Z, MINRAD_Z", "ADTLANE_Z, LENGTH_Z, MXGRDIFF_Z, SPEED_Z", "CPM_Z, HISNOW, URB", "GBRPM_Z, LOWPRE", "FRICTION_Z", "EXPOSE_Z, TANGENT_Z, WIDTH_Z", "ADTLANE_Z, TANGENT_Z, WIDTH_Z", "DOUBLE_Z, LENGTH_Z, URB", "MEDWIDTH_Z, MXMEDSH_Z", "ACCESS_Z, FC_Z, LNAADT_Z, MIGRADE_Z, TANGENT_Z", "GBRPM_Z, LNAADT_Z, MEDWIDTH_Z, MXGRADE_Z, SLOPE_Z, SPEED_Z", "LENGTH_Z, MXGRADE_Z, URB", "INCLANES_Z, INTPM_Z, MXGRADE_Z, TANGENT_Z", "(none)", "INCLANES_Z, LNAADT_Z, MIGRADE_Z, MXGRDIFF_Z, MXMEDSH_Z, SLOPE_Z", "CPM_Z, CURVES_Z, INTECHAG_Z, MIGRADE_Z, PEAKHR_Z", "ADTLANE_Z, CURVES_Z, LOWPRE, MIMEDSH_Z, SPEED_Z", "FC_Z, MXGRDIFF_Z, PEAKHR_Z"], "lower_vars": ["SPEED_Z", "(none)", "ADTLANE_Z, AVESNOW_Z, MEDWIDTH_Z, MXMEDSH_Z, SLOPE_Z", "ACCESS_Z", "(none)", "AVESNOW_Z, WIDTH_Z", "AVEPRE_Z, DECLANES_Z, FRICTION_Z, MINRAD_Z", "DECLANES_Z, FRICTION_Z, INCLANES_Z, MEDWIDTH_Z, MINRAD_Z", "DECLANES_Z, HISNOW, MXMEDSH_Z", "ADTLANE_Z, DECLANES_Z, FRICTION_Z, MXMEDSH_Z, SPEED_Z", "AVEPRE_Z, AVESNOW_Z, SPEED_Z", "FRICTION_Z, PEAKHR_Z, SLOPE_Z, SPEED_Z", "(none)", "HISNOW, MXMEDSH_Z", "DECLANES_Z, HISNOW, SPEED_Z", "LENGTH_Z, SLOPE_Z", "PEAKHR_Z", "MEDWIDTH_Z, SPEED_Z", "ACCESS_Z, AVEPRE_Z, HISNOW", "AVESNOW_Z, HISNOW, SLOPE_Z", "HISNOW, SPEED_Z", "AVEPRE_Z, AVESNOW_Z"], "monotonic": ["no", "no", "yes", "no", "no", "yes", "no", "no", "no", "no", "yes", "no", "no", "yes", "no", "no", "no", "no", "no", "no", "yes", "yes"], "dot_colors": ["#8c959f", "#8c959f", "#2a7f4f", "#8c959f", "#8c959f", "#2a7f4f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#2a7f4f", "#8c959f", "#8c959f", "#2a7f4f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#2a7f4f", "#2a7f4f"], "label": "Ex-16-3"};
+
+function makeCharts() {
+  const iters = D.iterations;
+
+  function scatterTrace(yVals, colors, label) {
+    return {
+      x: iters, y: yVals,
+      type: 'scatter', mode: 'markers',
+      marker: { color: colors, size: 7, opacity: 0.8 },
+      name: label,
+      hovertemplate: 'Iter %{x}<br>' + label + ': %{y:.2f}<br>Upper: %{customdata[0]}<br>Lower: %{customdata[1]}<extra></extra>',
+      customdata: iters.map((_, i) => [D.upper_vars[i], D.lower_vars[i]])
+    };
+  }
+
+  function runMinTrace(yVals, color, label) {
+    return {
+      x: iters, y: yVals,
+      type: 'scatter', mode: 'lines',
+      line: { color: color, width: 3 },
+      name: label
+    };
+  }
+
+  function starTrace(idx, yVals, color) {
+    return {
+      x: [iters[idx]], y: [yVals[idx]],
+      type: 'scatter', mode: 'markers',
+      marker: { symbol: 'star', size: 18, color: color, line: { color: '#fff', width: 1 } },
+      name: 'Best',
+      hovertemplate: 'BEST<br>Iter %{x}<br>Value: %{y:.2f}<extra></extra>'
+    };
+  }
+
+  const darkLayout = {
+    template: 'plotly_dark',
+    paper_bgcolor: '#0f1923',
+    plot_bgcolor: '#172232',
+    font: { color: '#c8d6e0' },
+    margin: { l: 70, r: 20, t: 50, b: 50 },
+    legend: { orientation: 'h', y: -0.12 },
+    xaxis: { title: 'Search iteration', gridcolor: '#243040' },
+  };
+
+  Plotly.newPlot('bic_chart', [
+    scatterTrace(D.bic, D.dot_colors, 'BIC'),
+    runMinTrace(D.bic_running_min, '#7fdee8', 'Running min BIC'),
+    starTrace(D.best_bic_idx, D.bic, '#d96f32'),
+  ], { ...darkLayout, title: 'BIC over search iterations', yaxis: { title: 'BIC', gridcolor: '#243040' } }, { responsive: true });
+
+  Plotly.newPlot('dev_chart', [
+    scatterTrace(D.val_dev, D.dot_colors, 'Val Poisson Dev'),
+    runMinTrace(D.dev_running_min, '#f0b060', 'Running min Val Dev'),
+    starTrace(D.best_dev_idx, D.val_dev, '#d96f32'),
+  ], { ...darkLayout, title: 'Validation Poisson Deviance over iterations', yaxis: { title: 'Val Poisson Deviance', gridcolor: '#243040' } }, { responsive: true });
+}
+
+makeCharts();
+</script>
+</body>
+</html>

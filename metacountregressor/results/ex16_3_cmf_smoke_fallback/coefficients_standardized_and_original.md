@@ -1,0 +1,6 @@
+| Parameter | Component | Variable | Scale Type | Estimate (standardized fit scale) | Std. Error | Estimate (original variable scale) |
+| --- | --- | --- | --- | --- | --- | --- |
+| const | core | const | native | -3.387253224488672 | 0.24345278357408334 | -3.387253224488672 |
+| log_aadt | core | log_aadt | native | -0.8936503337894466 | 0.022704378071417244 | -0.8936503337894466 |
+| upper::LENGTH_Z | upper | LENGTH | standardized-continuous | 2.651917226965649 | 0.010273739913527933 | 0.9860725586958586 |
+| lower::CURVES_Z*log_aadt | lower | CURVES | standardized-continuous | 0.047795037694505604 | 0.0011773123674884572 | 0.015856794734939863 |

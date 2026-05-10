@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Search Convergence — Ex-16-3</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body { margin: 0; background: #0f1923; color: #e8edf2; font-family: 'Segoe UI', sans-serif; }
+  .header { padding: 18px 24px 6px; }
+  .header h2 { margin: 0; font-size: 1.3rem; color: #7fdee8; }
+  .header p { margin: 4px 0 0; font-size: 0.9rem; color: #8fa3b3; }
+  .legend-row { display: flex; gap: 18px; padding: 0 24px 10px; font-size: 0.82rem; color: #8fa3b3; align-items: center; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100vh - 110px); }
+  #bic_chart, #dev_chart { height: 100%; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h2>Ex-16-3 — Search Convergence</h2>
+  <p>Each point = one candidate model. Running minimum = thick line. Star = best-ever.</p>
+</div>
+<div class="legend-row">
+  <span><span class="dot" style="background:#2a7f4f;"></span>Monotonic AADT OK</span>
+  <span><span class="dot" style="background:#8c959f;"></span>Not monotonic</span>
+  <span><span class="dot" style="background:#d96f32; border-radius:0; transform:rotate(45deg);"></span>Best ever</span>
+</div>
+<div class="charts">
+  <div id="bic_chart"></div>
+  <div id="dev_chart"></div>
+</div>
+<script>
+const D = {"iterations": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81], "bic": [NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN], "val_dev": [19182.127116594947, 23137.02503563643, 16083.379339677766, 561136.6470272592, 21841.615423200547, 18446.433181888093, 157079.2416911002, 66020.65975546655, 23602.05563330652, 813144.9533703754, 21501.09567167757, 278532.0033572135, 22892.1375205211, 257118.03072435316, 107066.19409247459, 19436.77807681714, 31034.34037256646, 23542.84065842002, 24218.57464326159, 20345.017313225046, 20932.742689979797, 23370.870550017775, 51844.39957474234, 26673.142130307067, 23450.840213096057, 568263.0654993536, 24065.652003883, 43545.091324637426, 23199.103386996412, 48659.27747920107, 867470.9336226683, 20775.05567978259, 27974.864530745344, 21864.23737836587, 717952956.1887795, 45527.22507553556, 25088.48346506785, 65320.34097673747, 22975.04517685785, 16382.043782394912, 26352.672807760166, 24516.042735998883, 23373.55620878152, 22258.795737484954, 25082.570452860306, 33072.81362959578, 24058.42287611059, 16957.417585528015, 113423.62248278254, 22908.112719592034, 20524.7308874004, 24394.694436947615, 1088329.0345942723, 25749.460187102206, 21371.016348631558, 128607.68467217733, 21727.323734303558, 23660.105270311382, 43964.55281228134, 223312.6209075674, 21952.428571408844, 84192.17618293402, 30850.68189697721, 80228.81958910063, 22568.091968066896, 15294.887699805016, 25088.233825644795, 23599.332529956268, 413216.99106662965, 129366.58887440273, 408683.38987357734, 410439.9872200072, 29609.048076980212, 21314.852980800235, 26298.012279381368, 23626.7836760534, 27785.16784696466, 213632.3328536878, 24408.977152156644, 508421.13435510703, 9935673.607874941], "bic_running_min": [1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18, 1e+18], "dev_running_min": [19182.127116594947, 19182.127116594947, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 16083.379339677766, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016, 15294.887699805016], "best_bic_idx": 0, "best_dev_idx": 65, "upper_vars": ["LENGTH_Z", "(none)", "GRADEBR_Z, MIMEDSH_Z, SLOPE_Z, TANGENT_Z, WIDTH_Z", "CURVES_Z, DECLANES_Z, DOUBLE_Z, MIMEDSH_Z", "ACCESS_Z, CURVES_Z", "ACCESS_Z, LENGTH_Z, MXGRADE_Z, MXMEDSH_Z", "AVESNOW_Z, LOWPRE, SPEED_Z", "CPM_Z, SLOPE_Z", "ACCESS_Z", "INTPM_Z, MXGRADE_Z, WIDTH_Z", "MEDWIDTH_Z, MXGRADE_Z, WIDTH_Z", "LENGTH_Z, SINGLE_Z, URB", "ACCESS_Z, MXMEDSH_Z", "CURVES_Z, EXPOSE_Z, MXGRDIFF_Z, PEAKHR_Z, URB", "EXPOSE_Z, GRADEBR_Z, MEDWIDTH_Z, MINRAD_Z, MXMEDSH_Z, SPEED_Z", "GRADEBR_Z, LENGTH_Z, SPEED_Z", "INCLANES_Z, LOWPRE, MIGRADE_Z, MXGRDIFF_Z", "(none)", "FRICTION_Z, INCLANES_Z, LENGTH_Z, MIGRADE_Z, MIMEDSH_Z, PEAKHR_Z", "GRADEBR_Z, INTPM_Z, LOWPRE, MXGRDIFF_Z, TRAIN_Z", "AVEPRE_Z, MEDWIDTH_Z, MIMEDSH_Z, MXGRDIFF_Z, MXMEDSH_Z", "FC_Z, MIGRADE_Z, TRAIN_Z", "CURVES_Z, EXPOSE_Z, MEDWIDTH_Z, MIGRADE_Z, PEAKHR_Z, URB", "EXPOSE_Z, WIDTH_Z", "AVEPRE_Z, CPM_Z, DOUBLE_Z, FRICTION_Z, MINRAD_Z, PEAKHR_Z", "(none)", "ADTLANE_Z, MINRAD_Z, TRAIN_Z", "CURVES_Z, LENGTH_Z", "AVEPRE_Z, CPM_Z, CURVES_Z, DECLANES_Z", "PEAKHR_Z", "MIMEDSH_Z, TANGENT_Z, WIDTH_Z", "ACCESS_Z, CURVES_Z, FRICTION_Z, HISNOW", "INCLANES_Z", "(none)", "DECLANES_Z, INCLANES_Z, LOWPRE, MIGRADE_Z, MIMEDSH_Z, MINRAD_Z", "AVEPRE_Z, CPM_Z, CURVES_Z, DECLANES_Z, HISNOW, TRAIN_Z", "AVEPRE_Z, MXGRADE_Z", "CPM_Z, FC_Z, FRICTION_Z, HISNOW, MIGRADE_Z, SLOPE_Z", "SLOPE_Z", "GRADEBR_Z, INCLANES_Z, SLOPE_Z, TANGENT_Z, TRAIN_Z, URB", "MXGRDIFF_Z, PEAKHR_Z", "MEDWIDTH_Z, MXGRDIFF_Z, SPEED_Z, WIDTH_Z", "TRAIN_Z", "CURVES_Z, MXGRADE_Z, MXGRDIFF_Z", "HISNOW, LENGTH_Z, MIMEDSH_Z, MXGRADE_Z, MXMEDSH_Z, WIDTH_Z", "GRADEBR_Z, LOWPRE, PEAKHR_Z, SPEED_Z", "(none)", "SLOPE_Z", "ACCESS_Z, GRADEBR_Z", "AVEPRE_Z, MEDWIDTH_Z, MXGRADE_Z, WIDTH_Z", "CURVES_Z, DECLANES_Z, MEDWIDTH_Z, SPEED_Z", "DOUBLE_Z, MXGRADE_Z, MXMEDSH_Z, SINGLE_Z", "AVEPRE_Z, AVESNOW_Z, DOUBLE_Z, GRADEBR_Z, SINGLE_Z, SPEED_Z", "DECLANES_Z, FC_Z, LENGTH_Z, MIGRADE_Z, MXGRADE_Z, MXGRDIFF_Z", "MIGRADE_Z, PEAKHR_Z", "(none)", "DECLANES_Z, DOUBLE_Z, FRICTION_Z, INTPM_Z, MXGRDIFF_Z, WIDTH_Z", "EXPOSE_Z, TRAIN_Z", "(none)", "(none)", "DOUBLE_Z, MEDWIDTH_Z, SPEED_Z, TRAIN_Z", "LENGTH_Z, MEDWIDTH_Z, SINGLE_Z", "DECLANES_Z, FRICTION_Z, HISNOW, MIMEDSH_Z, WIDTH_Z", "MIGRADE_Z, PEAKHR_Z, SINGLE_Z, TANGENT_Z", "EXPOSE_Z, MINRAD_Z, MXMEDSH_Z", "GRADEBR_Z, LENGTH_Z, SLOPE_Z, URB", "GRADEBR_Z, INTPM_Z", "FRICTION_Z, TRAIN_Z, WIDTH_Z", "ACCESS_Z, DOUBLE_Z, FRICTION_Z, MXGRADE_Z", "(none)", "FRICTION_Z, LENGTH_Z, MIMEDSH_Z", "SINGLE_Z", "LENGTH_Z, LOWPRE, MINRAD_Z, TANGENT_Z", "GRADEBR_Z, LENGTH_Z, LOWPRE, MXMEDSH_Z, SLOPE_Z", "AVEPRE_Z, FC_Z, LENGTH_Z, LOWPRE, MIMEDSH_Z, WIDTH_Z", "(none)", "ADTLANE_Z, AVEPRE_Z, AVESNOW_Z, FRICTION_Z, SLOPE_Z, TANGENT_Z", "ACCESS_Z, AVESNOW_Z, CPM_Z, CURVES_Z, GRADEBR_Z, MIMEDSH_Z", "(none)", "ACCESS_Z, AVEPRE_Z, GRADEBR_Z", "MXGRDIFF_Z, PEAKHR_Z"], "lower_vars": ["SPEED_Z", "(none)", "AVESNOW_Z, CURVES_Z, HISNOW, INCLANES_Z, SLOPE_Z", "AVESNOW_Z", "(none)", "DECLANES_Z, SLOPE_Z", "AVESNOW_Z, CURVES_Z, DECLANES_Z, FRICTION_Z", "AVEPRE_Z, CURVES_Z, FRICTION_Z, INCLANES_Z, SLOPE_Z", "AVEPRE_Z, CURVES_Z, DECLANES_Z", "AVESNOW_Z, CURVES_Z, FRICTION_Z, HISNOW, SPEED_Z", "DECLANES_Z, INCLANES_Z, SPEED_Z", "AVESNOW_Z, CURVES_Z, INCLANES_Z, SPEED_Z", "(none)", "AVEPRE_Z, DECLANES_Z", "CURVES_Z, DECLANES_Z, SPEED_Z", "FRICTION_Z, INCLANES_Z", "AVESNOW_Z", "SLOPE_Z, SPEED_Z", "AVEPRE_Z, DECLANES_Z, INCLANES_Z", "DECLANES_Z, HISNOW, INCLANES_Z", "FRICTION_Z, SPEED_Z", "DECLANES_Z, HISNOW", "AVESNOW_Z, FRICTION_Z", "SLOPE_Z", "(none)", "AVESNOW_Z, SLOPE_Z, SPEED_Z", "AVEPRE_Z", "AVEPRE_Z, CURVES_Z, HISNOW, INCLANES_Z", "SLOPE_Z", "DECLANES_Z, INCLANES_Z, SPEED_Z", "AVESNOW_Z, DECLANES_Z, FRICTION_Z", "CURVES_Z, INCLANES_Z, SLOPE_Z", "DECLANES_Z, FRICTION_Z", "AVEPRE_Z, DECLANES_Z, FRICTION_Z, SLOPE_Z, SPEED_Z", "AVESNOW_Z, DECLANES_Z, FRICTION_Z, INCLANES_Z, SLOPE_Z", "AVEPRE_Z, INCLANES_Z", "(none)", "AVEPRE_Z, CURVES_Z, DECLANES_Z, FRICTION_Z, HISNOW", "(none)", "INCLANES_Z", "SPEED_Z", "DECLANES_Z", "(none)", "(none)", "DECLANES_Z", "AVEPRE_Z, AVESNOW_Z, FRICTION_Z, INCLANES_Z, SPEED_Z", "CURVES_Z, HISNOW", "AVEPRE_Z, FRICTION_Z, SLOPE_Z, SPEED_Z", "AVESNOW_Z, FRICTION_Z, HISNOW, INCLANES_Z, SLOPE_Z", "SPEED_Z", "(none)", "HISNOW", "INCLANES_Z", "DECLANES_Z, FRICTION_Z, HISNOW", "AVEPRE_Z, FRICTION_Z, SLOPE_Z", "AVESNOW_Z", "CURVES_Z, INCLANES_Z", "(none)", "AVEPRE_Z, CURVES_Z, DECLANES_Z, HISNOW, INCLANES_Z", "AVEPRE_Z, AVESNOW_Z, DECLANES_Z, HISNOW, SPEED_Z", "(none)", "AVEPRE_Z, AVESNOW_Z", "AVEPRE_Z, FRICTION_Z, HISNOW, INCLANES_Z", "AVEPRE_Z", "(none)", "DECLANES_Z, INCLANES_Z, SLOPE_Z", "CURVES_Z, FRICTION_Z, HISNOW, SPEED_Z", "(none)", "AVESNOW_Z, FRICTION_Z", "AVESNOW_Z, DECLANES_Z", "AVEPRE_Z, AVESNOW_Z, CURVES_Z, HISNOW, INCLANES_Z", "AVESNOW_Z, FRICTION_Z, SLOPE_Z, SPEED_Z", "AVEPRE_Z, AVESNOW_Z", "(none)", "DECLANES_Z, SLOPE_Z", "FRICTION_Z, HISNOW", "HISNOW", "AVEPRE_Z, AVESNOW_Z, DECLANES_Z, SLOPE_Z, SPEED_Z", "INCLANES_Z, SPEED_Z", "AVESNOW_Z, FRICTION_Z, HISNOW, INCLANES_Z", "AVESNOW_Z, DECLANES_Z, FRICTION_Z, INCLANES_Z, SLOPE_Z"], "monotonic": ["no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "yes", "no", "no", "yes", "yes", "no", "no", "no", "no", "no", "yes", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "yes", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "no", "yes", "no", "no", "no", "no", "no", "no", "no", "no", "no", "yes", "no", "no", "no", "yes"], "dot_colors": ["#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#2a7f4f", "#8c959f", "#8c959f", "#2a7f4f", "#2a7f4f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#2a7f4f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#2a7f4f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#2a7f4f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#8c959f", "#2a7f4f", "#8c959f", "#8c959f", "#8c959f", "#2a7f4f"], "label": "Ex-16-3"};
+
+function makeCharts() {
+  const iters = D.iterations;
+
+  function scatterTrace(yVals, colors, label) {
+    return {
+      x: iters, y: yVals,
+      type: 'scatter', mode: 'markers',
+      marker: { color: colors, size: 7, opacity: 0.8 },
+      name: label,
+      hovertemplate: 'Iter %{x}<br>' + label + ': %{y:.2f}<br>Upper: %{customdata[0]}<br>Lower: %{customdata[1]}<extra></extra>',
+      customdata: iters.map((_, i) => [D.upper_vars[i], D.lower_vars[i]])
+    };
+  }
+
+  function runMinTrace(yVals, color, label) {
+    return {
+      x: iters, y: yVals,
+      type: 'scatter', mode: 'lines',
+      line: { color: color, width: 3 },
+      name: label
+    };
+  }
+
+  function starTrace(idx, yVals, color) {
+    return {
+      x: [iters[idx]], y: [yVals[idx]],
+      type: 'scatter', mode: 'markers',
+      marker: { symbol: 'star', size: 18, color: color, line: { color: '#fff', width: 1 } },
+      name: 'Best',
+      hovertemplate: 'BEST<br>Iter %{x}<br>Value: %{y:.2f}<extra></extra>'
+    };
+  }
+
+  const darkLayout = {
+    template: 'plotly_dark',
+    paper_bgcolor: '#0f1923',
+    plot_bgcolor: '#172232',
+    font: { color: '#c8d6e0' },
+    margin: { l: 70, r: 20, t: 50, b: 50 },
+    legend: { orientation: 'h', y: -0.12 },
+    xaxis: { title: 'Search iteration', gridcolor: '#243040' },
+  };
+
+  Plotly.newPlot('bic_chart', [
+    scatterTrace(D.bic, D.dot_colors, 'BIC'),
+    runMinTrace(D.bic_running_min, '#7fdee8', 'Running min BIC'),
+    starTrace(D.best_bic_idx, D.bic, '#d96f32'),
+  ], { ...darkLayout, title: 'BIC over search iterations', yaxis: { title: 'BIC', gridcolor: '#243040' } }, { responsive: true });
+
+  Plotly.newPlot('dev_chart', [
+    scatterTrace(D.val_dev, D.dot_colors, 'Val Poisson Dev'),
+    runMinTrace(D.dev_running_min, '#f0b060', 'Running min Val Dev'),
+    starTrace(D.best_dev_idx, D.val_dev, '#d96f32'),
+  ], { ...darkLayout, title: 'Validation Poisson Deviance over iterations', yaxis: { title: 'Val Poisson Deviance', gridcolor: '#243040' } }, { responsive: true });
+}
+
+makeCharts();
+</script>
+</body>
+</html>

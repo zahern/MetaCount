@@ -4,6 +4,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
+import pickle
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -62,10 +63,16 @@ def _prepare_washington_df(df: pd.DataFrame, aadt_col: str, y_col: str) -> pd.Da
     if "rumble_install_year" in out.columns:
         out["has_rumble"] = pd.to_numeric(out["rumble_install_year"], errors="coerce").notna().astype(int)
 
-    if "segment_length" in out.columns and aadt_col in out.columns:
-        exposure = pd.to_numeric(out["segment_length"], errors="coerce") * pd.to_numeric(out[aadt_col], errors="coerce")
-        exposure = np.clip(exposure.to_numpy(dtype=float), 1e-9, None)
-        out["OFFSET"] = np.log(exposure)
+    if "OFFSET" not in out.columns:
+        length_col = None
+        if "LENGTH" in out.columns:
+            length_col = "LENGTH"
+        elif "segment_length" in out.columns:
+            length_col = "segment_length"
+        if length_col is not None:
+            exposure = pd.to_numeric(out[length_col], errors="coerce")
+            exposure = np.clip(exposure.to_numpy(dtype=float), 1e-9, None)
+            out["OFFSET"] = np.log(exposure)
 
     out[y_col] = pd.to_numeric(out[y_col], errors="coerce")
     out[aadt_col] = pd.to_numeric(out[aadt_col], errors="coerce")
@@ -229,6 +236,31 @@ def _predict(df: pd.DataFrame, fitted: FittedModel) -> np.ndarray:
     return _safe_predict(fitted.result, X, offset)
 
 
+def _aadt_elasticity(df: pd.DataFrame, fitted: FittedModel) -> np.ndarray:
+    params = pd.Series(fitted.result.params)
+    base = float(params.get("log_aadt", 0.0))
+    elasticity = np.full(len(df), base, dtype=float)
+
+    for var in fitted.lower_vars:
+        term_name = f"lower::{var}*log_aadt"
+        coef = float(params.get(term_name, 0.0))
+        x = pd.to_numeric(df[var], errors="coerce").to_numpy(dtype=float)
+        elasticity += coef * x
+
+    return np.asarray(elasticity, dtype=float)
+
+
+def _elasticity_stats(elasticity: np.ndarray) -> dict[str, float]:
+    e = np.asarray(elasticity, dtype=float)
+    return {
+        "aadt_elasticity_min": float(np.min(e)),
+        "aadt_elasticity_p10": float(np.quantile(e, 0.10)),
+        "aadt_elasticity_median": float(np.quantile(e, 0.50)),
+        "aadt_elasticity_p90": float(np.quantile(e, 0.90)),
+        "aadt_elasticity_share_positive": float(np.mean(e > 0.0)),
+    }
+
+
 def _random_search(
     df_train: pd.DataFrame,
     df_val: pd.DataFrame,
@@ -242,6 +274,9 @@ def _random_search(
     max_upper_terms: int,
     max_lower_terms: int,
     seed: int,
+    enforce_aadt_increase: bool,
+    min_aadt_elasticity: float,
+    allow_nonmonotonic_fallback: bool,
 ) -> tuple[FittedModel, pd.DataFrame]:
     rng = np.random.default_rng(seed)
     tested: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
@@ -249,8 +284,9 @@ def _random_search(
 
     best_fit: FittedModel | None = None
     best_score = float("inf")
+    best_fit_any: FittedModel | None = None
+    best_score_any = float("inf")
 
-    # Always include at least one simple baseline model.
     baseline_upper = upper_candidates[:1] if upper_candidates else []
     baseline_lower = lower_candidates[:1] if lower_candidates else []
 
@@ -276,6 +312,9 @@ def _random_search(
         pred_val = _predict(df_val, fit)
         y_val = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
         score = _poisson_deviance(y_val, pred_val)
+        elasticity = _aadt_elasticity(df_val, fit)
+        elast_stats = _elasticity_stats(elasticity)
+        monotonic_ok = bool(elast_stats["aadt_elasticity_min"] > float(min_aadt_elasticity))
         history_rows.append(
             {
                 "Iteration": len(history_rows) + 1,
@@ -285,9 +324,18 @@ def _random_search(
                 "Val RMSE": _metrics(y_val, pred_val)["rmse"],
                 "AIC": float(getattr(fit.result, "aic", np.nan)),
                 "BIC": float(getattr(fit.result, "bic", np.nan)),
+                "AADT elasticity min": elast_stats["aadt_elasticity_min"],
+                "AADT elasticity p10": elast_stats["aadt_elasticity_p10"],
+                "AADT elasticity median": elast_stats["aadt_elasticity_median"],
+                "AADT elasticity p90": elast_stats["aadt_elasticity_p90"],
+                "AADT elasticity share positive": elast_stats["aadt_elasticity_share_positive"],
+                "Monotonic AADT OK": "yes" if monotonic_ok else "no",
             }
         )
-        if score < best_score:
+        if score < best_score_any:
+            best_score_any = score
+            best_fit_any = fit
+        if (not enforce_aadt_increase or monotonic_ok) and score < best_score:
             best_score = score
             best_fit = fit
 
@@ -325,6 +373,9 @@ def _random_search(
         y_val = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
         score = _poisson_deviance(y_val, pred_val)
         val_stats = _metrics(y_val, pred_val)
+        elasticity = _aadt_elasticity(df_val, fit)
+        elast_stats = _elasticity_stats(elasticity)
+        monotonic_ok = bool(elast_stats["aadt_elasticity_min"] > float(min_aadt_elasticity))
 
         history_rows.append(
             {
@@ -335,15 +386,33 @@ def _random_search(
                 "Val RMSE": val_stats["rmse"],
                 "AIC": float(getattr(fit.result, "aic", np.nan)),
                 "BIC": float(getattr(fit.result, "bic", np.nan)),
+                "AADT elasticity min": elast_stats["aadt_elasticity_min"],
+                "AADT elasticity p10": elast_stats["aadt_elasticity_p10"],
+                "AADT elasticity median": elast_stats["aadt_elasticity_median"],
+                "AADT elasticity p90": elast_stats["aadt_elasticity_p90"],
+                "AADT elasticity share positive": elast_stats["aadt_elasticity_share_positive"],
+                "Monotonic AADT OK": "yes" if monotonic_ok else "no",
             }
         )
 
-        if score < best_score:
+        if score < best_score_any:
+            best_score_any = score
+            best_fit_any = fit
+
+        if (not enforce_aadt_increase or monotonic_ok) and score < best_score:
             best_score = score
             best_fit = fit
 
-    if best_fit is None:
+    if best_fit is None and best_fit_any is None:
         raise RuntimeError("Search failed to fit any candidate model.")
+    if best_fit is None:
+        if enforce_aadt_increase and not allow_nonmonotonic_fallback:
+            raise RuntimeError(
+                "No candidate met the required positive AADT elasticity threshold. "
+                "Increase --search-iter, adjust candidate variables, or run with "
+                "--allow-nonmonotonic-fallback (or --no-enforce-aadt-increase) to inspect unconstrained fits."
+            )
+        best_fit = best_fit_any
 
     history_df = pd.DataFrame(history_rows).sort_values("Val Poisson Dev").reset_index(drop=True)
     return best_fit, history_df
@@ -454,9 +523,17 @@ def _calibration_table(y_true: np.ndarray, y_pred: np.ndarray, n_bins: int = 10)
     return out
 
 
-def _representative_profile(df: pd.DataFrame, variables: list[str], binary_vars: set[str]) -> dict[str, float]:
+def _representative_profile(
+    df: pd.DataFrame,
+    variables: list[str],
+    binary_vars: set[str],
+    include_columns: list[str] | None = None,
+) -> dict[str, float]:
     profile: dict[str, float] = {}
-    for var in variables:
+    ordered_vars = list(dict.fromkeys(list(variables) + list(include_columns or [])))
+    for var in ordered_vars:
+        if var not in df.columns:
+            continue
         series = pd.to_numeric(df[var], errors="coerce")
         if var in binary_vars:
             mode = series.dropna().mode()
@@ -494,7 +571,8 @@ def _dashboard_payload(
         "High AADT": float(quant[2]),
     }
 
-    profile = _representative_profile(df_reference_raw, selected_raw_vars, binary_vars)
+    include_columns = [fitted.offset_col] if fitted.offset_col is not None else []
+    profile = _representative_profile(df_reference_raw, selected_raw_vars, binary_vars, include_columns=include_columns)
     profile[aadt_col] = float(aadt_levels["Median AADT"])
 
     variable_payload: dict[str, Any] = {}
@@ -549,6 +627,141 @@ def _dashboard_payload(
         "aadt_levels": aadt_levels,
         "profile": profile,
         "variables": variable_payload,
+    }
+
+
+def _interactive_model_payload(
+    fitted: FittedModel,
+    df_reference_raw: pd.DataFrame,
+    selected_raw_vars: list[str],
+    binary_vars: set[str],
+    scaler_stats: dict[str, tuple[float, float]],
+    aadt_col: str,
+) -> dict[str, Any]:
+    include_columns = [fitted.offset_col] if fitted.offset_col is not None else []
+    profile = _representative_profile(df_reference_raw, selected_raw_vars, binary_vars, include_columns=include_columns)
+
+    aadt_series = pd.to_numeric(df_reference_raw[aadt_col], errors="coerce")
+    aadt_q05 = float(aadt_series.quantile(0.05))
+    aadt_q50 = float(aadt_series.quantile(0.50))
+    aadt_q95 = float(aadt_series.quantile(0.95))
+    if not np.isfinite(aadt_q05) or not np.isfinite(aadt_q95) or aadt_q05 >= aadt_q95:
+        aadt_q05 = float(max(aadt_series.min(), 1.0))
+        aadt_q95 = float(max(aadt_series.max(), aadt_q05 + 1.0))
+
+    variable_specs: dict[str, Any] = {}
+    for raw_var in selected_raw_vars:
+        series = pd.to_numeric(df_reference_raw[raw_var], errors="coerce")
+        default_value = float(profile.get(raw_var, float(series.median())))
+
+        # Compute quantile ticks for slider display
+        q10_tick = float(series.quantile(0.10)) if not _is_binary(series) else 0.0
+        q50_tick = float(series.quantile(0.50)) if not _is_binary(series) else 0.5
+        q90_tick = float(series.quantile(0.90)) if not _is_binary(series) else 1.0
+
+        if raw_var in binary_vars:
+            variable_specs[raw_var] = {
+                "is_binary": True,
+                "min": 0.0,
+                "max": 1.0,
+                "step": 1.0,
+                "default": float(round(default_value)),
+                "q10": 0.0,
+                "q50": 0.5,
+                "q90": 1.0,
+                "label": raw_var,
+                "unit": "",
+            }
+            continue
+
+        q10 = float(series.quantile(0.10))
+        q90 = float(series.quantile(0.90))
+        if not np.isfinite(q10) or not np.isfinite(q90) or q10 == q90:
+            center = float(series.median()) if np.isfinite(series.median()) else default_value
+            q10 = center - 1.0
+            q90 = center + 1.0
+        step = float((q90 - q10) / 100.0)
+        if not np.isfinite(step) or step <= 0:
+            step = 0.1
+
+        # Determine display unit hint
+        unit = ""
+        if raw_var == aadt_col or "AADT" in raw_var.upper():
+            unit = "veh/day"
+        elif raw_var in ("SPEED",):
+            unit = "mph"
+        elif raw_var in ("LENGTH",):
+            unit = "mi"
+        elif raw_var in ("WIDTH", "MEDWIDTH"):
+            unit = "ft"
+
+        variable_specs[raw_var] = {
+            "is_binary": False,
+            "min": float(q10),
+            "max": float(q90),
+            "step": float(step),
+            "default": float(np.clip(default_value, q10, q90)),
+            "q10": float(q10_tick),
+            "q50": float(q50_tick),
+            "q90": float(q90_tick),
+            "label": raw_var,
+            "unit": unit,
+        }
+
+    params = pd.Series(fitted.result.params)
+    upper_terms: list[dict[str, Any]] = []
+    lower_terms: list[dict[str, Any]] = []
+    for name, value in params.items():
+        if name in {"const", "log_aadt"}:
+            continue
+        if name.startswith("upper::"):
+            raw_name = name.replace("upper::", "")
+            standardized = raw_name.endswith("_Z")
+            variable = raw_name[:-2] if standardized else raw_name
+            upper_terms.append(
+                {
+                    "variable": variable,
+                    "coefficient": float(value),
+                    "standardized": bool(standardized),
+                }
+            )
+        elif name.startswith("lower::") and name.endswith("*log_aadt"):
+            raw_name = name.replace("lower::", "").replace("*log_aadt", "")
+            standardized = raw_name.endswith("_Z")
+            variable = raw_name[:-2] if standardized else raw_name
+            lower_terms.append(
+                {
+                    "variable": variable,
+                    "coefficient": float(value),
+                    "standardized": bool(standardized),
+                }
+            )
+
+    scaler_payload = {
+        var: {"mean": float(mu), "sd": float(sd)}
+        for var, (mu, sd) in scaler_stats.items()
+    }
+
+    return {
+        "aadt_col": aadt_col,
+        "aadt_range": {
+            "min": float(max(aadt_q05, 1.0)),
+            "max": float(max(aadt_q95, aadt_q05 + 1.0)),
+            "default": float(max(aadt_q50, 1.0)),
+            "step": float(max((aadt_q95 - aadt_q05) / 120.0, 1.0)),
+        },
+        "default_profile": profile,
+        "variables": variable_specs,
+        "binary_variables": sorted(binary_vars),
+        "scaler_stats": scaler_payload,
+        "coefficients": {
+            "const": float(params.get("const", 0.0)),
+            "log_aadt": float(params.get("log_aadt", 0.0)),
+        },
+        "upper_terms": upper_terms,
+        "lower_terms": lower_terms,
+        "offset_col": fitted.offset_col,
+        "offset_value": float(profile.get(fitted.offset_col, 0.0)) if fitted.offset_col else 0.0,
     }
 
 
@@ -611,14 +824,53 @@ def _save_binary_bar(path: Path, payload: dict[str, Any], binary_vars: list[str]
     plt.close(fig)
 
 
-def _save_dashboard_html(path: Path, payload: dict[str, Any]) -> None:
+def _save_aadt_curve_plot(
+    path: Path,
+    fitted: FittedModel,
+    df_reference_raw: pd.DataFrame,
+    all_columns: list[str],
+    selected_raw_vars: list[str],
+    binary_vars: set[str],
+    scaler_stats: dict[str, tuple[float, float]],
+    aadt_col: str,
+) -> None:
+    include_columns = [fitted.offset_col] if fitted.offset_col is not None else []
+    profile = _representative_profile(df_reference_raw, selected_raw_vars, binary_vars, include_columns=include_columns)
+    aadt_series = pd.to_numeric(df_reference_raw[aadt_col], errors="coerce")
+    q05 = float(aadt_series.quantile(0.05))
+    q95 = float(aadt_series.quantile(0.95))
+    if not np.isfinite(q05) or not np.isfinite(q95) or q05 >= q95:
+        q05 = float(max(aadt_series.min(), 1.0))
+        q95 = float(max(aadt_series.max(), q05 + 1.0))
+
+    grid = np.linspace(max(q05, 1.0), max(q95, q05 + 1.0), 61)
+    preds: list[float] = []
+    for aadt_value in grid:
+        row = dict(profile)
+        row[aadt_col] = float(aadt_value)
+        scenario_raw = _make_single_row_df(row, all_columns)
+        scenario_std = _apply_standardization(scenario_raw, scaler_stats)
+        preds.append(float(_predict(scenario_std, fitted)[0]))
+
+    fig, ax = plt.subplots(figsize=(7.6, 4.8), dpi=160)
+    ax.plot(grid, preds, linewidth=2.4, color="#0a6c74")
+    ax.set_title("Crash-risk change as AADT changes")
+    ax.set_xlabel(aadt_col)
+    ax.set_ylabel("Predicted crashes")
+    ax.grid(alpha=0.24)
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _save_dashboard_html(path: Path, model_payload: dict[str, Any], dataset_label: str) -> None:
     html = f"""<!doctype html>
 <html>
 <head>
-    <meta charset=\"utf-8\" />
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Washington Hierarchical CMF Dashboard</title>
-    <script src=\"https://cdn.plot.ly/plotly-2.35.2.min.js\"></script>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
     <style>
         :root {{
             --ink: #152238;
@@ -628,6 +880,8 @@ def _save_dashboard_html(path: Path, payload: dict[str, Any]) -> None:
             --panel: #ffffff;
             --line: #d4d8de;
             --muted: #5d6b79;
+            --green: #2a7f4f;
+            --red: #b93a2b;
         }}
         body {{
             margin: 0;
@@ -638,235 +892,571 @@ def _save_dashboard_html(path: Path, payload: dict[str, Any]) -> None:
                 radial-gradient(circle at 100% 100%, #f4ddcf 0%, transparent 45%),
                 var(--paper);
         }}
-        .wrap {{
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }}
+        .wrap {{ max-width: 1280px; margin: 0 auto; padding: 20px; }}
         .hero {{
             background: linear-gradient(120deg, #0a6c74 0%, #18435a 45%, #8a4e2c 100%);
             color: #fff;
             border-radius: 14px;
             padding: 18px 20px;
-            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
+            box-shadow: 0 12px 28px rgba(0,0,0,0.14);
         }}
-        .hero h1 {{
-            margin: 0;
-            font-size: 1.45rem;
-            letter-spacing: 0.2px;
-        }}
-        .hero p {{
-            margin: 6px 0 0;
-            color: rgba(255, 255, 255, 0.94);
-            font-size: 0.95rem;
-        }}
+        .hero h1 {{ margin: 0; font-size: 1.45rem; letter-spacing: 0.2px; }}
+        .hero p {{ margin: 6px 0 0; color: rgba(255,255,255,0.94); font-size: 0.95rem; }}
         .grid {{
             margin-top: 16px;
             display: grid;
-            grid-template-columns: 320px 1fr;
+            grid-template-columns: 340px 1fr;
             gap: 14px;
         }}
         .card {{
             background: var(--panel);
             border: 1px solid var(--line);
             border-radius: 12px;
-            padding: 12px;
-            box-shadow: 0 8px 18px rgba(21, 34, 56, 0.08);
+            padding: 14px;
+            box-shadow: 0 8px 18px rgba(21,34,56,0.08);
         }}
-        .control-row {{
-            display: grid;
-            gap: 8px;
-            margin-bottom: 12px;
-        }}
+        .control-row {{ display: grid; gap: 6px; margin-bottom: 14px; }}
         .label {{
-            font-size: 0.82rem;
+            font-size: 0.78rem;
             text-transform: uppercase;
             letter-spacing: 0.07em;
             color: var(--muted);
-            font-weight: 600;
+            font-weight: 700;
         }}
-        select, input[type=\"range\"] {{
+        select {{ width: 100%; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); }}
+        /* Gradient-track slider */
+        input[type="range"] {{
+            -webkit-appearance: none;
             width: 100%;
+            height: 6px;
+            border-radius: 4px;
+            outline: none;
+            cursor: pointer;
+            background: linear-gradient(to right, #0a6c74 0%, #d96f32 100%);
         }}
-        #chart {{
-            height: 62vh;
+        input[type="range"]::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            background: var(--teal);
+            border: 2px solid #fff;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.25);
         }}
-        .kpi {{
-            margin-top: 8px;
-            font-size: 0.95rem;
-            color: var(--ink);
-            line-height: 1.5;
+        .slider-footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 2px;
         }}
+        .slider-value {{
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--teal);
+        }}
+        .cmf-badge {{
+            font-size: 0.78rem;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 10px;
+            background: #e8f5ee;
+            color: var(--green);
+        }}
+        .cmf-badge.over {{ background: #fdecea; color: var(--red); }}
+        .tick-row {{
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.68rem;
+            color: var(--muted);
+            margin-top: 1px;
+        }}
+        /* Toggle switch for binary */
+        .toggle-wrap {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 4px;
+        }}
+        .toggle-switch {{
+            position: relative;
+            width: 46px; height: 24px;
+        }}
+        .toggle-switch input {{ display: none; }}
+        .toggle-slider {{
+            position: absolute;
+            inset: 0;
+            background: #ccc;
+            border-radius: 24px;
+            cursor: pointer;
+            transition: 0.25s;
+        }}
+        .toggle-slider:before {{
+            content: "";
+            position: absolute;
+            left: 3px; top: 3px;
+            width: 18px; height: 18px;
+            border-radius: 50%;
+            background: #fff;
+            transition: 0.25s;
+        }}
+        .toggle-switch input:checked + .toggle-slider {{ background: var(--teal); }}
+        .toggle-switch input:checked + .toggle-slider:before {{ transform: translateX(22px); }}
+        .toggle-label {{ font-size: 0.82rem; font-weight: 600; }}
+        /* Prediction Summary */
+        .pred-summary {{
+            background: linear-gradient(135deg, #f0fafa 0%, #fff8f3 100%);
+            border: 1px solid #c5dfe0;
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin-bottom: 14px;
+        }}
+        .pred-title {{ font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 700; margin-bottom: 6px; }}
+        .pred-number {{ font-size: 2rem; font-weight: 800; color: var(--teal); line-height: 1; }}
+        .pred-label {{ font-size: 0.75rem; color: var(--muted); margin-bottom: 8px; }}
+        .pred-row {{ display: flex; justify-content: space-between; font-size: 0.8rem; margin-top: 4px; }}
+        .pred-row .pk {{ color: var(--muted); }}
+        .pred-row .pv {{ font-weight: 600; }}
+        .pv.good {{ color: var(--green); }}
+        .pv.bad {{ color: var(--red); }}
+        #chart {{ height: 58vh; }}
+        .kpi {{ margin-top: 8px; font-size: 0.88rem; color: var(--ink); line-height: 1.6; }}
         .warn {{
             margin-top: 8px;
             color: #8b3e12;
-            font-size: 0.88rem;
+            font-size: 0.85rem;
             background: #fff1e9;
             border: 1px solid #f1c9b4;
             border-radius: 8px;
             padding: 8px;
         }}
-        @media (max-width: 920px) {{
-            .grid {{
-                grid-template-columns: 1fr;
-            }}
-            #chart {{
-                height: 54vh;
-            }}
+        button#resetButton {{
+            margin-top: 10px;
+            padding: 6px 14px;
+            background: var(--teal);
+            color: #fff;
+            border: none;
+            border-radius: 7px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }}
+        button#resetButton:hover {{ background: #085a61; }}
+        .controls-scroll {{ max-height: 55vh; overflow-y: auto; padding-right: 4px; }}
+        @media (max-width: 960px) {{
+            .grid {{ grid-template-columns: 1fr; }}
+            #chart {{ height: 50vh; }}
         }}
     </style>
 </head>
 <body>
-<div class=\"wrap\">
-    <div class=\"hero\">
-        <h1>Washington Hierarchical CMF Explorer</h1>
-        <p>Adjust one variable at a time to inspect predicted crashes and CMF response. Binary variables are evaluated as a 0 to 1 toggle.</p>
+<div class="wrap">
+    <div class="hero">
+        <h1>{dataset_label} Hierarchical CMF Explorer</h1>
+        <p>Adjust AADT and road geometry variables to explore how the model changes predicted crash likelihood. CMF badges show the effect relative to the current profile baseline.</p>
     </div>
 
-    <div class=\"grid\">
-        <div class=\"card\">
-            <div class=\"control-row\">
-                <span class=\"label\">Variable</span>
-                <select id=\"varSelect\"></select>
+    <div class="grid">
+        <div class="card">
+            <div class="control-row">
+                <span class="label">Variable</span>
+                <select id="varSelect"></select>
             </div>
-            <div class=\"control-row\">
-                <span class=\"label\">AADT Scenario</span>
-                <select id=\"aadtSelect\"></select>
-            </div>
-            <div class=\"control-row\">
-                <span class=\"label\">Display</span>
-                <select id=\"modeSelect\">
-                    <option value=\"pred\">Predicted crashes</option>
-                    <option value=\"cmf\">CMF (relative to profile baseline)</option>
+            <div class="control-row">
+                <span class="label">Display</span>
+                <select id="modeSelect">
+                    <option value="pred">Predicted crashes</option>
+                    <option value="cmf">CMF (relative to profile baseline)</option>
                 </select>
             </div>
-            <div class=\"control-row\">
-                <span class=\"label\" id=\"sliderLabel\">Value</span>
-                <input id=\"valueSlider\" type=\"range\" min=\"0\" max=\"40\" value=\"20\" step=\"1\" />
+
+            <!-- Prediction Summary Panel -->
+            <div class="pred-summary" id="predSummary">
+                <div class="pred-title">Prediction Summary</div>
+                <div class="pred-number" id="predNumber">--</div>
+                <div class="pred-label">predicted crashes</div>
+                <div class="pred-row"><span class="pk">AADT elasticity</span><span class="pv" id="summElast">--</span></div>
+                <div class="pred-row"><span class="pk">CMF vs baseline AADT</span><span class="pv" id="summCmf">--</span></div>
+                <div class="pred-row"><span class="pk">Upper-level contribution</span><span class="pv" id="summUpper">--</span></div>
+                <div class="pred-row"><span class="pk">Lower-level contribution</span><span class="pv" id="summLower">--</span></div>
             </div>
-            <div class=\"kpi\" id=\"kpi\"></div>
-            <div class=\"warn\" id=\"binaryNote\" style=\"display:none;\">Binary feature: interpret as a class toggle, not a one-unit continuous increment.</div>
+
+            <!-- AADT Slider -->
+            <div class="control-row">
+                <span class="label" id="aadtLabel">AADT</span>
+                <input id="aadtSlider" type="range" />
+                <div class="slider-footer">
+                    <span class="slider-value" id="aadtValueDisplay">--</span>
+                    <span class="cmf-badge" id="aadtCmfBadge">CMF: --</span>
+                </div>
+            </div>
+
+            <div class="controls-scroll" id="dynamicControls"></div>
+
+            <button id="resetButton" type="button">Reset Profile</button>
+            <div class="warn" id="binaryNote" style="display:none;">Binary feature: interpret as a class toggle.</div>
+            <div class="kpi" id="hierarchyInfo"></div>
         </div>
 
-        <div class=\"card\">
-            <div id=\"chart\"></div>
+        <div class="card">
+            <div id="chart"></div>
+            <div id="aadtChart" style="height: 36vh; margin-top: 12px;"></div>
         </div>
     </div>
 </div>
 
 <script>
-const payload = {json.dumps(payload)};
-const variables = Object.keys(payload.variables);
-const aadtLevels = Object.keys(payload.aadt_levels);
+const model = {json.dumps(model_payload)};
+const variables = Object.keys(model.variables);
 
 const varSelect = document.getElementById('varSelect');
-const aadtSelect = document.getElementById('aadtSelect');
 const modeSelect = document.getElementById('modeSelect');
-const valueSlider = document.getElementById('valueSlider');
-const sliderLabel = document.getElementById('sliderLabel');
-const kpi = document.getElementById('kpi');
+const aadtSlider = document.getElementById('aadtSlider');
+const aadtLabel = document.getElementById('aadtLabel');
+const aadtValueDisplay = document.getElementById('aadtValueDisplay');
+const aadtCmfBadge = document.getElementById('aadtCmfBadge');
+const dynamicControls = document.getElementById('dynamicControls');
+const hierarchyInfo = document.getElementById('hierarchyInfo');
 const binaryNote = document.getElementById('binaryNote');
+const resetButton = document.getElementById('resetButton');
+const predNumber = document.getElementById('predNumber');
+const summElast = document.getElementById('summElast');
+const summCmf = document.getElementById('summCmf');
+const summUpper = document.getElementById('summUpper');
+const summLower = document.getElementById('summLower');
 
 for (const v of variables) {{
     const o = document.createElement('option');
-    o.value = v;
-    o.textContent = v;
+    o.value = v; o.textContent = v;
     varSelect.appendChild(o);
 }}
-for (const level of aadtLevels) {{
-    const o = document.createElement('option');
-    o.value = level;
-    o.textContent = `${{level}} (${{payload.aadt_levels[level].toFixed(0)}})`;
-    aadtSelect.appendChild(o);
+
+aadtSlider.min = String(model.aadt_range.min);
+aadtSlider.max = String(model.aadt_range.max);
+aadtSlider.step = String(model.aadt_range.step);
+aadtSlider.value = String(model.aadt_range.default);
+
+function fmt(value, unit) {{
+    if (!Number.isFinite(value)) return 'n/a';
+    let s;
+    if (Math.abs(value) >= 10000) s = value.toLocaleString('en-US', {{maximumFractionDigits: 0}});
+    else if (Math.abs(value) >= 100) s = value.toFixed(1);
+    else if (Math.abs(value) >= 1) s = value.toFixed(3);
+    else s = value.toFixed(4);
+    return unit ? s + ' ' + unit : s;
 }}
 
-function currentSeries() {{
-    const variable = varSelect.value;
-    const level = aadtSelect.value;
-    const mode = modeSelect.value;
-    return payload.variables[variable].levels[level][mode];
+function normalizeValue(variable, rawValue) {{
+    const stats = model.scaler_stats[variable];
+    if (!stats) return rawValue;
+    return (rawValue - stats.mean) / stats.sd;
 }}
 
-function currentX() {{
-    const variable = varSelect.value;
-    const level = aadtSelect.value;
-    return payload.variables[variable].levels[level].x;
+function currentProfile() {{
+    const profile = {{ ...model.default_profile }};
+    profile[model.aadt_col] = Number(aadtSlider.value);
+    for (const variable of variables) {{
+        const spec = model.variables[variable];
+        const el = document.getElementById('control-' + variable);
+        if (!el) continue;
+        if (spec.is_binary) {{
+            profile[variable] = el.checked ? 1 : 0;
+        }} else {{
+            profile[variable] = Number(el.value);
+        }}
+    }}
+    return profile;
 }}
 
-function refreshSlider() {{
-    const variable = varSelect.value;
-    const level = aadtSelect.value;
-    const data = payload.variables[variable].levels[level];
-    const maxIndex = Math.max(data.x.length - 1, 0);
-    valueSlider.min = 0;
-    valueSlider.max = maxIndex;
-    valueSlider.step = 1;
-    valueSlider.value = Math.min(Number(valueSlider.value), maxIndex);
-    sliderLabel.textContent = `Value Index (0-${{maxIndex}})`;
-    binaryNote.style.display = payload.variables[variable].is_binary ? 'block' : 'none';
+function predict(profile, aadtValue) {{
+    const safeAadt = Math.max(aadtValue, 1e-9);
+    const logAadt = Math.log(safeAadt);
+    let linear = model.coefficients.const + model.coefficients.log_aadt * logAadt + (model.offset_value || 0);
+    for (const term of model.upper_terms) {{
+        const rawValue = Number(profile[term.variable] ?? model.default_profile[term.variable] ?? 0);
+        const modelValue = term.standardized ? normalizeValue(term.variable, rawValue) : rawValue;
+        linear += term.coefficient * modelValue;
+    }}
+    for (const term of model.lower_terms) {{
+        const rawValue = Number(profile[term.variable] ?? model.default_profile[term.variable] ?? 0);
+        const modelValue = term.standardized ? normalizeValue(term.variable, rawValue) : rawValue;
+        linear += term.coefficient * modelValue * logAadt;
+    }}
+    return Math.exp(linear);
 }}
+
+function decompose(profile, aadtValue) {{
+    const safeAadt = Math.max(aadtValue, 1e-9);
+    const logAadt = Math.log(safeAadt);
+    const coreConst = model.coefficients.const;
+    const coreAadt = model.coefficients.log_aadt * logAadt;
+    let upperSum = 0.0, lowerSum = 0.0;
+    const upperItems = [], lowerItems = [];
+    for (const term of model.upper_terms) {{
+        const rawValue = Number(profile[term.variable] ?? model.default_profile[term.variable] ?? 0);
+        const modelValue = term.standardized ? normalizeValue(term.variable, rawValue) : rawValue;
+        const contribution = term.coefficient * modelValue;
+        upperSum += contribution;
+        upperItems.push({{ variable: term.variable, coefficient: term.coefficient, value: rawValue, contribution, standardized: term.standardized }});
+    }}
+    for (const term of model.lower_terms) {{
+        const rawValue = Number(profile[term.variable] ?? model.default_profile[term.variable] ?? 0);
+        const modelValue = term.standardized ? normalizeValue(term.variable, rawValue) : rawValue;
+        const contribution = term.coefficient * modelValue * logAadt;
+        lowerSum += contribution;
+        lowerItems.push({{ variable: term.variable, coefficient: term.coefficient, value: rawValue, contribution, standardized: term.standardized }});
+    }}
+    const offset = model.offset_value || 0;
+    const linear = coreConst + coreAadt + upperSum + lowerSum + offset;
+    const prediction = Math.exp(linear);
+    const aadtElasticity = model.coefficients.log_aadt + lowerItems.reduce((acc, item) => {{
+        const stats = model.scaler_stats[item.variable];
+        const modelValue = item.standardized && stats ? (item.value - stats.mean) / stats.sd : item.value;
+        return acc + item.coefficient * modelValue;
+    }}, 0);
+    return {{ coreConst, coreAadt, upperSum, lowerSum, linear, prediction, aadtElasticity, upperItems, lowerItems }};
+}}
+
+function buildGrid(spec) {{
+    if (spec.is_binary) return [0, 1];
+    const values = [];
+    const points = 41;
+    const width = spec.max - spec.min;
+    for (let i = 0; i < points; i++) values.push(spec.min + (width * i) / (points - 1));
+    return values;
+}}
+
+function cmfBadgeHTML(cmf) {{
+    const pct = ((cmf - 1) * 100).toFixed(1);
+    const sign = cmf >= 1 ? '+' : '';
+    const cls = cmf > 1 ? ' over' : '';
+    return '<span class="cmf-badge' + cls + '">CMF: ' + cmf.toFixed(3) + ' (' + sign + pct + '%)</span>';
+}}
+
+let baselinePred = null;
 
 function draw() {{
     const variable = varSelect.value;
-    const level = aadtSelect.value;
     const mode = modeSelect.value;
+    const spec = model.variables[variable];
+    const profile = currentProfile();
+    const aadtValue = Number(aadtSlider.value);
+    const x = buildGrid(spec);
+    const pred = x.map(value => predict({{ ...profile, [variable]: value }}, aadtValue));
+    const currentValue = spec.is_binary ? (profile[variable] || 0) : Number(profile[variable] ?? spec.default);
+    const decomp = decompose(profile, aadtValue);
+    const baseline = Math.max(decomp.prediction, 1e-9);
+    const y = mode === 'pred' ? pred : pred.map(v => v / baseline);
+    const selectedY = mode === 'pred' ? baseline : 1.0;
+    binaryNote.style.display = spec.is_binary ? 'block' : 'none';
 
-    const x = currentX();
-    const y = currentSeries();
-    const idx = Math.min(Number(valueSlider.value), y.length - 1);
+    // Update CMF badges on all sliders
+    for (const v of variables) {{
+        const badgeEl = document.getElementById('cmf-badge-' + v);
+        if (!badgeEl) continue;
+        const vspec = model.variables[v];
+        const baselineProf = {{ ...model.default_profile }};
+        baselineProf[model.aadt_col] = model.aadt_range.default;
+        const baseVal = predict(baselineProf, model.aadt_range.default);
+        const curVal = predict(profile, aadtValue);
+        // per-var CMF: prediction with this var at current vs at default
+        const profileWithDefault = {{ ...profile }};
+        profileWithDefault[v] = vspec.default;
+        const predWithDefault = predict(profileWithDefault, aadtValue);
+        const predWithCurrent = predict(profile, aadtValue);
+        const varCmf = predWithDefault > 1e-9 ? predWithCurrent / predWithDefault : 1.0;
+        badgeEl.className = 'cmf-badge' + (varCmf > 1 ? ' over' : '');
+        const pct = ((varCmf - 1) * 100).toFixed(1);
+        const sign = varCmf >= 1 ? '+' : '';
+        badgeEl.textContent = 'CMF: ' + varCmf.toFixed(3) + ' (' + sign + pct + '%)';
+    }}
+
+    // Update AADT slider display
+    const aadtUnit = 'veh/day';
+    aadtValueDisplay.textContent = fmt(aadtValue, aadtUnit);
+    const aadtBaselinePred = predict(profile, model.aadt_range.default);
+    const aadtCmf = aadtBaselinePred > 1e-9 ? baseline / aadtBaselinePred : 1.0;
+    aadtCmfBadge.className = 'cmf-badge' + (aadtCmf > 1 ? ' over' : '');
+    aadtCmfBadge.textContent = 'CMF: ' + aadtCmf.toFixed(3);
+
+    // Update prediction summary
+    predNumber.textContent = baseline.toFixed(3);
+    const elast = decomp.aadtElasticity;
+    summElast.textContent = elast.toFixed(4);
+    summElast.className = 'pv' + (elast > 0 ? ' good' : ' bad');
+    summCmf.textContent = aadtCmf.toFixed(4);
+    summCmf.className = 'pv' + (aadtCmf <= 1 ? ' good' : ' bad');
+    summUpper.textContent = decomp.upperSum.toFixed(4);
+    summUpper.className = 'pv';
+    summLower.textContent = decomp.lowerSum.toFixed(4);
+    summLower.className = 'pv';
 
     const mainTrace = {{
-        x,
-        y,
-        type: 'scatter',
-        mode: 'lines+markers',
-        marker: {{size: 5, color: '#0a6c74'}},
-        line: {{width: 3, color: '#0a6c74'}},
+        x, y,
+        type: 'scatter', mode: 'lines+markers',
+        marker: {{ size: 5, color: '#0a6c74' }},
+        line: {{ width: 3, color: '#0a6c74' }},
         name: mode === 'pred' ? 'Predicted crashes' : 'CMF'
     }};
-
     const markerTrace = {{
-        x: [x[idx]],
-        y: [y[idx]],
-        type: 'scatter',
-        mode: 'markers',
-        marker: {{size: 11, color: '#d96f32'}},
-        name: 'Selected point'
+        x: [currentValue], y: [selectedY],
+        type: 'scatter', mode: 'markers',
+        marker: {{ size: 12, color: '#d96f32', symbol: 'diamond' }},
+        name: 'Current profile'
     }};
-
     const yTitle = mode === 'pred' ? 'Predicted crashes' : 'CMF';
-    const layout = {{
+    Plotly.react('chart', [mainTrace, markerTrace], {{
         template: 'plotly_white',
-        title: `${{variable}} response at ${{level}}`,
-        xaxis: {{title: variable}},
-        yaxis: {{title: yTitle}},
-        margin: {{l: 64, r: 20, t: 56, b: 52}},
-        legend: {{orientation: 'h'}}
-    }};
+        title: variable + ' response at AADT ' + fmt(aadtValue, ''),
+        xaxis: {{ title: variable }},
+        yaxis: {{ title: yTitle }},
+        margin: {{ l: 64, r: 20, t: 56, b: 52 }},
+        legend: {{ orientation: 'h' }}
+    }}, {{ responsive: true }});
 
-    Plotly.react('chart', [mainTrace, markerTrace], layout, {{responsive: true}});
+    const aadtGrid = [], aadtPred = [];
+    const aadtPoints = 61;
+    for (let i = 0; i < aadtPoints; i++) {{
+        const v = model.aadt_range.min + ((model.aadt_range.max - model.aadt_range.min) * i) / (aadtPoints - 1);
+        aadtGrid.push(v);
+        aadtPred.push(predict(profile, v));
+    }}
+    const aadtDefaultPred = Math.max(predict(profile, model.aadt_range.default), 1e-9);
+    const aadtY = mode === 'pred' ? aadtPred : aadtPred.map(v => v / aadtDefaultPred);
+    Plotly.react('aadtChart', [
+        {{ x: aadtGrid, y: aadtY, type: 'scatter', mode: 'lines', line: {{ width: 3, color: '#18435a' }}, name: mode === 'pred' ? 'AADT response' : 'AADT CMF' }},
+        {{ x: [aadtValue], y: [mode === 'pred' ? baseline : baseline / aadtDefaultPred], type: 'scatter', mode: 'markers', marker: {{ size: 12, color: '#d96f32', symbol: 'diamond' }}, name: 'Current AADT' }}
+    ], {{
+        template: 'plotly_white',
+        title: 'AADT response for current profile',
+        xaxis: {{ title: model.aadt_col }},
+        yaxis: {{ title: yTitle }},
+        margin: {{ l: 64, r: 20, t: 56, b: 52 }},
+        legend: {{ orientation: 'h' }}
+    }}, {{ responsive: true }});
 
-    const aadtValue = payload.aadt_levels[level];
-    const xVal = x[idx];
-    const yVal = y[idx];
-    kpi.innerHTML = [
-        `<strong>${{variable}}</strong> = <strong>${{xVal.toFixed(4)}}</strong>`,
-        `AADT level = <strong>${{aadtValue.toFixed(0)}}</strong>`,
-        mode === 'pred'
-            ? `Predicted crashes = <strong>${{yVal.toFixed(4)}}</strong>`
-            : `CMF = <strong>${{yVal.toFixed(4)}}</strong>`
+    aadtLabel.textContent = 'AADT (' + fmt(aadtValue, '') + ')';
+    const topUpper = [...decomp.upperItems]
+        .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution))
+        .slice(0, 5)
+        .map(item => item.variable + ': ' + fmt(item.value, '') + ' → ' + fmt(item.contribution, ''))
+        .join('<br/>') || '(none)';
+    const topLower = [...decomp.lowerItems]
+        .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution))
+        .slice(0, 5)
+        .map(item => item.variable + ': ' + fmt(item.value, '') + ' → ' + fmt(item.contribution, ''))
+        .join('<br/>') || '(none)';
+    hierarchyInfo.innerHTML = [
+        '<strong>Top Upper-Level Terms</strong><br/>' + topUpper,
+        '<strong>Top Lower-Level Terms (×log AADT)</strong><br/>' + topLower,
     ].join('<br/>');
 }}
 
-varSelect.value = variables[0];
-aadtSelect.value = aadtLevels[1] || aadtLevels[0];
-refreshSlider();
-draw();
+function buildControls() {{
+    dynamicControls.innerHTML = '';
+    for (const variable of variables) {{
+        const spec = model.variables[variable];
+        const wrapper = document.createElement('div');
+        wrapper.className = 'control-row';
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = spec.label || variable;
+        wrapper.appendChild(label);
 
-varSelect.addEventListener('change', () => {{ refreshSlider(); draw(); }});
-aadtSelect.addEventListener('change', () => {{ refreshSlider(); draw(); }});
+        if (spec.is_binary) {{
+            const toggleWrap = document.createElement('div');
+            toggleWrap.className = 'toggle-wrap';
+            const switchEl = document.createElement('label');
+            switchEl.className = 'toggle-switch';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.id = 'control-' + variable;
+            input.checked = spec.default === 1;
+            const slider = document.createElement('span');
+            slider.className = 'toggle-slider';
+            switchEl.appendChild(input);
+            switchEl.appendChild(slider);
+            const toggleLabel = document.createElement('span');
+            toggleLabel.className = 'toggle-label';
+            toggleLabel.id = 'toggle-label-' + variable;
+            toggleLabel.textContent = input.checked ? 'Present (1)' : 'Absent (0)';
+            input.addEventListener('change', () => {{
+                toggleLabel.textContent = input.checked ? 'Present (1)' : 'Absent (0)';
+                draw();
+            }});
+            const badgeSpan = document.createElement('span');
+            badgeSpan.id = 'cmf-badge-' + variable;
+            badgeSpan.className = 'cmf-badge';
+            badgeSpan.textContent = 'CMF: --';
+            toggleWrap.appendChild(switchEl);
+            toggleWrap.appendChild(toggleLabel);
+            toggleWrap.appendChild(badgeSpan);
+            wrapper.appendChild(toggleWrap);
+        }} else {{
+            const input = document.createElement('input');
+            input.type = 'range';
+            input.id = 'control-' + variable;
+            input.min = String(spec.min);
+            input.max = String(spec.max);
+            input.step = String(spec.step);
+            input.value = String(spec.default);
+
+            const footer = document.createElement('div');
+            footer.className = 'slider-footer';
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'slider-value';
+            valueSpan.id = 'value-' + variable;
+            valueSpan.textContent = fmt(spec.default, spec.unit || '');
+            const badgeSpan = document.createElement('span');
+            badgeSpan.id = 'cmf-badge-' + variable;
+            badgeSpan.className = 'cmf-badge';
+            badgeSpan.textContent = 'CMF: --';
+            footer.appendChild(valueSpan);
+            footer.appendChild(badgeSpan);
+
+            const tickRow = document.createElement('div');
+            tickRow.className = 'tick-row';
+            tickRow.innerHTML = '<span>p10: ' + fmt(spec.q10, '') + '</span><span>p50: ' + fmt(spec.q50, '') + '</span><span>p90: ' + fmt(spec.q90, '') + '</span>';
+
+            input.addEventListener('input', () => {{
+                valueSpan.textContent = fmt(Number(input.value), spec.unit || '');
+                draw();
+            }});
+            wrapper.appendChild(input);
+            wrapper.appendChild(footer);
+            wrapper.appendChild(tickRow);
+        }}
+        dynamicControls.appendChild(wrapper);
+    }}
+}}
+
+function resetProfile() {{
+    aadtSlider.value = String(model.aadt_range.default);
+    for (const variable of variables) {{
+        const spec = model.variables[variable];
+        const control = document.getElementById('control-' + variable);
+        if (!control) continue;
+        if (spec.is_binary) {{
+            control.checked = spec.default === 1;
+            const lbl = document.getElementById('toggle-label-' + variable);
+            if (lbl) lbl.textContent = control.checked ? 'Present (1)' : 'Absent (0)';
+        }} else {{
+            control.value = String(spec.default);
+            const valueText = document.getElementById('value-' + variable);
+            if (valueText) valueText.textContent = fmt(Number(spec.default), spec.unit || '');
+        }}
+    }}
+    draw();
+}}
+
+varSelect.value = variables[0];
+buildControls();
+draw();
+varSelect.addEventListener('change', draw);
 modeSelect.addEventListener('change', draw);
-valueSlider.addEventListener('input', draw);
+aadtSlider.addEventListener('input', () => {{
+    aadtValueDisplay.textContent = fmt(Number(aadtSlider.value), 'veh/day');
+    draw();
+}});
+resetButton.addEventListener('click', resetProfile);
 </script>
 </body>
 </html>
@@ -874,51 +1464,508 @@ valueSlider.addEventListener('input', draw);
     path.write_text(html, encoding="utf-8")
 
 
-def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tuple[list[str], list[str]]:
-    # Tuned profile keeps engineering signal strong and avoids very collinear weather variants by default.
-    core_upper = [
-        "segment_length",
-        "curve",
-        "speed",
-        "paved_shoulder",
-        "num_lanes",
-        "left_shoulder_width",
-        "right_shoulder_width",
-        "dummy_winter",
-        "has_rumble",
-        "DP01",
-        "DX32",
-        "PRCP",
-        "SNOW",
-        "TAVG",
-    ]
-    core_lower = [
-        "curve",
-        "speed",
-        "paved_shoulder",
-        "num_lanes",
-        "left_shoulder_width",
-        "right_shoulder_width",
-        "has_rumble",
-        "DP01",
-        "DX32",
-        "dummy_winter",
-    ]
+def _save_convergence_html(path: Path, history_df: pd.DataFrame, dataset_label: str) -> None:
+    """Save a self-contained Plotly HTML showing BIC and Val Poisson Deviance over search iterations."""
+    try:
+        df = history_df.copy()
+        # Restore original iteration order for convergence plot
+        if "Iteration" in df.columns:
+            df = df.sort_values("Iteration").reset_index(drop=True)
+        else:
+            df = df.reset_index(drop=True)
+            df["Iteration"] = df.index + 1
 
-    expanded_only_upper = [
-        "DP10",
-        "DSND",
-        "DSNW",
-        "max_prcp",
-        "max_snow",
-        "TMAX",
-        "TMIN",
-    ]
-    expanded_only_lower = [
-        "segment_length",
-        "PRCP",
-        "SNOW",
-    ]
+        iterations = df["Iteration"].tolist()
+        bic_vals = df["BIC"].tolist()
+        val_dev_vals = df["Val Poisson Dev"].tolist()
+        upper_vars = df["Upper Vars"].tolist() if "Upper Vars" in df.columns else [""] * len(df)
+        lower_vars = df["Lower Vars"].tolist() if "Lower Vars" in df.columns else [""] * len(df)
+        monotonic = df["Monotonic AADT OK"].tolist() if "Monotonic AADT OK" in df.columns else ["yes"] * len(df)
+
+        # Compute running minimums
+        bic_arr = np.array([float(v) if np.isfinite(float(v)) else 1e18 for v in bic_vals])
+        dev_arr = np.array([float(v) if np.isfinite(float(v)) else 1e18 for v in val_dev_vals])
+
+        bic_running_min = np.minimum.accumulate(bic_arr).tolist()
+        dev_running_min = np.minimum.accumulate(dev_arr).tolist()
+
+        best_bic_idx = int(np.argmin(bic_arr))
+        best_dev_idx = int(np.argmin(dev_arr))
+
+        dot_colors = ["#2a7f4f" if m == "yes" else "#8c959f" for m in monotonic]
+
+        payload = {
+            "iterations": iterations,
+            "bic": [float(v) for v in bic_vals],
+            "val_dev": [float(v) for v in val_dev_vals],
+            "bic_running_min": bic_running_min,
+            "dev_running_min": dev_running_min,
+            "best_bic_idx": best_bic_idx,
+            "best_dev_idx": best_dev_idx,
+            "upper_vars": upper_vars,
+            "lower_vars": lower_vars,
+            "monotonic": monotonic,
+            "dot_colors": dot_colors,
+            "label": dataset_label,
+        }
+
+        html = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Search Convergence — {dataset_label}</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body {{ margin: 0; background: #0f1923; color: #e8edf2; font-family: 'Segoe UI', sans-serif; }}
+  .header {{ padding: 18px 24px 6px; }}
+  .header h2 {{ margin: 0; font-size: 1.3rem; color: #7fdee8; }}
+  .header p {{ margin: 4px 0 0; font-size: 0.9rem; color: #8fa3b3; }}
+  .legend-row {{ display: flex; gap: 18px; padding: 0 24px 10px; font-size: 0.82rem; color: #8fa3b3; align-items: center; }}
+  .dot {{ width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 4px; }}
+  .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100vh - 110px); }}
+  #bic_chart, #dev_chart {{ height: 100%; }}
+</style>
+</head>
+<body>
+<div class="header">
+  <h2>{dataset_label} — Search Convergence</h2>
+  <p>Each point = one candidate model. Running minimum = thick line. Star = best-ever.</p>
+</div>
+<div class="legend-row">
+  <span><span class="dot" style="background:#2a7f4f;"></span>Monotonic AADT OK</span>
+  <span><span class="dot" style="background:#8c959f;"></span>Not monotonic</span>
+  <span><span class="dot" style="background:#d96f32; border-radius:0; transform:rotate(45deg);"></span>Best ever</span>
+</div>
+<div class="charts">
+  <div id="bic_chart"></div>
+  <div id="dev_chart"></div>
+</div>
+<script>
+const D = {json.dumps(payload)};
+
+function makeCharts() {{
+  const iters = D.iterations;
+
+  function scatterTrace(yVals, colors, label) {{
+    return {{
+      x: iters, y: yVals,
+      type: 'scatter', mode: 'markers',
+      marker: {{ color: colors, size: 7, opacity: 0.8 }},
+      name: label,
+      hovertemplate: 'Iter %{{x}}<br>' + label + ': %{{y:.2f}}<br>Upper: %{{customdata[0]}}<br>Lower: %{{customdata[1]}}<extra></extra>',
+      customdata: iters.map((_, i) => [D.upper_vars[i], D.lower_vars[i]])
+    }};
+  }}
+
+  function runMinTrace(yVals, color, label) {{
+    return {{
+      x: iters, y: yVals,
+      type: 'scatter', mode: 'lines',
+      line: {{ color: color, width: 3 }},
+      name: label
+    }};
+  }}
+
+  function starTrace(idx, yVals, color) {{
+    return {{
+      x: [iters[idx]], y: [yVals[idx]],
+      type: 'scatter', mode: 'markers',
+      marker: {{ symbol: 'star', size: 18, color: color, line: {{ color: '#fff', width: 1 }} }},
+      name: 'Best',
+      hovertemplate: 'BEST<br>Iter %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
+    }};
+  }}
+
+  const darkLayout = {{
+    template: 'plotly_dark',
+    paper_bgcolor: '#0f1923',
+    plot_bgcolor: '#172232',
+    font: {{ color: '#c8d6e0' }},
+    margin: {{ l: 70, r: 20, t: 50, b: 50 }},
+    legend: {{ orientation: 'h', y: -0.12 }},
+    xaxis: {{ title: 'Search iteration', gridcolor: '#243040' }},
+  }};
+
+  Plotly.newPlot('bic_chart', [
+    scatterTrace(D.bic, D.dot_colors, 'BIC'),
+    runMinTrace(D.bic_running_min, '#7fdee8', 'Running min BIC'),
+    starTrace(D.best_bic_idx, D.bic, '#d96f32'),
+  ], {{ ...darkLayout, title: 'BIC over search iterations', yaxis: {{ title: 'BIC', gridcolor: '#243040' }} }}, {{ responsive: true }});
+
+  Plotly.newPlot('dev_chart', [
+    scatterTrace(D.val_dev, D.dot_colors, 'Val Poisson Dev'),
+    runMinTrace(D.dev_running_min, '#f0b060', 'Running min Val Dev'),
+    starTrace(D.best_dev_idx, D.val_dev, '#d96f32'),
+  ], {{ ...darkLayout, title: 'Validation Poisson Deviance over iterations', yaxis: {{ title: 'Val Poisson Deviance', gridcolor: '#243040' }} }}, {{ responsive: true }});
+}}
+
+makeCharts();
+</script>
+</body>
+</html>
+"""
+        path.write_text(html, encoding="utf-8")
+    except Exception as exc:
+        print(f"[WARNING] Could not save convergence HTML: {exc}")
+
+
+def _save_obs_pred_aadt_html(
+    path: Path,
+    df_all: pd.DataFrame,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    aadt: np.ndarray,
+    title: str,
+    split_labels: list[str],
+) -> None:
+    """Save a self-contained Plotly HTML with observed vs predicted by AADT and residual panel."""
+    try:
+        y = np.asarray(y_true, dtype=float).reshape(-1)
+        p = np.asarray(y_pred, dtype=float).reshape(-1)
+        a = np.asarray(aadt, dtype=float).reshape(-1)
+        n = min(y.size, p.size, a.size)
+        y, p, a = y[:n], p[:n], a[:n]
+        labels = list(split_labels)[:n] if split_labels else ["all"] * n
+
+        # LOWESS-style binning: sort by AADT, bin into 20 groups
+        sort_idx = np.argsort(a)
+        a_sorted = a[sort_idx]
+        p_sorted = p[sort_idx]
+        n_bins = min(20, n)
+        bin_edges = np.array_split(np.arange(n), n_bins)
+        smooth_aadt = [float(np.mean(a_sorted[b])) for b in bin_edges]
+        smooth_pred = [float(np.mean(p_sorted[b])) for b in bin_edges]
+
+        # Residuals
+        residuals = (p - y) / np.maximum(y, 1.0)
+
+        # AADT quantile bands (p25, p75)
+        aadt_p10 = float(np.quantile(a, 0.10))
+        aadt_p25 = float(np.quantile(a, 0.25))
+        aadt_p75 = float(np.quantile(a, 0.75))
+        aadt_p90 = float(np.quantile(a, 0.90))
+
+        color_map = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32", "test": "#7a3c8c", "all": "#1f5f8b"}
+        obs_colors = [color_map.get(str(lbl).lower(), "#4a6785") for lbl in labels]
+        resid_colors = ["#d96f32" if r > 0 else "#0a6c74" for r in residuals]
+
+        hover_text = [
+            f"AADT: {a[i]:,.0f}<br>Observed: {y[i]:.1f}<br>Predicted: {p[i]:.3f}<br>Resid%: {residuals[i]*100:+.1f}%<br>Split: {labels[i]}"
+            for i in range(n)
+        ]
+
+        payload = {
+            "aadt": a.tolist(),
+            "y_true": y.tolist(),
+            "y_pred": p.tolist(),
+            "residuals": residuals.tolist(),
+            "labels": labels,
+            "obs_colors": obs_colors,
+            "resid_colors": resid_colors,
+            "smooth_aadt": smooth_aadt,
+            "smooth_pred": smooth_pred,
+            "hover_text": hover_text,
+            "aadt_p10": aadt_p10,
+            "aadt_p25": aadt_p25,
+            "aadt_p75": aadt_p75,
+            "aadt_p90": aadt_p90,
+            "title": title,
+        }
+
+        html = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>{title}</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body {{ margin: 0; background: #f8f6f2; font-family: 'Segoe UI', sans-serif; color: #152238; }}
+  .header {{ padding: 16px 22px 4px; background: linear-gradient(120deg,#0a6c74,#18435a); color:#fff; }}
+  .header h2 {{ margin:0; font-size:1.2rem; }}
+  .header p {{ margin:4px 0 0; font-size:0.85rem; color:rgba(255,255,255,0.85); }}
+  #scatter_chart {{ height: 52vh; }}
+  #resid_chart {{ height: 36vh; }}
+</style>
+</head>
+<body>
+<div class="header">
+  <h2>{title}</h2>
+  <p>Top: observed (dots) and smoothed predicted (line) vs AADT. Bottom: normalized residuals = (pred-obs)/max(obs,1).</p>
+</div>
+<div id="scatter_chart"></div>
+<div id="resid_chart"></div>
+<script>
+const D = {json.dumps(payload)};
+
+// Band shape helper
+function bandShape(x0, x1, color) {{
+  return {{
+    type: 'rect', xref: 'x', yref: 'paper',
+    x0: x0, x1: x1, y0: 0, y1: 1,
+    fillcolor: color, opacity: 0.08, line: {{ width: 0 }}
+  }};
+}}
+
+const shapes_scatter = [
+  bandShape(D.aadt_p10, D.aadt_p25, '#0a6c74'),
+  bandShape(D.aadt_p75, D.aadt_p90, '#d96f32'),
+];
+
+const obsTrace = {{
+  x: D.aadt, y: D.y_true,
+  type: 'scatter', mode: 'markers',
+  marker: {{ color: D.obs_colors, size: 7, opacity: 0.6, line: {{ color: 'rgba(255,255,255,0.4)', width: 0.5 }} }},
+  name: 'Observed crashes',
+  hovertext: D.hover_text, hoverinfo: 'text'
+}};
+
+const predLine = {{
+  x: D.smooth_aadt, y: D.smooth_pred,
+  type: 'scatter', mode: 'lines',
+  line: {{ color: '#d96f32', width: 3 }},
+  name: 'Predicted (binned smooth)'
+}};
+
+Plotly.newPlot('scatter_chart', [obsTrace, predLine], {{
+  template: 'plotly_white',
+  title: D.title,
+  xaxis: {{ title: 'AADT (vehicles/day)', type: 'log', gridcolor: '#e0e4e8' }},
+  yaxis: {{ title: 'Crash count', gridcolor: '#e0e4e8' }},
+  margin: {{ l: 70, r: 20, t: 60, b: 50 }},
+  legend: {{ orientation: 'h' }},
+  shapes: shapes_scatter,
+}}, {{ responsive: true }});
+
+const residTrace = {{
+  x: D.aadt, y: D.residuals,
+  type: 'scatter', mode: 'markers',
+  marker: {{ color: D.resid_colors, size: 7, opacity: 0.65 }},
+  name: 'Normalized residual',
+  hovertext: D.hover_text, hoverinfo: 'text'
+}};
+
+const zeroLine = {{
+  x: [Math.min(...D.aadt), Math.max(...D.aadt)],
+  y: [0, 0],
+  type: 'scatter', mode: 'lines',
+  line: {{ color: '#333', width: 1.5, dash: 'dash' }},
+  name: 'Zero'
+}};
+
+Plotly.newPlot('resid_chart', [residTrace, zeroLine], {{
+  template: 'plotly_white',
+  title: 'Normalized residuals by AADT',
+  xaxis: {{ title: 'AADT', type: 'log', gridcolor: '#e0e4e8' }},
+  yaxis: {{ title: '(pred - obs) / max(obs,1)', gridcolor: '#e0e4e8', zeroline: true }},
+  margin: {{ l: 70, r: 20, t: 50, b: 50 }},
+  legend: {{ orientation: 'h' }},
+  shapes: [
+    bandShape(D.aadt_p10, D.aadt_p25, '#0a6c74'),
+    bandShape(D.aadt_p75, D.aadt_p90, '#d96f32'),
+  ],
+}}, {{ responsive: true }});
+
+function bandShape(x0, x1, color) {{
+  return {{
+    type: 'rect', xref: 'x', yref: 'paper',
+    x0: x0, x1: x1, y0: 0, y1: 1,
+    fillcolor: color, opacity: 0.08, line: {{ width: 0 }}
+  }};
+}}
+</script>
+</body>
+</html>
+"""
+        path.write_text(html, encoding="utf-8")
+    except Exception as exc:
+        print(f"[WARNING] Could not save AADT obs/pred HTML: {exc}")
+
+
+def _jax_random_params_refit(
+    df_trainval_raw: pd.DataFrame,
+    best_upper_raw: list[str],
+    best_lower_raw: list[str],
+    y_col: str,
+    aadt_col: str,
+    offset_col: str | None,
+    scaler_stats: dict[str, tuple[float, float]],
+    binary_vars: set[str],
+) -> dict[str, Any] | None:
+    """Attempt a random-parameters refit using ExperimentBuilder if available."""
+    try:
+        try:
+            from experiment_package import ExperimentBuilder  # type: ignore
+        except ImportError:
+            try:
+                from ..experiment_package import ExperimentBuilder  # type: ignore
+            except ImportError:
+                print("[INFO] ExperimentBuilder not available; skipping JAX random-parameters refit.")
+                return None
+    except Exception as exc:
+        print(f"[INFO] ExperimentBuilder import failed ({exc}); skipping JAX refit.")
+        return None
+
+    try:
+        df = df_trainval_raw.copy()
+        df["_id"] = np.arange(len(df), dtype=int)
+
+        log_aadt = np.log(np.clip(pd.to_numeric(df[aadt_col], errors="coerce").to_numpy(dtype=float), 1e-12, None))
+        df["_log_aadt"] = log_aadt
+
+        # Interaction columns for lower vars
+        for var in best_lower_raw:
+            x = pd.to_numeric(df[var], errors="coerce").to_numpy(dtype=float)
+            df[f"_inter_{var}"] = x * log_aadt
+
+        # Standardize continuous vars
+        for var, (mu, sd) in scaler_stats.items():
+            if var in df.columns:
+                df[f"{var}_Z"] = (pd.to_numeric(df[var], errors="coerce") - mu) / sd
+
+        def _model_name(v: str) -> str:
+            return v if v in binary_vars else f"{v}_Z"
+
+        fixed_terms = ["_log_aadt"] + [_model_name(v) for v in best_upper_raw] + [f"_inter_{v}" for v in best_lower_raw]
+
+        continuous_upper = [v for v in best_upper_raw if v not in binary_vars]
+        continuous_lower = [v for v in best_lower_raw if v not in binary_vars]
+
+        rdm_terms = [f"{_model_name(v)}:normal" for v in continuous_upper]
+        rdm_cor_terms = [f"{_model_name(v)}:normal" for v in continuous_lower[:2]]
+
+        builder = ExperimentBuilder()
+        result = builder.fit_manual_model(
+            data=df,
+            y_col=y_col,
+            id_col="_id",
+            fixed_terms=fixed_terms,
+            rdm_terms=rdm_terms if rdm_terms else None,
+            rdm_cor_terms=rdm_cor_terms if rdm_cor_terms else None,
+            offset_col=offset_col,
+            dispersion=1,
+        )
+
+        summary = None
+        try:
+            summary = result.summary() if hasattr(result, "summary") else str(result)
+        except Exception:
+            summary = str(result)
+
+        return {"result": result, "summary": str(summary)}
+
+    except Exception as exc:
+        print(f"[WARNING] JAX random-parameters refit failed: {exc}")
+        return None
+
+
+def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tuple[list[str], list[str]]:
+    if {"FREQ", "LENGTH", "AADT", "CURVES"}.issubset(df.columns):
+        # Expanded core_upper: all relevant road geometry and traffic variables
+        core_upper = [
+            "LENGTH",
+            "INCLANES",
+            "DECLANES",
+            "WIDTH",
+            "MIMEDSH",
+            "MXMEDSH",
+            "SPEED",
+            "URB",
+            "FC",
+            "SINGLE",
+            "DOUBLE",
+            "TRAIN",
+            "PEAKHR",
+            "GRADEBR",
+            "MIGRADE",
+            "MXGRADE",
+            "MXGRDIFF",
+            "TANGENT",
+            "CURVES",
+            "MINRAD",
+            "ACCESS",
+            "MEDWIDTH",
+            "FRICTION",
+            "ADTLANE",
+            "SLOPE",
+            "AVEPRE",
+            "AVESNOW",
+            "LOWPRE",
+            "HISNOW",
+            "INTPM",
+            "CPM",
+            "EXPOSE",
+        ]
+        core_lower = [
+            "SPEED",
+            "CURVES",
+            "INCLANES",
+            "DECLANES",
+            "FRICTION",
+            "SLOPE",
+            "AVEPRE",
+            "AVESNOW",
+            "HISNOW",
+        ]
+        expanded_only_upper: list[str] = [
+            "INTECHAG",
+            "GBRPM",
+            "LNAADT",
+        ]
+        expanded_only_lower: list[str] = [
+            "LENGTH",
+            "WIDTH",
+            "MEDWIDTH",
+            "MINRAD",
+            "MIMEDSH",
+            "MXMEDSH",
+            "ACCESS",
+            "PEAKHR",
+            "URB",
+            "ADTLANE",
+        ]
+    else:
+        core_upper = [
+            "segment_length",
+            "curve",
+            "speed",
+            "paved_shoulder",
+            "num_lanes",
+            "left_shoulder_width",
+            "right_shoulder_width",
+            "dummy_winter",
+            "has_rumble",
+            "DP01",
+            "DX32",
+            "PRCP",
+            "SNOW",
+            "TAVG",
+        ]
+        core_lower = [
+            "curve",
+            "speed",
+            "paved_shoulder",
+            "num_lanes",
+            "left_shoulder_width",
+            "right_shoulder_width",
+            "has_rumble",
+            "DP01",
+            "DX32",
+            "dummy_winter",
+        ]
+        expanded_only_upper = [
+            "DP10",
+            "DSND",
+            "DSNW",
+            "max_prcp",
+            "max_snow",
+            "TMAX",
+            "TMIN",
+        ]
+        expanded_only_lower = [
+            "segment_length",
+            "PRCP",
+            "SNOW",
+        ]
 
     if profile == "expanded":
         default_upper = core_upper + expanded_only_upper
@@ -934,15 +1981,15 @@ def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tupl
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Set up and run a Washington hierarchical CMF experiment with validation outputs and dashboard assets."
+        description="Set up and run a hierarchical CMF experiment with validation outputs and an interactive AADT dashboard."
     )
-    parser.add_argument("--input", default="data/rural_int.csv", help="Path to Washington crash dataset CSV.")
-    parser.add_argument("--output-dir", default="results/washington_cmf", help="Output directory.")
-    parser.add_argument("--y-col", default="crashes", help="Crash frequency response column.")
-    parser.add_argument("--aadt-col", default="monthly_AADT", help="AADT traffic-response column.")
+    parser.add_argument("--input", default="data/Ex-16-3.csv", help="Path to crash dataset CSV.")
+    parser.add_argument("--output-dir", default="results/ex16_3_cmf", help="Output directory.")
+    parser.add_argument("--y-col", default="FREQ", help="Crash frequency response column.")
+    parser.add_argument("--aadt-col", default="AADT", help="AADT traffic-response column.")
     parser.add_argument("--offset-col", default="OFFSET", help="Offset column name to use if available.")
     parser.add_argument("--disable-offset", action="store_true", help="Disable offset during fitting.")
-    parser.add_argument("--family", choices=["nb", "poisson"], default="nb", help="Count family for fitting.")
+    parser.add_argument("--family", choices=["nb", "poisson"], default="poisson", help="Count family for fitting.")
 
     parser.add_argument("--train-frac", type=float, default=0.60, help="Training split fraction.")
     parser.add_argument("--val-frac", type=float, default=0.20, help="Validation split fraction.")
@@ -959,12 +2006,30 @@ def main() -> None:
     )
     parser.add_argument("--upper-vars", default=None, help="Comma-separated upper-level candidate variables.")
     parser.add_argument("--lower-vars", default=None, help="Comma-separated lower-level candidate variables.")
+    parser.add_argument(
+        "--enforce-aadt-increase",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Require positive local AADT elasticity during candidate selection (default: enabled).",
+    )
+    parser.add_argument(
+        "--min-aadt-elasticity",
+        type=float,
+        default=0.0,
+        help="Minimum accepted local elasticity for AADT effect.",
+    )
+    parser.add_argument(
+        "--allow-nonmonotonic-fallback",
+        action="store_true",
+        help="If set, fall back to best unconstrained model when no monotonic candidate exists.",
+    )
 
     args = parser.parse_args()
 
     input_path = Path(args.input)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    dataset_label = input_path.stem.replace("_", " ")
 
     raw = pd.read_csv(input_path)
     df = _prepare_washington_df(raw, aadt_col=args.aadt_col, y_col=args.y_col)
@@ -1011,6 +2076,9 @@ def main() -> None:
         max_upper_terms=int(args.max_upper_terms),
         max_lower_terms=int(args.max_lower_terms),
         seed=int(args.seed),
+        enforce_aadt_increase=bool(args.enforce_aadt_increase),
+        min_aadt_elasticity=float(args.min_aadt_elasticity),
+        allow_nonmonotonic_fallback=bool(args.allow_nonmonotonic_fallback),
     )
 
     pred_train = _predict(df_train, best_fit_train)
@@ -1048,6 +2116,8 @@ def main() -> None:
 
     metrics_trainval = _metrics(y_trainval, pred_trainval)
     metrics_test = _metrics(y_test, pred_test)
+    elasticity_trainval = _elasticity_stats(_aadt_elasticity(df_trainval, final_fit))
+    elasticity_test = _elasticity_stats(_aadt_elasticity(df_test_final, final_fit))
 
     selected_upper_raw = sorted(
         {name[:-2] if name.endswith("_Z") else name for name in best_fit_train.upper_vars}
@@ -1079,10 +2149,20 @@ def main() -> None:
             {"Setting": "Family", "Value": args.family},
             {"Setting": "AADT column", "Value": args.aadt_col},
             {"Setting": "Offset used", "Value": "yes" if offset_col else "no"},
+            {"Setting": "Enforce AADT increase", "Value": "yes" if args.enforce_aadt_increase else "no"},
+            {"Setting": "Min AADT elasticity", "Value": float(args.min_aadt_elasticity)},
+            {"Setting": "Allow nonmonotonic fallback", "Value": "yes" if args.allow_nonmonotonic_fallback else "no"},
             {"Setting": "Upper candidate count", "Value": int(len(upper_raw))},
             {"Setting": "Lower candidate count", "Value": int(len(lower_raw))},
             {"Setting": "Selected upper vars", "Value": ", ".join(selected_upper_raw) if selected_upper_raw else "(none)"},
             {"Setting": "Selected lower vars", "Value": ", ".join(selected_lower_raw) if selected_lower_raw else "(none)"},
+        ]
+    )
+
+    elasticity_df = pd.DataFrame(
+        [
+            {"Split": "train+validation", **elasticity_trainval},
+            {"Split": "test", **elasticity_test},
         ]
     )
 
@@ -1103,34 +2183,107 @@ def main() -> None:
         scaler_stats=scaler_trainval,
         aadt_col=args.aadt_col,
     )
+    interactive_payload = _interactive_model_payload(
+        fitted=final_fit,
+        df_reference_raw=df_trainval_raw,
+        selected_raw_vars=selected_raw,
+        binary_vars=binary_vars,
+        scaler_stats=scaler_trainval,
+        aadt_col=args.aadt_col,
+    )
 
-    if "curve" in payload["variables"]:
+    curve_var = "CURVES" if "CURVES" in payload["variables"] else ("curve" if "curve" in payload["variables"] else None)
+    if curve_var is not None:
         _save_curve_plot(
             output_dir / "curve_crash_risk_sensitivity.png",
             payload=payload,
-            variable="curve",
+            variable=curve_var,
             aadt_levels=["Low AADT", "Median AADT", "High AADT"],
-            title="Crash-risk change as curvature changes",
+            title=f"Crash-risk change as {curve_var} changes",
             ylabel="Predicted crashes",
             mode="pred",
         )
         _save_curve_plot(
             output_dir / "curve_cmf_sensitivity.png",
             payload=payload,
-            variable="curve",
+            variable=curve_var,
             aadt_levels=["Low AADT", "Median AADT", "High AADT"],
-            title="CMF change as curvature changes",
+            title=f"CMF change as {curve_var} changes",
             ylabel="CMF (relative to profile baseline)",
             mode="cmf",
         )
+
+    _save_aadt_curve_plot(
+        output_dir / "aadt_crash_risk_sensitivity.png",
+        fitted=final_fit,
+        df_reference_raw=df_trainval_raw,
+        all_columns=scenario_columns,
+        selected_raw_vars=selected_raw,
+        binary_vars=binary_vars,
+        scaler_stats=scaler_trainval,
+        aadt_col=args.aadt_col,
+    )
 
     selected_binary = [v for v in selected_raw if v in binary_vars]
     if selected_binary:
         _save_binary_bar(output_dir / "binary_toggle_cmf_effects.png", payload, selected_binary)
 
-    _save_dashboard_html(output_dir / "washington_hierarchical_cmf_dashboard.html", payload)
+    _save_dashboard_html(output_dir / "hierarchical_cmf_dashboard.html", interactive_payload, dataset_label)
+
+    # --- New outputs ---
+
+    # JAX random-parameters refit
+    jax_result = _jax_random_params_refit(
+        df_trainval_raw=df_trainval_raw,
+        best_upper_raw=selected_upper_raw,
+        best_lower_raw=selected_lower_raw,
+        y_col=args.y_col,
+        aadt_col=args.aadt_col,
+        offset_col=offset_col,
+        scaler_stats=scaler_trainval,
+        binary_vars=binary_vars,
+    )
+    if jax_result is not None:
+        try:
+            jax_summary = {"summary": str(jax_result.get("summary", ""))}
+            (output_dir / "random_params_summary.json").write_text(
+                json.dumps(jax_summary, indent=2), encoding="utf-8"
+            )
+            print("  random_params_summary.json written.")
+        except Exception as exc:
+            print(f"[WARNING] Could not write random_params_summary.json: {exc}")
+
+    # Convergence HTML (uses original iteration order from search_history)
+    # Reconstruct in-order history from the sorted df by sorting on Iteration
+    convergence_df = search_history.copy()
+    _save_convergence_html(output_dir / "search_convergence.html", convergence_df, dataset_label)
+    print("  search_convergence.html written.")
+
+    # AADT obs/pred HTML over full dataset
+    df_all_std = _apply_standardization(df, scaler_trainval)
+    pred_all = _predict(df_all_std, final_fit)
+    y_all = pd.to_numeric(df[args.y_col], errors="coerce").to_numpy(float)
+    aadt_all = pd.to_numeric(df[args.aadt_col], errors="coerce").to_numpy(float)
+
+    # Build split labels for all rows
+    split_label_arr = np.array(["test"] * len(df), dtype=object)
+    split_label_arr[train_idx] = "train"
+    split_label_arr[val_idx] = "val"
+    split_labels_list = split_label_arr.tolist()
+
+    _save_obs_pred_aadt_html(
+        output_dir / "aadt_obs_pred.html",
+        df_all=df,
+        y_true=y_all,
+        y_pred=pred_all,
+        aadt=aadt_all,
+        title=f"{dataset_label} — Observed vs Predicted by AADT",
+        split_labels=split_labels_list,
+    )
+    print("  aadt_obs_pred.html written.")
 
     # Write tabular outputs.
+    (output_dir / "search_history_full.csv").write_text(search_history.to_csv(index=False), encoding="utf-8")
     (output_dir / "search_history_top25.md").write_text(_to_markdown(search_top_df), encoding="utf-8")
     (output_dir / "search_history_top25.csv").write_text(search_top_df.to_csv(index=False), encoding="utf-8")
 
@@ -1140,6 +2293,8 @@ def main() -> None:
 
     (output_dir / "test_calibration_deciles.md").write_text(_to_markdown(calibration_test_df), encoding="utf-8")
     (output_dir / "test_calibration_deciles.csv").write_text(calibration_test_df.to_csv(index=False), encoding="utf-8")
+    (output_dir / "aadt_monotonicity_diagnostics.md").write_text(_to_markdown(elasticity_df), encoding="utf-8")
+    (output_dir / "aadt_monotonicity_diagnostics.csv").write_text(elasticity_df.to_csv(index=False), encoding="utf-8")
 
     (output_dir / "coefficients_standardized_and_original.md").write_text(_to_markdown(coef_df), encoding="utf-8")
     (output_dir / "coefficients_standardized_and_original.csv").write_text(coef_df.to_csv(index=False), encoding="utf-8")
@@ -1151,8 +2306,29 @@ def main() -> None:
     scaler_df = pd.DataFrame(scaler_rows)
     (output_dir / "standardization_reference.csv").write_text(scaler_df.to_csv(index=False), encoding="utf-8")
 
+    model_spec = {
+        "family": args.family,
+        "aadt_col": args.aadt_col,
+        "y_col": args.y_col,
+        "offset_col": offset_col,
+        "selected_upper_model_vars": best_fit_train.upper_vars,
+        "selected_lower_model_vars": best_fit_train.lower_vars,
+        "selected_upper_raw_vars": selected_upper_raw,
+        "selected_lower_raw_vars": selected_lower_raw,
+        "coefficients": {k: float(v) for k, v in pd.Series(final_fit.result.params).to_dict().items()},
+        "aadt_monotonicity": {
+            "trainval": elasticity_trainval,
+            "test": elasticity_test,
+        },
+    }
+    (output_dir / "final_model_spec.json").write_text(json.dumps(model_spec, indent=2), encoding="utf-8")
+    with (output_dir / "final_model_fit.pkl").open("wb") as f:
+        pickle.dump(final_fit, f)
+    with (output_dir / "selection_model_fit.pkl").open("wb") as f:
+        pickle.dump(best_fit_train, f)
+
     summary_lines = [
-        "Washington Hierarchical CMF Experiment",
+        f"{dataset_label} Hierarchical CMF Experiment",
         "",
         "Configuration",
         _to_markdown(settings_df),
@@ -1164,20 +2340,29 @@ def main() -> None:
         _to_markdown(calibration_test_df),
         "",
         "Outputs",
+        "- search_history_full.csv",
         "- search_history_top25.md / .csv",
         "- model_settings.md",
         "- validation_metrics.md / .csv",
         "- test_calibration_deciles.md / .csv",
+        "- aadt_monotonicity_diagnostics.md / .csv",
         "- coefficients_standardized_and_original.md / .csv",
         "- standardization_reference.csv",
+        "- final_model_spec.json",
+        "- final_model_fit.pkl",
+        "- selection_model_fit.pkl",
         "- validation_observed_vs_predicted.png",
         "- test_observed_vs_predicted.png",
+        "- aadt_crash_risk_sensitivity.png",
         "- curve_crash_risk_sensitivity.png (if curve selected)",
         "- curve_cmf_sensitivity.png (if curve selected)",
         "- binary_toggle_cmf_effects.png (if binary vars selected)",
-        "- washington_hierarchical_cmf_dashboard.html",
+        "- hierarchical_cmf_dashboard.html",
+        "- search_convergence.html",
+        "- aadt_obs_pred.html",
+        "- random_params_summary.json (if ExperimentBuilder available)",
     ]
-    (output_dir / "washington_hierarchical_cmf_summary.md").write_text("\n".join(summary_lines), encoding="utf-8")
+    (output_dir / "hierarchical_cmf_summary.md").write_text("\n".join(summary_lines), encoding="utf-8")
 
     print(f"Assets written to: {output_dir.resolve()}")
 

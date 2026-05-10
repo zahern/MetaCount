@@ -1314,7 +1314,7 @@ def build_base_index(spec):
         index["dispersion"] = idx
         idx += 1
 
-    if spec.model in {"lognormal", "gaussian", "tobit"}:
+    if spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
         index["sigma"] = idx
         idx += 1
 
@@ -1482,7 +1482,7 @@ def print_summary(result, objective, data, spec, param_index):
     # NB dispersion / Tobit-Gaussian scale
     if spec.model == "nb":
         names.append("dispersion")
-    elif spec.model in {"lognormal", "gaussian", "tobit"}:
+    elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
         names.append("sigma")
 
     summary_df = pd.DataFrame({
@@ -1808,7 +1808,7 @@ def print_summary(result, objective, data, spec, param_index):
     # NB dispersion / Tobit-Gaussian scale
     if spec.model == "nb":
         names.append("dispersion")
-    elif spec.model in {"lognormal", "gaussian", "tobit"}:
+    elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
         names.append("sigma")
 
     summary_df = pd.DataFrame({
@@ -2606,7 +2606,7 @@ def print_summary(result, objective, data, spec, param_index):
     # NB dispersion / Tobit-Gaussian scale
     if spec.model == "nb":
         names.append("dispersion")
-    elif spec.model in {"lognormal", "gaussian", "tobit"}:
+    elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
         names.append("sigma")
 
     summary_df = pd.DataFrame({
@@ -2879,7 +2879,7 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
 
     if spec.model == "nb":
         names.append("dispersion")
-    elif spec.model in {"lognormal", "gaussian", "tobit"}:
+    elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
         names.append("sigma")
 
     df = pd.DataFrame({
@@ -3894,7 +3894,7 @@ def unpack_params(params, spec: ModelSpec):
         if spec.model == "nb":
             out["alpha"] = params[idx]
             idx += 1
-        elif spec.model in {"lognormal", "gaussian", "tobit"}:
+        elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
             out["sigma"] = params[idx]
             idx += 1
         else:

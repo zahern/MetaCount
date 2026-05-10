@@ -553,7 +553,8 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
     blocks = unpack_params(params, spec)
     eta    = build_eta(params, data, spec)
     # Linear-predictor models work in data scale — wider clip to preserve gradients.
-    if spec.model in {"gaussian", "tobit"}:
+    # Survival AFT families also use log(t) scale so their etas are unbounded.
+    if spec.model in {"gaussian", "tobit", "weibull", "loglogistic"}:
         eta = jnp.clip(eta, -500.0, 500.0)
     else:
         eta = jnp.clip(eta, -25.0, 25.0)

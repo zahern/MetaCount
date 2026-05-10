@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Read(//c/Users/ahernz/source/MetaCount/**)",
-      "Bash(python -c ':*)"
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('survival_models.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -W ignore -c ' *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('scripts/generate_washington_hierarchical_cmf_assets.py', encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python scripts/generate_washington_hierarchical_cmf_assets.py --output-dir results/ex16_3_cmf_v2 --family nb --search-iter 80 --candidate-profile core --allow-nonmonotonic-fallback)",
+      "Bash(python -c \"import subprocess; r=subprocess.run\\(['quarto','--version'],capture_output=True,text=True\\); print\\('quarto:', r.stdout.strip\\(\\) or r.stderr.strip\\(\\)\\)\")",
+      "Bash(python scripts/run_washington_presentation.py --smoke-test --no-render)"
     ]
   }
 }

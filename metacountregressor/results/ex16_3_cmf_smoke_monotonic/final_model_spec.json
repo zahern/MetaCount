@@ -1,0 +1,40 @@
+{
+  "family": "poisson",
+  "aadt_col": "AADT",
+  "y_col": "FREQ",
+  "offset_col": "OFFSET",
+  "selected_upper_model_vars": [
+    "LENGTH_Z"
+  ],
+  "selected_lower_model_vars": [
+    "CURVES_Z"
+  ],
+  "selected_upper_raw_vars": [
+    "LENGTH"
+  ],
+  "selected_lower_raw_vars": [
+    "CURVES"
+  ],
+  "coefficients": {
+    "const": -3.387253224488672,
+    "log_aadt": -0.8936503337894466,
+    "upper::LENGTH_Z": 2.651917226965649,
+    "lower::CURVES_Z*log_aadt": 0.047795037694505604
+  },
+  "aadt_monotonicity": {
+    "trainval": {
+      "aadt_elasticity_min": -0.9387701224443209,
+      "aadt_elasticity_p10": -0.9229133277093811,
+      "aadt_elasticity_median": -0.9070565329744412,
+      "aadt_elasticity_p90": -0.8594861487696216,
+      "aadt_elasticity_share_positive": 0.0
+    },
+    "test": {
+      "aadt_elasticity_min": -0.9387701224443209,
+      "aadt_elasticity_p10": -0.9387701224443209,
+      "aadt_elasticity_median": -0.9070565329744412,
+      "aadt_elasticity_p90": -0.8753429435045614,
+      "aadt_elasticity_share_positive": 0.0
+    }
+  }
+}
