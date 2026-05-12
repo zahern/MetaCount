@@ -43,70 +43,81 @@ class FittedModel:
 
 # ── Human-readable variable labels ────────────────────────────────────────────
 VARIABLE_LABELS: dict[str, str] = {
+    # ── Response / exposure ──────────────────────────────────────────────
     "FREQ":     "Crash Count",
     "LENGTH":   "Segment Length (mi)",
     "AADT":     "Annual Average Daily Traffic (veh/day)",
-    "LNAADT":   "Log(AADT)",
-    "OFFSET":   "Log-Exposure Offset [log(LENGTH)]",
-    "LANES":    "Total Lane Count — both directions (lanes)",
-    "INCLANES": "Lanes — Increasing Direction (lanes)",
-    "DECLANES": "Lanes — Decreasing Direction (lanes)",
-    "WIDTH":    "Lane Width (ft)",          # pavement width / number of lanes
-    "MIMEDSH":  "Minimum Median/Shoulder Width (ft)",
-    "MXMEDSH":  "Maximum Median/Shoulder Width (ft)",
+    "LNAADT":   "Log of AADT",
+    "OFFSET":   "Log-Exposure Offset: log(Segment Length)",
+    # ── Lane geometry ────────────────────────────────────────────────────
+    "LANES":    "Total Lanes, Both Directions (lanes)",
+    "INCLANES": "Lanes, Increasing Direction (lanes)",
+    "DECLANES": "Lanes, Decreasing Direction (lanes)",
+    "WIDTH":    "Lane Width (ft)",
+    # ── Median / shoulder ────────────────────────────────────────────────
+    "MIMEDSH":  "Minimum Median Shoulder Width (ft)",
+    "MXMEDSH":  "Maximum Median Shoulder Width (ft)",
+    "MEDWIDTH": "Median Width (ft)",
+    # ── Speed / classification ───────────────────────────────────────────
     "SPEED":    "Posted Speed Limit (mph)",
     "URB":      "Urban/Rural Indicator (1=Urban, 0=Rural)",
-    "FC":       "Functional Classification (1=Interstate … 6=Local)",
-    "SINGLE":   "Single-Unit Trucks (%)",
-    "DOUBLE":   "Double-Unit Trucks (%)",
-    "TRAIN":    "Road Trains / Multi-Unit Trucks (%)",
+    "FC":       "Functional Classification (1=Interstate to 6=Local)",
+    # ── Traffic composition ──────────────────────────────────────────────
+    "SINGLE":   "Single-Unit Trucks, % of AADT",
+    "DOUBLE":   "Double-Unit Trucks, % of AADT",
+    "TRAIN":    "Road Trains / Multi-Unit Trucks, % of AADT",
     "PEAKHR":   "Peak Hour Factor",
+    # ── Vertical alignment ───────────────────────────────────────────────
     "GRADEBR":  "Number of Grade Breaks (count)",
     "MIGRADE":  "Minimum Vertical Grade (%)",
     "MXGRADE":  "Maximum Vertical Grade (%)",
-    "MXGRDIFF": "Max-Min Grade Difference (%) — difference between steepest and flattest grade on segment",
-    "TANGENT":  "Proportion of Segment That Is Tangent (0–1)",
-    "CURVES":   "Number of Horizontal Curves (count)",
-    "MINRAD":   "Minimum Curve Radius (ft) — smaller = sharper bend",
-    "ACCESS":   "Access-Point Density (driveways + intersections per mile)",
-    "MEDWIDTH": "Median Width (ft)",
-    "FRICTION": "Pavement Friction — Skid Number (higher = more grip)",
-    "ADTLANE":  "ADT per Lane (1,000 veh/day per lane)",
-    "SLOPE":    "Average Longitudinal Slope (%) — overall steepness",
+    "MXGRDIFF": "Max-Min Grade Difference (%) - range of grades on segment",
+    "SLOPE":    "Average Longitudinal Slope (%)",
     "INTECHAG": "Number of Grade-Change Points (count)",
+    "GBRPM":    "Grade-Break Rate per Mile",
+    # ── Horizontal alignment ─────────────────────────────────────────────
+    "TANGENT":  "Proportion of Segment That Is Tangent (0 to 1)",
+    "CURVES":   "Number of Horizontal Curves (count)",
+    "MINRAD":   "Minimum Curve Radius (ft) - smaller = sharper bend",
+    "CPM":      "Horizontal Curve Density (curves per mile)",
+    # ── Roadside / access ────────────────────────────────────────────────
+    "ACCESS":   "Access-Point Density (driveways + intersections per mile)",
+    "FRICTION": "Pavement Friction, Skid Number (higher = more grip)",
+    "ADTLANE":  "ADT per Lane (1,000 veh/day per lane)",
+    # ── Climate / weather ────────────────────────────────────────────────
     "AVEPRE":   "Average Annual Precipitation (in/yr)",
     "AVESNOW":  "Average Annual Snowfall (in/yr)",
-    "LOWPRE":   "Low-Precipitation Days per Year (days where precipitation < 1.5 in/month)",
-    "HISNOW":   "High-Snow Days per Year (days where snowfall > 1 in/day; AVESNOW > 1)",
-    "GBRPM":    "Grade-Break Rate per Mile",
+    "LOWPRE":   "Low-Precipitation Days per Year (precip < 1.5 in/month)",
+    "HISNOW":   "High-Snow Days per Year (snowfall > 1 in/day)",
+    # ── Derived / auxiliary ──────────────────────────────────────────────
     "EXPOSE":   "Exposure Index",
     "INTPM":    "Intersection Density (intersections per mile)",
-    "CPM":      "Horizontal Curve Density (curves per mile)",
 }
 
-# Tooltip descriptions shown in the dashboard below each slider
+# Tooltip descriptions shown in the dashboard on hover
 VARIABLE_DESCRIPTIONS: dict[str, str] = {
-    "LANES":    "Total number of lanes in both directions. More lanes = greater capacity and less per-lane demand.",
-    "SPEED":    "Posted speed limit in mph. Higher speed roads tend to be better-designed (wider lanes, less access).",
-    "CURVES":   "Count of horizontal curves. More curves = more driver workload and crash risk.",
-    "MXGRDIFF": "Difference between the maximum and minimum grade (%) within the segment. Captures vertical alignment variability.",
-    "HISNOW":   "Days per year with snowfall exceeding 1 inch. Proxy for severe winter conditions (from AVESNOW > 1).",
-    "AVESNOW":  "Average annual snowfall in inches. Higher values indicate more wintry conditions overall.",
-    "LOWPRE":   "Days per year with very low precipitation (< 1.5 in/month). Captures dry conditions which may affect road surface.",
-    "AVEPRE":   "Average annual precipitation in inches. Reflects overall wetness and road drainage demands.",
-    "FRICTION": "Skid Number — higher values mean better pavement grip and shorter stopping distances.",
-    "ACCESS":   "Number of driveways and intersections per mile. High access = more conflict points.",
-    "SLOPE":    "Average grade (%) — steeper roads increase braking demands and stopping distances.",
-    "MINRAD":   "Smallest curve radius on the segment in feet. Tighter curves require lower safe speeds.",
-    "MIMEDSH":  "Smallest median or shoulder width in feet. Narrower shoulders leave less recovery room.",
-    "MXMEDSH":  "Largest median or shoulder width in feet.",
+    "LANES":    "Total number of lanes in both directions. More lanes = greater road capacity and less per-lane traffic demand.",
+    "WIDTH":    "Width of each travel lane in feet. Wider lanes generally reduce sideswipe and run-off-road crashes.",
+    "SPEED":    "Posted speed limit in mph. Higher-speed roads are typically built to higher geometric standards.",
+    "CURVES":   "Count of horizontal curves on the segment. More curves = more steering demand and crash exposure.",
+    "MXGRDIFF": "Difference between the steepest and flattest grade on the segment (%). Larger values signal complex vertical alignment.",
+    "MIMEDSH":  "Minimum median shoulder width in feet. Narrower shoulders leave less recovery space for errant vehicles.",
+    "MXMEDSH":  "Maximum median shoulder width in feet. Wide medians separate opposing traffic flows.",
+    "HISNOW":   "Days per year with snowfall exceeding 1 inch. Captures severe winter conditions (derived from AVESNOW > 1).",
+    "AVESNOW":  "Average annual snowfall in inches. Indicates typical winter severity for the segment.",
+    "LOWPRE":   "Days per year with precipitation below 1.5 inches per month. Captures extended dry periods.",
+    "AVEPRE":   "Average annual precipitation in inches. Reflects overall wetness and pavement drainage demands.",
+    "FRICTION": "Skid number from friction testing. Higher values mean better pavement grip and shorter wet-road stopping distances.",
+    "ACCESS":   "Number of driveways and intersections per mile. High-access roads have more conflict points.",
+    "SLOPE":    "Average longitudinal slope (%). Steeper grades increase braking demands and truck-speed differentials.",
+    "MINRAD":   "Smallest horizontal curve radius on the segment in feet. Tighter curves require lower safe operating speeds.",
     "FC":       "FHWA functional class: 1=Interstate, 2=Principal Arterial, 3=Minor Arterial, 4=Major Collector, 5=Minor Collector, 6=Local.",
-    "URB":      "1 if the segment is in an urban area, 0 if rural.",
-    "MIGRADE":  "Minimum vertical grade (%) on the segment.",
-    "MXGRADE":  "Maximum vertical grade (%) on the segment.",
-    "CPM":      "Horizontal curves per mile — density of bends along the segment.",
-    "INTPM":    "Intersections per mile — higher density means more potential conflict points.",
-    "WIDTH":    "Total pavement width in feet — wider roads typically have more lanes and shoulders.",
+    "URB":      "1 if the segment is in an urbanized area, 0 if rural. Urban and rural roads have different crash patterns.",
+    "MIGRADE":  "Minimum vertical grade (%) on the segment. Flat sections typically have lower crash rates.",
+    "MXGRADE":  "Maximum vertical grade (%) on the segment. Steep grades affect stopping and sight distances.",
+    "CPM":      "Number of horizontal curves per mile. High-curvature roads demand sustained driver attention.",
+    "INTPM":    "Number of intersections per mile. Each intersection is a potential crash conflict point.",
+    "MEDWIDTH": "Width of the median in feet. Wider medians improve separation of opposing traffic.",
 }
 
 FC_LABELS = {
@@ -2087,93 +2098,154 @@ def _jax_random_params_refit(
         continuous_upper = [v for v in best_upper_raw if v not in binary_vars]
         continuous_lower = [v for v in best_lower_raw if v not in binary_vars]
 
-        # Random params on continuous upper vars — these must NOT also appear
-        # in fixed_terms or Kr_ind/draws mismatch causes an einsum error.
-        rdm_var_names = {_model_name(v) for v in continuous_upper
-                         if _model_name(v) in df.columns}
-        rdm_terms     = [f"{n}:normal" for n in rdm_var_names]
+        # Variable name mapper (raw → model column)
+        def _model_name(v: str) -> str:
+            return v if v in binary_vars else f"{v}_Z"
 
-        # Fixed terms: log_aadt + binary upper vars + lower interactions
-        # Continuous upper vars are handled by rdm_terms (random), not here.
-        fixed_upper = [_model_name(v) for v in best_upper_raw
-                       if _model_name(v) not in rdm_var_names]
+        rdm_upper_names = [_model_name(v) for v in continuous_upper
+                           if _model_name(v) in df.columns]
+
+        # Fixed terms exclude the continuous upper vars (they enter via random)
+        fixed_binary_upper = [_model_name(v) for v in best_upper_raw
+                               if _model_name(v) not in rdm_upper_names]
         fixed_terms = (
             ["_log_aadt"]
-            + [t for t in fixed_upper if t in df.columns]
+            + [t for t in fixed_binary_upper if t in df.columns]
             + [f"_inter_{v}" for v in best_lower_raw if f"_inter_{v}" in df.columns]
         )
 
         builder = ExperimentBuilder(df=df, id_col="_id", y_col=y_col,
                                     offset_col=offset_col)
-        manual_spec = builder.make_manual_spec(
-            fixed_terms = fixed_terms,
-            rdm_terms   = rdm_terms or [],
-            dispersion  = 1,
-        )
-        fit = builder.fit_manual_model(manual_spec, model="nb", print_report=False)
 
-        # ── Extract readable coefficient table with means + SDs ──────────
-        spec   = fit["spec"]
-        params = np.array(fit["result"].params)
+        def _extract_result(fit: dict, cor_names: list[str] = ()) -> dict:
+            """Extract readable coefficient table, corr matrix, BIC from a fit."""
+            spec   = fit["spec"]
+            params = np.array(fit["result"].params)
+            try:
+                from main_hpc_lc_patch import build_base_index as _bidx
+                from main_hpc import unpack_params as _unpack
+                import jax as _jax
+                idx    = _bidx(spec)
+                blocks = _unpack(params, spec)
+                rows   = []
 
-        try:
-            from main_hpc_lc_patch import build_base_index as _bidx
-            from main_hpc import unpack_params as _unpack
-            idx    = _bidx(spec)
-            blocks = _unpack(params, spec)
+                # Fixed params
+                for k, name in enumerate(spec.fixed_names):
+                    lbl = VARIABLE_LABELS.get(
+                        name.replace("_Z","").replace("__INTERCEPT__","").strip("_"),
+                        name.replace("__INTERCEPT__","Intercept"))
+                    rows.append({"Parameter": lbl, "Type": "Fixed",
+                                 "Mean": round(float(np.array(blocks["beta_f"])[k]), 5), "SD": ""})
 
-            coef_rows = []
-            # Fixed params (exclude intercept placeholder)
-            fn = list(spec.fixed_names)
-            bf = np.array(blocks["beta_f"])
-            for k, name in enumerate(fn):
-                coef_rows.append({
-                    "Parameter": VARIABLE_LABELS.get(name.replace("_Z","").replace("_log_aadt",""),
-                                                      name.replace("__INTERCEPT__","Intercept")),
-                    "Type": "Fixed",
-                    "Mean": round(float(bf[k]), 5),
-                    "SD": "",
-                })
-            # Random means + SDs
-            if spec.Kr_ind > 0 and blocks.get("mean_ind") is not None:
-                means = np.array(blocks["mean_ind"])
-                sds   = np.abs(np.array(blocks["sd_ind"]))
-                for j, rname in enumerate(spec.random_ind_names):
-                    coef_rows.append({
-                        "Parameter": VARIABLE_LABELS.get(
-                            rname.replace("_Z",""), rname) + " (random)",
-                        "Type": "Random",
-                        "Mean": round(float(means[j]), 5),
-                        "SD":   round(float(sds[j]),   5),
-                    })
-            # Dispersion
-            if blocks.get("alpha") is not None:
-                import jax
-                coef_rows.append({
-                    "Parameter": "NB2 Dispersion (alpha)",
-                    "Type": "Fixed",
-                    "Mean": round(float(jax.nn.softplus(blocks["alpha"])), 5),
-                    "SD": "",
-                })
+                # Independent random params
+                if spec.Kr_ind > 0 and blocks.get("mean_ind") is not None:
+                    means = np.array(blocks["mean_ind"])
+                    sds   = np.abs(np.array(blocks["sd_ind"]))
+                    for j, rname in enumerate(spec.random_ind_names):
+                        lbl = VARIABLE_LABELS.get(rname.replace("_Z",""), rname)
+                        rows.append({"Parameter": f"{lbl} [random, independent]",
+                                     "Type": "Random-Ind",
+                                     "Mean": round(float(means[j]), 5),
+                                     "SD":   round(float(sds[j]),   5)})
 
-            coef_df    = pd.DataFrame(coef_rows)
-            coef_str   = coef_df.to_string(index=False)
-            summary_d  = fit.get("summary", {})
-            ll  = summary_d.get("loglik",  float("nan")) if isinstance(summary_d, dict) else float("nan")
-            bic = summary_d.get("bic",     float("nan")) if isinstance(summary_d, dict) else float("nan")
-        except Exception as exc:
-            coef_str = f"(coefficient extraction failed: {exc})"
-            ll = bic = float("nan")
-            coef_df  = pd.DataFrame()
+                # Correlated random params
+                corr_matrix_str = ""
+                if spec.Kr_cor > 0 and blocks.get("mean_cor") is not None:
+                    means_c = np.array(blocks["mean_cor"])
+                    chol_v  = np.array(blocks["chol"])
+                    K       = spec.Kr_cor
+                    L       = np.zeros((K, K))
+                    i = 0
+                    for r in range(K):
+                        for c in range(r + 1):
+                            L[r, c] = chol_v[i]; i += 1
+                    L[np.diag_indices(K)] = np.abs(np.diag(L))
+                    Sigma = L @ L.T
+                    sds_c = np.sqrt(np.diag(Sigma))
+                    corr  = Sigma / (sds_c[:, None] * sds_c[None, :] + 1e-12)
+                    for j, rname in enumerate(spec.random_cor_names):
+                        lbl = VARIABLE_LABELS.get(rname.replace("_Z",""), rname)
+                        rows.append({"Parameter": f"{lbl} [random, correlated]",
+                                     "Type": "Random-Cor",
+                                     "Mean": round(float(means_c[j]), 5),
+                                     "SD":   round(float(sds_c[j]),   5)})
+                    # Format correlation matrix as text
+                    cor_lbls = [VARIABLE_LABELS.get(n.replace("_Z",""), n)
+                                for n in spec.random_cor_names]
+                    corr_lines = ["  Correlation matrix of correlated random parameters:"]
+                    header = "    " + "  ".join(f"{l[:14]:>14}" for l in cor_lbls)
+                    corr_lines.append(header)
+                    for r, rl in enumerate(cor_lbls):
+                        row_s = "  ".join(f"{corr[r,c]:+14.4f}" for c in range(K))
+                        corr_lines.append(f"  {rl[:20]:20}  {row_s}")
+                    corr_matrix_str = "\n".join(corr_lines)
 
-        return {
-            "fit":      fit,
-            "summary":  str(fit.get("summary", {})),
-            "coef_str": coef_str,
-            "coef_df":  coef_df,
-            "loglik":   ll,
-            "bic":      bic,
-        }
+                # NB2 dispersion
+                if blocks.get("alpha") is not None:
+                    rows.append({"Parameter": "NB2 Dispersion (alpha)",
+                                 "Type": "Fixed",
+                                 "Mean": round(float(_jax.nn.softplus(blocks["alpha"])), 5),
+                                 "SD": ""})
+
+                coef_df = pd.DataFrame(rows)
+                summary_d = fit.get("summary", {})
+                ll  = summary_d.get("loglik", float("nan")) if isinstance(summary_d, dict) else float("nan")
+                bic = summary_d.get("bic",    float("nan")) if isinstance(summary_d, dict) else float("nan")
+                return {"fit": fit, "coef_df": coef_df,
+                        "coef_str": coef_df.to_string(index=False),
+                        "corr_matrix_str": corr_matrix_str,
+                        "loglik": ll, "bic": bic,
+                        "summary": str(fit.get("summary", {}))}
+            except Exception as exc:
+                summary_d = fit.get("summary", {})
+                ll  = summary_d.get("loglik", float("nan")) if isinstance(summary_d, dict) else float("nan")
+                bic = summary_d.get("bic",    float("nan")) if isinstance(summary_d, dict) else float("nan")
+                return {"fit": fit, "coef_df": pd.DataFrame(),
+                        "coef_str": f"(extraction failed: {exc})",
+                        "corr_matrix_str": "",
+                        "loglik": ll, "bic": bic, "summary": ""}
+
+        best_result: dict | None = None
+
+        # ── Try 1: all continuous upper as INDEPENDENT random ────────────
+        if rdm_upper_names:
+            try:
+                spec_ind = builder.make_manual_spec(
+                    fixed_terms = fixed_terms,
+                    rdm_terms   = [f"{n}:normal" for n in rdm_upper_names],
+                    dispersion  = 1,
+                )
+                fit_ind = builder.fit_manual_model(spec_ind, model="nb", print_report=False)
+                res_ind = _extract_result(fit_ind)
+                if np.isfinite(res_ind["bic"]):
+                    print(f"    [RP] Independent random params BIC: {res_ind['bic']:.2f}")
+                    best_result = res_ind
+            except Exception:
+                pass
+
+        # ── Try 2: top-2 continuous upper as CORRELATED random ───────────
+        if len(rdm_upper_names) >= 2:
+            try:
+                cor_names  = rdm_upper_names[:2]   # correlated pair
+                ind_rest   = rdm_upper_names[2:]    # remaining as independent
+                spec_cor = builder.make_manual_spec(
+                    fixed_terms   = fixed_terms,
+                    rdm_cor_terms = [f"{n}:normal" for n in cor_names],
+                    rdm_terms     = [f"{n}:normal" for n in ind_rest],
+                    dispersion    = 1,
+                )
+                fit_cor = builder.fit_manual_model(spec_cor, model="nb", print_report=False)
+                res_cor = _extract_result(fit_cor, cor_names=cor_names)
+                if np.isfinite(res_cor["bic"]):
+                    print(f"    [RP] Correlated random params BIC: {res_cor['bic']:.2f}")
+                    if best_result is None or res_cor["bic"] < best_result["bic"]:
+                        best_result = res_cor
+            except Exception:
+                pass
+
+        if best_result is None:
+            return None
+        return best_result
 
     except Exception:
         return None
@@ -3206,23 +3278,41 @@ def main() -> None:
         )
     if jax_result is not None:
         try:
-            coef_str = jax_result.get("coef_str", "(unavailable)")
-            rp_ll    = jax_result.get("loglik", float("nan"))
-            rp_bic   = jax_result.get("bic",    float("nan"))
+            coef_str  = jax_result.get("coef_str", "(unavailable)")
+            corr_str  = jax_result.get("corr_matrix_str", "")
+            rp_ll     = jax_result.get("loglik", float("nan"))
+            rp_bic    = jax_result.get("bic",    float("nan"))
 
-            print("\n" + "="*70)
-            print("  RANDOM-PARAMETERS NB2 MODEL — FINAL COEFFICIENTS")
+            print("\n" + "="*72)
+            print("  RANDOM-PARAMETERS NB2 — FINAL COEFFICIENTS")
             print(f"  LL={rp_ll:.2f}   BIC={rp_bic:.2f}")
-            print("="*70)
+            print("="*72)
             print(coef_str)
-            print("="*70 + "\n")
+            if corr_str:
+                print()
+                print(corr_str)
+            print()
+            print("  INTERPRETATION:")
+            print("    Fixed         — same effect for every road segment")
+            print("    Random-Ind    — Mean = population average; SD = site-to-site variability")
+            print("    Random-Cor    — correlated pair; correlation matrix shows co-movement")
+            print("    A large SD means the effect differs substantially across segments")
+            print("="*72 + "\n")
 
             rp_txt = (
-                f"Random-parameters NB2  |  LL={rp_ll:.2f}  BIC={rp_bic:.2f}\n"
-                "Fixed params (beta) + Random params (mean ± SD):\n\n"
-                + coef_str + "\n\n"
-                "Interpretation: 'Random' rows show the population mean (Mean) and\n"
-                "heterogeneity (SD) of that coefficient across road segments."
+                f"Random-parameters NB2  |  LL={rp_ll:.2f}  BIC={rp_bic:.2f}\n\n"
+                "COEFFICIENT TABLE\n"
+                "  Fixed:       same value for every segment\n"
+                "  Random-Ind:  independently distributed across segments (Mean +/- SD)\n"
+                "  Random-Cor:  jointly distributed (see correlation matrix below)\n\n"
+                + coef_str
+                + ("\n\n" + corr_str if corr_str else "")
+                + "\n\nINTERPRETATION\n"
+                "  A large SD on a variable means its effect varies substantially\n"
+                "  across road segments — some sites respond much more (or less)\n"
+                "  to that characteristic than the population average.\n"
+                "  The correlation matrix shows whether two variables' effects\n"
+                "  tend to move together across sites."
             )
 
             (output_dir / "random_params_note.md").write_text(rp_txt, encoding="utf-8")

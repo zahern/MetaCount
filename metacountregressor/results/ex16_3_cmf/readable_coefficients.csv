@@ -1,8 +1,8 @@
 Component,Variable,Full Name,Coefficient,CMF
 Core,Intercept,Intercept,-6.61523,
 Core,log(AADT),log(AADT) Elasticity,0.84274,
-Upper (AADT-independent),DOUBLE,Double-Unit Trucks (%),-0.20019,0.9576
+Upper (AADT-independent),DOUBLE,"Double-Unit Trucks, % of AADT",-0.20019,0.9576
 Upper (AADT-independent),MEDWIDTH,Median Width (ft),0.0564,1.0406
-Upper (AADT-independent),MIMEDSH,Minimum Median/Shoulder Width (ft),-0.13393,0.9196
-Upper (AADT-independent),MXGRDIFF,Max-Min Grade Difference (%) — difference between steepest and flattest grade on segment,0.08083,1.0414
+Upper (AADT-independent),MIMEDSH,Minimum Median Shoulder Width (ft),-0.13393,0.9196
+Upper (AADT-independent),MXGRDIFF,Max-Min Grade Difference (%) - range of grades on segment,0.08083,1.0414
 Lower (AADT interaction),AVEPRE,Average Annual Precipitation (in/yr),0.00587,varies with AADT

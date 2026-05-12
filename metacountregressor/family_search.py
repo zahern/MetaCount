@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Optional
 
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -16,11 +17,13 @@ try:
         prepare_data,
         predict_daily_schedule,
     )
-    from .metaheuristics import (
-        differential_evolution,
-        harmony_search,
-        simulated_annealing,
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        from .metaheuristics import (
+            differential_evolution,
+            harmony_search,
+            simulated_annealing,
+        )
     from .GA_CMF_AADT_JAX import evaluate_model, fit_final_model
     from .solution import ObjectiveFunction
 except ImportError:

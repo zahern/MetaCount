@@ -14,12 +14,12 @@
   ],
   "selected_upper_raw_vars": [
     "DOUBLE",
-    "MEDWIDTH",
-    "MIMEDSH",
-    "MXGRDIFF"
+    "MIMEDSH"
   ],
   "selected_lower_raw_vars": [
-    "AVEPRE"
+    "AVESNOW",
+    "MEDWIDTH",
+    "MINRAD"
   ],
   "coefficients": {
     "const": -6.615231313846183,

@@ -24,7 +24,8 @@
       "Bash(python -W ignore scripts/generate_washington_hierarchical_cmf_assets.py --input data/Ex-16-3.csv --output-dir results/ex16_3_cmf_diag4 --search-iter 3 --family nb --allow-nonmonotonic-fallback)",
       "Bash(python -W ignore scripts/generate_washington_hierarchical_cmf_assets.py --input data/Ex-16-3.csv --output-dir results/ex16_3_cmf_v_final --search-iter 20 --family nb --max-upper-terms 7 --max-lower-terms 3 --allow-nonmonotonic-fallback)",
       "Bash(awk '{print $5,$9}')",
-      "Bash(python -W ignore scripts/generate_washington_hierarchical_cmf_assets.py --input data/Ex-16-3.csv --output-dir results/ex16_3_smoke --search-iter 8 --families both --max-upper-terms 6 --max-lower-terms 4 --allow-nonmonotonic-fallback)"
+      "Bash(python -W ignore scripts/generate_washington_hierarchical_cmf_assets.py --input data/Ex-16-3.csv --output-dir results/ex16_3_smoke --search-iter 8 --families both --max-upper-terms 6 --max-lower-terms 4 --allow-nonmonotonic-fallback)",
+      "Bash(python -W ignore scripts/generate_washington_hierarchical_cmf_assets.py --input data/Ex-16-3.csv --output-dir results/ex16_3_labels_test --search-iter 8 --families both --max-upper-terms 6 --max-lower-terms 4 --allow-nonmonotonic-fallback)"
     ]
   }
 }
