@@ -1,0 +1,4 @@
+| Split | aadt_elasticity_min | aadt_elasticity_p10 | aadt_elasticity_median | aadt_elasticity_p90 | aadt_elasticity_share_positive |
+| --- | --- | --- | --- | --- | --- |
+| train+validation | 0.2452888365545204 | 0.30781182370352567 | 0.37033481085253095 | 0.3827115941404676 | 1.0 |
+| test | 0.30781182370352567 | 0.3235640933427179 | 0.37033481085253095 | 0.39283805319423415 | 1.0 |

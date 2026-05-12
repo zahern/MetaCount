@@ -1,0 +1,3 @@
+**Note:** The search finds the best *fixed-effects* NB2 specification (which variables to include and whether they enter as upper or lower terms). After the best specification is selected, a random-parameters refit is attempted using the MetaCount JAX engine — giving each site its own draw of the continuous predictor coefficients, capturing unobserved heterogeneity across road segments.
+
+The random-parameters model (`random_params_summary.json`) was not generated this run because the `ExperimentBuilder` dependency was not available in the subprocess path. Run from within the package directory for the full mixed-model refit.

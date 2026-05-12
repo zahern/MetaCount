@@ -1,0 +1,35 @@
+======================================================================
+  FINAL HIERARCHICAL CMF MODEL — READABLE SUMMARY
+======================================================================
+
+  Model: log(crashes) = Intercept + b_AADT·log(AADT)
+       + sum [Upper terms: direct effect on crash rate]
+       + sum [Lower terms: modify AADT elasticity]
+       + log(segment length)  [exposure offset]
+
+  CORE PARAMETERS
+  --------------------------------------------------------------------
+  Intercept                                        -7.5755
+  log(AADT) elasticity                             +0.9385
+
+  UPPER-LEVEL TERMS  (direct effect — AADT-independent)
+  Variable                                            Coef   Orig scale  CMF (1-unit)
+  --------------------------------------------------------------------
+  Total Lane Count — both directions (lanes)       -0.0103      -0.0089 (per SD)  CMF= 0.9912
+  Pavement Width (ft)                              -0.1431      -0.0089 (per SD)  CMF= 0.9912
+
+  LOWER-LEVEL TERMS  (modify AADT elasticity — x × log(AADT) interaction)
+
+  These do NOT affect the baseline crash rate directly.  They shift
+  how steeply crash risk scales with AADT:  a negative coefficient means
+  segments with high values of that variable are LESS sensitive to AADT.
+
+  Variable                                            Coef  Interpretation
+  --------------------------------------------------------------------
+  Posted Speed Limit (mph)                         -0.0146  => lower AADT sensitivity
+
+  Base AADT elasticity (log_aadt coeff): +0.9385
+  Local elasticity = base + sum(lower_coeff_i * variable_i_std)
+  Positive elasticity for all segments = AADT monotonicity holds.
+
+======================================================================

@@ -1,0 +1,52 @@
+{
+  "family": "nb",
+  "aadt_col": "AADT",
+  "y_col": "FREQ",
+  "offset_col": "OFFSET",
+  "selected_upper_model_vars": [
+    "ACCESS_Z",
+    "LENGTH_Z",
+    "MXGRADE_Z",
+    "MXMEDSH_Z"
+  ],
+  "selected_lower_model_vars": [
+    "DECLANES_Z",
+    "SLOPE_Z"
+  ],
+  "selected_upper_raw_vars": [
+    "ACCESS",
+    "LENGTH",
+    "MXGRADE",
+    "MXMEDSH"
+  ],
+  "selected_lower_raw_vars": [
+    "DECLANES",
+    "SLOPE"
+  ],
+  "coefficients": {
+    "const": -6.051546989684152,
+    "log_aadt": 0.3570016756934691,
+    "upper::ACCESS_Z": 0.09720452693162193,
+    "upper::LENGTH_Z": 5.838306293683256,
+    "upper::MXGRADE_Z": 0.12828576611710518,
+    "upper::MXMEDSH_Z": 0.39139642881385595,
+    "lower::DECLANES_Z*log_aadt": -0.035009346706793815,
+    "lower::SLOPE_Z*log_aadt": 0.009127712621329723
+  },
+  "aadt_monotonicity": {
+    "trainval": {
+      "aadt_elasticity_min": 0.2452999071608077,
+      "aadt_elasticity_p10": 0.30782121131631646,
+      "aadt_elasticity_median": 0.37034251547182523,
+      "aadt_elasticity_p90": 0.3827195267920804,
+      "aadt_elasticity_share_positive": 1.0
+    },
+    "test": {
+      "aadt_elasticity_min": 0.30782121131631646,
+      "aadt_elasticity_p10": 0.3235737711784595,
+      "aadt_elasticity_median": 0.37034251547182523,
+      "aadt_elasticity_p90": 0.39284617241774383,
+      "aadt_elasticity_share_positive": 1.0
+    }
+  }
+}

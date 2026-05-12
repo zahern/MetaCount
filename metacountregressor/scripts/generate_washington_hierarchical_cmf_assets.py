@@ -10,12 +10,25 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from statsmodels.discrete.discrete_model import NegativeBinomial, Poisson
-from statsmodels.tools.sm_exceptions import ConvergenceWarning
 import warnings
+warnings.filterwarnings("ignore")
 
+# ── JAX NB2 engine (the package's own implementation) ─────────────────────────
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-warnings.simplefilter("ignore", ConvergenceWarning)
+try:
+    import jax
+    import jax.numpy as jnp
+    from jaxopt import LBFGS as _LBFGS
+    from main_hpc_lc_patch import (
+        mixed_model_loglik as _jax_loglik,
+        ModelSpec as _ModelSpec,
+    )
+    jax.config.update("jax_enable_x64", True)
+    _JAX_OK = True
+except Exception:
+    _JAX_OK = False
 
 
 @dataclass
@@ -26,6 +39,90 @@ class FittedModel:
     result: Any
     aadt_col: str
     offset_col: str | None
+
+
+# ── Human-readable variable labels ────────────────────────────────────────────
+VARIABLE_LABELS: dict[str, str] = {
+    "FREQ":     "Crash Count",
+    "LENGTH":   "Segment Length (mi)",
+    "AADT":     "Annual Average Daily Traffic (veh/day)",
+    "LNAADT":   "Log(AADT)",
+    "OFFSET":   "Log-Exposure Offset [log(LENGTH)]",
+    "LANES":    "Total Lane Count — both directions (lanes)",
+    "INCLANES": "Lanes — Increasing Direction (lanes)",
+    "DECLANES": "Lanes — Decreasing Direction (lanes)",
+    "WIDTH":    "Lane Width (ft)",          # pavement width / number of lanes
+    "MIMEDSH":  "Minimum Median/Shoulder Width (ft)",
+    "MXMEDSH":  "Maximum Median/Shoulder Width (ft)",
+    "SPEED":    "Posted Speed Limit (mph)",
+    "URB":      "Urban/Rural Indicator (1=Urban, 0=Rural)",
+    "FC":       "Functional Classification (1=Interstate … 6=Local)",
+    "SINGLE":   "Single-Unit Trucks (%)",
+    "DOUBLE":   "Double-Unit Trucks (%)",
+    "TRAIN":    "Road Trains / Multi-Unit Trucks (%)",
+    "PEAKHR":   "Peak Hour Factor",
+    "GRADEBR":  "Number of Grade Breaks (count)",
+    "MIGRADE":  "Minimum Vertical Grade (%)",
+    "MXGRADE":  "Maximum Vertical Grade (%)",
+    "MXGRDIFF": "Max-Min Grade Difference (%) — difference between steepest and flattest grade on segment",
+    "TANGENT":  "Proportion of Segment That Is Tangent (0–1)",
+    "CURVES":   "Number of Horizontal Curves (count)",
+    "MINRAD":   "Minimum Curve Radius (ft) — smaller = sharper bend",
+    "ACCESS":   "Access-Point Density (driveways + intersections per mile)",
+    "MEDWIDTH": "Median Width (ft)",
+    "FRICTION": "Pavement Friction — Skid Number (higher = more grip)",
+    "ADTLANE":  "ADT per Lane (1,000 veh/day per lane)",
+    "SLOPE":    "Average Longitudinal Slope (%) — overall steepness",
+    "INTECHAG": "Number of Grade-Change Points (count)",
+    "AVEPRE":   "Average Annual Precipitation (in/yr)",
+    "AVESNOW":  "Average Annual Snowfall (in/yr)",
+    "LOWPRE":   "Low-Precipitation Days per Year (days where precipitation < 1.5 in/month)",
+    "HISNOW":   "High-Snow Days per Year (days where snowfall > 1 in/day; AVESNOW > 1)",
+    "GBRPM":    "Grade-Break Rate per Mile",
+    "EXPOSE":   "Exposure Index",
+    "INTPM":    "Intersection Density (intersections per mile)",
+    "CPM":      "Horizontal Curve Density (curves per mile)",
+}
+
+# Tooltip descriptions shown in the dashboard below each slider
+VARIABLE_DESCRIPTIONS: dict[str, str] = {
+    "LANES":    "Total number of lanes in both directions. More lanes = greater capacity and less per-lane demand.",
+    "SPEED":    "Posted speed limit in mph. Higher speed roads tend to be better-designed (wider lanes, less access).",
+    "CURVES":   "Count of horizontal curves. More curves = more driver workload and crash risk.",
+    "MXGRDIFF": "Difference between the maximum and minimum grade (%) within the segment. Captures vertical alignment variability.",
+    "HISNOW":   "Days per year with snowfall exceeding 1 inch. Proxy for severe winter conditions (from AVESNOW > 1).",
+    "AVESNOW":  "Average annual snowfall in inches. Higher values indicate more wintry conditions overall.",
+    "LOWPRE":   "Days per year with very low precipitation (< 1.5 in/month). Captures dry conditions which may affect road surface.",
+    "AVEPRE":   "Average annual precipitation in inches. Reflects overall wetness and road drainage demands.",
+    "FRICTION": "Skid Number — higher values mean better pavement grip and shorter stopping distances.",
+    "ACCESS":   "Number of driveways and intersections per mile. High access = more conflict points.",
+    "SLOPE":    "Average grade (%) — steeper roads increase braking demands and stopping distances.",
+    "MINRAD":   "Smallest curve radius on the segment in feet. Tighter curves require lower safe speeds.",
+    "MIMEDSH":  "Smallest median or shoulder width in feet. Narrower shoulders leave less recovery room.",
+    "MXMEDSH":  "Largest median or shoulder width in feet.",
+    "FC":       "FHWA functional class: 1=Interstate, 2=Principal Arterial, 3=Minor Arterial, 4=Major Collector, 5=Minor Collector, 6=Local.",
+    "URB":      "1 if the segment is in an urban area, 0 if rural.",
+    "MIGRADE":  "Minimum vertical grade (%) on the segment.",
+    "MXGRADE":  "Maximum vertical grade (%) on the segment.",
+    "CPM":      "Horizontal curves per mile — density of bends along the segment.",
+    "INTPM":    "Intersections per mile — higher density means more potential conflict points.",
+    "WIDTH":    "Total pavement width in feet — wider roads typically have more lanes and shoulders.",
+}
+
+FC_LABELS = {
+    1: "Principal Arterial — Interstate",
+    2: "Principal Arterial — Other",
+    3: "Minor Arterial",
+    4: "Major Collector",
+    5: "Minor Collector",
+    6: "Local Road",
+}
+
+
+def _label(var: str) -> str:
+    """Return the human-readable label for a variable name."""
+    raw = var.replace("_Z", "").replace("_X_logaadt", "").replace("_inter_", "")
+    return VARIABLE_LABELS.get(raw, raw)
 
 
 def _to_markdown(df: pd.DataFrame) -> str:
@@ -63,16 +160,15 @@ def _prepare_washington_df(df: pd.DataFrame, aadt_col: str, y_col: str) -> pd.Da
     if "rumble_install_year" in out.columns:
         out["has_rumble"] = pd.to_numeric(out["rumble_install_year"], errors="coerce").notna().astype(int)
 
-    if "OFFSET" not in out.columns:
-        length_col = None
-        if "LENGTH" in out.columns:
-            length_col = "LENGTH"
-        elif "segment_length" in out.columns:
-            length_col = "segment_length"
-        if length_col is not None:
-            exposure = pd.to_numeric(out[length_col], errors="coerce")
-            exposure = np.clip(exposure.to_numpy(dtype=float), 1e-9, None)
-            out["OFFSET"] = np.log(exposure)
+    # Always recompute OFFSET as log(LENGTH) — the correct log-exposure offset
+    # for segment-level crash-frequency models.  The raw OFFSET column in this
+    # dataset is log(AADT)/LENGTH, a traffic-intensity metric that is not a
+    # valid log-exposure offset and causes exploding predictions if used as-is.
+    length_col = next((c for c in ["LENGTH", "segment_length"] if c in out.columns), None)
+    if length_col is not None:
+        exposure = pd.to_numeric(out[length_col], errors="coerce")
+        exposure = np.clip(exposure.to_numpy(dtype=float), 1e-9, None)
+        out["OFFSET"] = np.log(exposure)
 
     out[y_col] = pd.to_numeric(out[y_col], errors="coerce")
     out[aadt_col] = pd.to_numeric(out[aadt_col], errors="coerce")
@@ -80,6 +176,12 @@ def _prepare_washington_df(df: pd.DataFrame, aadt_col: str, y_col: str) -> pd.Da
     out = out.replace([np.inf, -np.inf], np.nan)
     out = out.dropna(subset=[y_col, aadt_col])
     out = out[out[aadt_col] > 0].copy()
+
+    # Composite LANES = INCLANES + DECLANES (total lane count both directions)
+    if "INCLANES" in out.columns and "DECLANES" in out.columns:
+        inc = pd.to_numeric(out["INCLANES"], errors="coerce").fillna(0)
+        dec = pd.to_numeric(out["DECLANES"], errors="coerce").fillna(0)
+        out["LANES"] = (inc + dec).clip(lower=1)
 
     out = out.reset_index(drop=True)
     out["OBS_ID"] = np.arange(1, len(out) + 1, dtype=int)
@@ -176,6 +278,128 @@ def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# JAX NB2 fitter — wraps the package's own mixed_model_loglik.
+#
+# Uses _design_matrix as Xf directly so the parameter names stay identical
+# to the statsmodels convention ("const", "log_aadt", "upper::VAR", ...).
+# _JAXResult exposes .params, .bse, .aic, .bic, .predict() so all downstream
+# functions (coefficient_report, aadt_elasticity, dashboard payload, …) work
+# unchanged.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _JAXResult:
+    """Statsmodels-compatible wrapper around a JAX NB2 fit."""
+
+    def __init__(
+        self,
+        params_np: np.ndarray,
+        col_names: list[str],
+        ll: float,
+        n: int,
+        family: str = "nb",
+    ):
+        Kf   = len(col_names)           # fixed params (incl. intercept "const")
+        k    = Kf + (1 if family == "nb" else 0)   # +1 for log_alpha
+        self._beta   = params_np[:Kf]   # fixed betas (no alpha)
+        self._Kf     = Kf
+        # Named series matching statsmodels convention
+        self.params  = pd.Series(self._beta, index=col_names, dtype=float)
+        self.bse     = pd.Series(np.full(Kf, np.nan), index=col_names, dtype=float)
+        self.aic     = float(2 * k - 2 * ll)
+        self.bic     = float(k * np.log(max(n, 1)) - 2 * ll)
+
+    def predict(self, exog, offset=None):
+        X = exog.to_numpy(dtype=float) if hasattr(exog, "to_numpy") else np.asarray(exog, dtype=float)
+        eta = X @ self._beta
+        if offset is not None:
+            eta = eta + np.asarray(offset, dtype=float)
+        return np.exp(eta)
+
+
+def _build_jax_data(X_np: np.ndarray, y_np: np.ndarray, offset_np: np.ndarray | None) -> dict:
+    """Minimal data dict for a fixed-only count model (no random effects)."""
+    N, Kf = X_np.shape
+    off   = offset_np[:, None, None] if offset_np is not None else np.zeros((N, 1, 1))
+    return {
+        "Xf":        jnp.array(X_np[:, None, :]),
+        "Xr_ind":    jnp.zeros((N, 1, 0)),
+        "Xr_cor":    jnp.zeros((N, 1, 0)),
+        "Xg":        jnp.zeros((N, 1, 0)),
+        "Xh":        jnp.zeros((N, 1, 0)),
+        "Xzi":       jnp.zeros((N, 1, 0)),
+        "Xmem":      jnp.zeros((N, 1, 0)),
+        "y":         jnp.array(y_np[:, None, None]),
+        "mask":      jnp.ones((N, 1, 1)),
+        "offset":    jnp.array(off.astype(float)),
+        "draws_ind": jnp.zeros((N, 0, 1)),
+        "draws_cor": jnp.zeros((N, 0, 1)),
+        "draws_g":   jnp.zeros((N, 0, 1)),
+        "group_ids": jnp.zeros(N, dtype=int),
+    }
+
+
+def _make_spec(Kf: int, col_names: list[str], family: str) -> "_ModelSpec":
+    return _ModelSpec(
+        Kf=Kf, Kr_ind=0, Kr_cor=0, Kg=0, Kh=0, Kzi=0,
+        model=family, zero_inflated=False,
+        fixed_names=tuple(col_names),
+        zi_names=(), random_ind_names=(), random_cor_names=(),
+        grouped_names=(), hetro_names=(),
+        random_ind_dists=(), random_cor_dists=(), grouped_dists=(),
+        latent_classes=1, membership_names=(), K_membership=0,
+    )
+
+
+def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
+             offset_np: np.ndarray | None, family: str,
+             n_restarts: int = 1) -> _JAXResult | None:
+    """
+    Fit NB2 or Poisson via the package's own JAX LBFGS engine.
+
+    The objective is evaluated by mixed_model_loglik which is @jit-cached
+    on (spec, indivi).  Different Kf values (different variable counts) each
+    get their own compiled version — subsequent calls with the same Kf reuse
+    the compiled code, so the search gets faster after the first few unique
+    column counts.
+    """
+    if not _JAX_OK:
+        return None
+    try:
+        X_np = X_df.to_numpy(dtype=float)
+        N, Kf = X_np.shape
+        data  = _build_jax_data(X_np, y_np, offset_np)
+        # Use anonymous names so JAX reuses its compiled trace for all specs
+        # with the same Kf — the actual column names are stored in _JAXResult.
+        spec  = _make_spec(Kf, [f"_x{i}" for i in range(Kf)], family)
+        K     = Kf + (1 if family == "nb" else 0)
+
+        # Warm start: intercept ≈ log(mean(y)), log_alpha ≈ 0
+        p0    = np.zeros(K)
+        p0[0] = float(np.log(np.clip(float(np.mean(y_np)), 1e-8, None)))
+
+        # Use functools.partial so JAX sees a stable callable and can reuse
+        # its compiled trace for calls with the same Kf (same spec hash).
+        from functools import partial as _partial
+        obj  = _partial(_jax_loglik, data=data, spec=spec, indivi=False)
+        best = _LBFGS(fun=obj, maxiter=300).run(jnp.array(p0))
+
+        if n_restarts > 1:
+            rng = np.random.default_rng(1)
+            for _ in range(n_restarts - 1):
+                p_try = jnp.array(p0 + rng.normal(0, 0.1, K))
+                cand  = _LBFGS(fun=obj, maxiter=300).run(p_try)
+                if float(cand.state.value) < float(best.state.value):
+                    best = cand
+
+        ll = float(-best.state.value)
+        if not np.isfinite(ll):
+            return None
+        return _JAXResult(np.array(best.params), list(X_df.columns), ll, N, family)
+    except Exception:
+        return None
+
+
 def _design_matrix(df: pd.DataFrame, aadt_col: str, upper_vars: list[str], lower_vars: list[str]) -> pd.DataFrame:
     mat = pd.DataFrame(index=df.index)
     mat["const"] = 1.0
@@ -208,14 +432,8 @@ def _fit_model(
     if offset_col is not None and offset_col in df_train.columns:
         offset = pd.to_numeric(df_train[offset_col], errors="coerce").to_numpy(dtype=float)
 
-    try:
-        if family == "nb":
-            model = NegativeBinomial(y_train, X_train, offset=offset)
-            result = model.fit(disp=False, maxiter=200)
-        else:
-            model = Poisson(y_train, X_train, offset=offset)
-            result = model.fit(disp=False, maxiter=200)
-    except Exception:
+    result = _jax_fit(X_train, y_train, offset, family)
+    if result is None:
         return None
 
     return FittedModel(
@@ -268,7 +486,7 @@ def _random_search(
     y_col: str,
     upper_candidates: list[str],
     lower_candidates: list[str],
-    family: str,
+    families: list[str],        # e.g. ["nb"], ["poisson"], or ["nb","poisson"]
     offset_col: str | None,
     search_iter: int,
     max_upper_terms: int,
@@ -277,9 +495,10 @@ def _random_search(
     enforce_aadt_increase: bool,
     min_aadt_elasticity: float,
     allow_nonmonotonic_fallback: bool,
-) -> tuple[FittedModel, pd.DataFrame]:
+    top_k: int = 5,             # keep top-K models for random-params sweep
+) -> tuple[FittedModel, pd.DataFrame, list[FittedModel]]:
     rng = np.random.default_rng(seed)
-    tested: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+    tested: set[tuple[tuple[str, ...], tuple[str, ...], str]] = set()
     history_rows: list[dict[str, Any]] = []
 
     best_fit: FittedModel | None = None
@@ -287,121 +506,111 @@ def _random_search(
     best_fit_any: FittedModel | None = None
     best_score_any = float("inf")
 
-    baseline_upper = upper_candidates[:1] if upper_candidates else []
+    # Priority queue (min-heap) for top-K: (bic, fit)
+    import heapq as _hq
+    top_k_heap: list[tuple[float, int, FittedModel]] = []  # (bic, counter, fit)
+    _counter = [0]   # mutable counter for heap tie-breaking
+
+    # Seeds: use at least MIN_UPPER/MIN_LOWER variables to match main search
+    baseline_upper = upper_candidates[:2] if len(upper_candidates) >= 2 else upper_candidates
     baseline_lower = lower_candidates[:1] if lower_candidates else []
 
     seeds = [
         (tuple(baseline_upper), tuple(baseline_lower)),
-        (tuple(), tuple()),
+        (tuple(upper_candidates[:2]), tuple(lower_candidates[:1])),  # different pair
     ]
 
-    for init_upper, init_lower in seeds:
-        key = (tuple(sorted(init_upper)), tuple(sorted(init_lower)))
-        tested.add(key)
-        fit = _fit_model(
-            df_train,
-            aadt_col=aadt_col,
-            y_col=y_col,
-            upper_vars=list(init_upper),
-            lower_vars=list(init_lower),
-            family=family,
-            offset_col=offset_col,
-        )
-        if fit is None:
-            continue
-        pred_val = _predict(df_val, fit)
-        y_val = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
-        score = _poisson_deviance(y_val, pred_val)
+    def _eval(fit: FittedModel, y_val_arr: np.ndarray) -> None:
+        """Score fit, append to history, update bests and top-K heap."""
+        pred_val   = _predict(df_val, fit)
+        score      = _poisson_deviance(y_val_arr, pred_val)
+        val_rmse   = _metrics(y_val_arr, pred_val)["rmse"]
+        bic        = float(getattr(fit.result, "bic", np.nan))
+        aic        = float(getattr(fit.result, "aic", np.nan))
         elasticity = _aadt_elasticity(df_val, fit)
-        elast_stats = _elasticity_stats(elasticity)
-        monotonic_ok = bool(elast_stats["aadt_elasticity_min"] > float(min_aadt_elasticity))
-        history_rows.append(
-            {
-                "Iteration": len(history_rows) + 1,
-                "Upper Vars": ", ".join(fit.upper_vars) if fit.upper_vars else "(none)",
-                "Lower Vars": ", ".join(fit.lower_vars) if fit.lower_vars else "(none)",
-                "Val Poisson Dev": score,
-                "Val RMSE": _metrics(y_val, pred_val)["rmse"],
-                "AIC": float(getattr(fit.result, "aic", np.nan)),
-                "BIC": float(getattr(fit.result, "bic", np.nan)),
-                "AADT elasticity min": elast_stats["aadt_elasticity_min"],
-                "AADT elasticity p10": elast_stats["aadt_elasticity_p10"],
-                "AADT elasticity median": elast_stats["aadt_elasticity_median"],
-                "AADT elasticity p90": elast_stats["aadt_elasticity_p90"],
-                "AADT elasticity share positive": elast_stats["aadt_elasticity_share_positive"],
-                "Monotonic AADT OK": "yes" if monotonic_ok else "no",
-            }
-        )
-        if score < best_score_any:
-            best_score_any = score
-            best_fit_any = fit
-        if (not enforce_aadt_increase or monotonic_ok) and score < best_score:
-            best_score = score
-            best_fit = fit
+        es         = _elasticity_stats(elasticity)
+        mono_ok    = bool(es["aadt_elasticity_min"] > float(min_aadt_elasticity))
+        history_rows.append({
+            "Iteration": len(history_rows) + 1,
+            "Family":    fit.family,
+            "Phase":     "random",
+            "Upper Vars": ", ".join(fit.upper_vars) if fit.upper_vars else "(none)",
+            "Lower Vars": ", ".join(fit.lower_vars) if fit.lower_vars else "(none)",
+            "Val Poisson Dev": score, "Val RMSE": val_rmse,
+            "AIC": aic, "BIC": bic,
+            "AADT elasticity min":            es["aadt_elasticity_min"],
+            "AADT elasticity p10":            es["aadt_elasticity_p10"],
+            "AADT elasticity median":         es["aadt_elasticity_median"],
+            "AADT elasticity p90":            es["aadt_elasticity_p90"],
+            "AADT elasticity share positive": es["aadt_elasticity_share_positive"],
+            "Monotonic AADT OK": "yes" if mono_ok else "no",
+        })
+        nonlocal best_fit, best_score, best_fit_any, best_score_any
+        if bic < best_score_any:
+            best_score_any = bic
+            best_fit_any   = fit
+        if (not enforce_aadt_increase or mono_ok) and bic < best_score:
+            best_score = bic
+            best_fit   = fit
+        # top-K heap maintenance (max-heap by negating bic for min-heap)
+        _counter[0] += 1
+        if np.isfinite(bic) and (not enforce_aadt_increase or mono_ok):
+            if len(top_k_heap) < top_k:
+                _hq.heappush(top_k_heap, (-bic, _counter[0], fit))
+            elif -bic > top_k_heap[0][0]:
+                _hq.heapreplace(top_k_heap, (-bic, _counter[0], fit))
+
+    y_val_np = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
+
+    for init_upper, init_lower in seeds:
+        for fam in families:
+            key = (tuple(sorted(init_upper)), tuple(sorted(init_lower)), fam)
+            if key in tested:
+                continue
+            tested.add(key)
+            fit = _fit_model(df_train, aadt_col=aadt_col, y_col=y_col,
+                             upper_vars=list(init_upper), lower_vars=list(init_lower),
+                             family=fam, offset_col=offset_col)
+            if fit is None:
+                continue
+            _eval(fit, y_val_np)
+
+    # ── Random search — BIC-primary, multi-family ─────────────────────────
+    # Min complexity: always at least 2 upper + 1 lower variable.
+    MIN_UPPER = 2
+    MIN_LOWER = 1
 
     for _ in range(search_iter):
-        k_upper = int(rng.integers(0, max_upper_terms + 1))
-        k_lower = int(rng.integers(0, max_lower_terms + 1))
+        k_upper = int(rng.integers(MIN_UPPER, max_upper_terms + 1))
+        k_lower = int(rng.integers(MIN_LOWER, max_lower_terms + 1))
+        fam     = families[int(rng.integers(0, len(families)))]  # pick family randomly
 
-        pick_upper = []
-        pick_lower = []
-        if k_upper > 0 and upper_candidates:
-            size = min(k_upper, len(upper_candidates))
-            pick_upper = sorted(rng.choice(upper_candidates, size=size, replace=False).tolist())
-        if k_lower > 0 and lower_candidates:
-            size = min(k_lower, len(lower_candidates))
-            pick_lower = sorted(rng.choice(lower_candidates, size=size, replace=False).tolist())
+        pick_upper: list[str] = []
+        pick_lower: list[str] = []
+        if upper_candidates:
+            pick_upper = sorted(rng.choice(upper_candidates,
+                                           size=min(k_upper, len(upper_candidates)),
+                                           replace=False).tolist())
+        if lower_candidates:
+            pick_lower = sorted(rng.choice(lower_candidates,
+                                           size=min(k_lower, len(lower_candidates)),
+                                           replace=False).tolist())
 
-        key = (tuple(pick_upper), tuple(pick_lower))
+        key = (tuple(pick_upper), tuple(pick_lower), fam)
         if key in tested:
             continue
         tested.add(key)
 
-        fit = _fit_model(
-            df_train,
-            aadt_col=aadt_col,
-            y_col=y_col,
-            upper_vars=pick_upper,
-            lower_vars=pick_lower,
-            family=family,
-            offset_col=offset_col,
-        )
+        fit = _fit_model(df_train, aadt_col=aadt_col, y_col=y_col,
+                         upper_vars=pick_upper, lower_vars=pick_lower,
+                         family=fam, offset_col=offset_col)
         if fit is None:
             continue
 
-        pred_val = _predict(df_val, fit)
-        y_val = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
-        score = _poisson_deviance(y_val, pred_val)
-        val_stats = _metrics(y_val, pred_val)
-        elasticity = _aadt_elasticity(df_val, fit)
-        elast_stats = _elasticity_stats(elasticity)
-        monotonic_ok = bool(elast_stats["aadt_elasticity_min"] > float(min_aadt_elasticity))
+        _eval(fit, y_val_np)  # updates bests and top-K heap via nonlocal + closure
 
-        history_rows.append(
-            {
-                "Iteration": len(history_rows) + 1,
-                "Upper Vars": ", ".join(fit.upper_vars) if fit.upper_vars else "(none)",
-                "Lower Vars": ", ".join(fit.lower_vars) if fit.lower_vars else "(none)",
-                "Val Poisson Dev": score,
-                "Val RMSE": val_stats["rmse"],
-                "AIC": float(getattr(fit.result, "aic", np.nan)),
-                "BIC": float(getattr(fit.result, "bic", np.nan)),
-                "AADT elasticity min": elast_stats["aadt_elasticity_min"],
-                "AADT elasticity p10": elast_stats["aadt_elasticity_p10"],
-                "AADT elasticity median": elast_stats["aadt_elasticity_median"],
-                "AADT elasticity p90": elast_stats["aadt_elasticity_p90"],
-                "AADT elasticity share positive": elast_stats["aadt_elasticity_share_positive"],
-                "Monotonic AADT OK": "yes" if monotonic_ok else "no",
-            }
-        )
-
-        if score < best_score_any:
-            best_score_any = score
-            best_fit_any = fit
-
-        if (not enforce_aadt_increase or monotonic_ok) and score < best_score:
-            best_score = score
-            best_fit = fit
+    # Hill-climb phase intentionally omitted — pure random search is used
+    # to avoid getting trapped in local optima and to keep exploration broad.
 
     if best_fit is None and best_fit_any is None:
         raise RuntimeError("Search failed to fit any candidate model.")
@@ -414,8 +623,12 @@ def _random_search(
             )
         best_fit = best_fit_any
 
-    history_df = pd.DataFrame(history_rows).sort_values("Val Poisson Dev").reset_index(drop=True)
-    return best_fit, history_df
+    # Extract top-K list (sorted best BIC first)
+    top_k_list = [fit for (_, _, fit) in sorted(top_k_heap, key=lambda x: x[0])]
+
+    history_df        = pd.DataFrame(history_rows)
+    history_df_sorted = history_df.sort_values("Val Poisson Dev").reset_index(drop=True)
+    return best_fit, history_df_sorted, history_df, top_k_list
 
 
 def _coefficient_report(
@@ -669,8 +882,9 @@ def _interactive_model_payload(
                 "q10": 0.0,
                 "q50": 0.5,
                 "q90": 1.0,
-                "label": raw_var,
+                "label": VARIABLE_LABELS.get(raw_var, raw_var),
                 "unit": "",
+                "description": VARIABLE_DESCRIPTIONS.get(raw_var, ""),
             }
             continue
 
@@ -695,6 +909,8 @@ def _interactive_model_payload(
         elif raw_var in ("WIDTH", "MEDWIDTH"):
             unit = "ft"
 
+        full_label = VARIABLE_LABELS.get(raw_var, raw_var)
+        description = VARIABLE_DESCRIPTIONS.get(raw_var, "")
         variable_specs[raw_var] = {
             "is_binary": False,
             "min": float(q10),
@@ -704,8 +920,9 @@ def _interactive_model_payload(
             "q10": float(q10_tick),
             "q50": float(q50_tick),
             "q90": float(q90_tick),
-            "label": raw_var,
+            "label": full_label,
             "unit": unit,
+            "description": description,
         }
 
     params = pd.Series(fitted.result.params)
@@ -1358,7 +1575,14 @@ function buildControls() {{
         wrapper.className = 'control-row';
         const label = document.createElement('span');
         label.className = 'label';
-        label.textContent = spec.label || variable;
+        // Show full name + unit; tooltip shows description on hover
+        const unitTxt = spec.unit ? ' (' + spec.unit + ')' : '';
+        label.textContent = (spec.label || variable) + unitTxt;
+        if (spec.description) {{
+          label.title = spec.description;
+          label.style.cursor = 'help';
+          label.style.borderBottom = '1px dotted var(--muted)';
+        }}
         wrapper.appendChild(label);
 
         if (spec.is_binary) {{
@@ -1414,7 +1638,8 @@ function buildControls() {{
 
             const tickRow = document.createElement('div');
             tickRow.className = 'tick-row';
-            tickRow.innerHTML = '<span>p10: ' + fmt(spec.q10, '') + '</span><span>p50: ' + fmt(spec.q50, '') + '</span><span>p90: ' + fmt(spec.q90, '') + '</span>';
+            const u = spec.unit || '';
+            tickRow.innerHTML = '<span>p10: ' + fmt(spec.q10, u) + '</span><span>p50: ' + fmt(spec.q50, u) + '</span><span>p90: ' + fmt(spec.q90, u) + '</span>';
 
             input.addEventListener('input', () => {{
                 valueSpan.textContent = fmt(Number(input.value), spec.unit || '');
@@ -1465,47 +1690,62 @@ resetButton.addEventListener('click', resetProfile);
 
 
 def _save_convergence_html(path: Path, history_df: pd.DataFrame, dataset_label: str) -> None:
-    """Save a self-contained Plotly HTML showing BIC and Val Poisson Deviance over search iterations."""
+    """
+    Convergence dashboard with:
+      - Proposed-path trace (thin line connecting all candidates in order)
+      - Running-best envelope (thick step-function line)
+      - Dual objectives: BIC (left) and Val RMSE (right)
+      - Phase colouring (random = teal, hillclimb = orange)
+      - Fixed-height window so it fits inside a presentation slide
+    """
     try:
         df = history_df.copy()
-        # Restore original iteration order for convergence plot
         if "Iteration" in df.columns:
             df = df.sort_values("Iteration").reset_index(drop=True)
         else:
             df = df.reset_index(drop=True)
             df["Iteration"] = df.index + 1
 
-        iterations = df["Iteration"].tolist()
-        bic_vals = df["BIC"].tolist()
-        val_dev_vals = df["Val Poisson Dev"].tolist()
+        iters      = df["Iteration"].tolist()
+        bic_raw    = [float(v) if np.isfinite(float(v)) else float("nan") for v in df["BIC"]]
+        rmse_raw   = [float(v) if np.isfinite(float(v)) else float("nan") for v in df.get("Val RMSE", [float("nan")] * len(df))]
+        dev_raw    = [float(v) if np.isfinite(float(v)) else float("nan") for v in df["Val Poisson Dev"]]
         upper_vars = df["Upper Vars"].tolist() if "Upper Vars" in df.columns else [""] * len(df)
         lower_vars = df["Lower Vars"].tolist() if "Lower Vars" in df.columns else [""] * len(df)
-        monotonic = df["Monotonic AADT OK"].tolist() if "Monotonic AADT OK" in df.columns else ["yes"] * len(df)
+        monotonic  = df["Monotonic AADT OK"].tolist() if "Monotonic AADT OK" in df.columns else ["yes"] * len(df)
+        phases     = df["Phase"].tolist() if "Phase" in df.columns else ["random"] * len(df)
 
-        # Compute running minimums
-        bic_arr = np.array([float(v) if np.isfinite(float(v)) else 1e18 for v in bic_vals])
-        dev_arr = np.array([float(v) if np.isfinite(float(v)) else 1e18 for v in val_dev_vals])
+        def _running_min(vals: list[float]) -> list[float]:
+            cur = float("inf")
+            out = []
+            for v in vals:
+                if np.isfinite(v):
+                    cur = min(cur, v)
+                out.append(cur if np.isfinite(cur) else float("nan"))
+            return out
 
-        bic_running_min = np.minimum.accumulate(bic_arr).tolist()
-        dev_running_min = np.minimum.accumulate(dev_arr).tolist()
+        bic_rmin  = _running_min(bic_raw)
+        rmse_rmin = _running_min(rmse_raw)
 
-        best_bic_idx = int(np.argmin(bic_arr))
-        best_dev_idx = int(np.argmin(dev_arr))
+        # Colours: phase (random=teal, hillclimb=orange) × monotonic (filled/hollow)
+        def _dot_color(phase: str, mono: str) -> str:
+            base = "#7fdee8" if phase == "random" else "#d96f32"
+            return base if mono == "yes" else "#8c959f"
 
-        dot_colors = ["#2a7f4f" if m == "yes" else "#8c959f" for m in monotonic]
+        dot_colors = [_dot_color(p, m) for p, m in zip(phases, monotonic)]
+
+        best_bic_idx  = int(np.nanargmin(bic_raw))
+        best_rmse_idx = int(np.nanargmin(rmse_raw))
 
         payload = {
-            "iterations": iterations,
-            "bic": [float(v) for v in bic_vals],
-            "val_dev": [float(v) for v in val_dev_vals],
-            "bic_running_min": bic_running_min,
-            "dev_running_min": dev_running_min,
-            "best_bic_idx": best_bic_idx,
-            "best_dev_idx": best_dev_idx,
-            "upper_vars": upper_vars,
-            "lower_vars": lower_vars,
-            "monotonic": monotonic,
+            "iters": iters,
+            "bic": bic_raw, "bic_rmin": bic_rmin,
+            "rmse": rmse_raw, "rmse_rmin": rmse_rmin,
+            "dev": dev_raw,
+            "upper_vars": upper_vars, "lower_vars": lower_vars,
+            "monotonic": monotonic, "phases": phases,
             "dot_colors": dot_colors,
+            "best_bic_idx": best_bic_idx, "best_rmse_idx": best_rmse_idx,
             "label": dataset_label,
         }
 
@@ -1513,97 +1753,110 @@ def _save_convergence_html(path: Path, history_df: pd.DataFrame, dataset_label: 
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>Search Convergence — {dataset_label}</title>
+<title>Search Convergence</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
-  body {{ margin: 0; background: #0f1923; color: #e8edf2; font-family: 'Segoe UI', sans-serif; }}
-  .header {{ padding: 18px 24px 6px; }}
-  .header h2 {{ margin: 0; font-size: 1.3rem; color: #7fdee8; }}
-  .header p {{ margin: 4px 0 0; font-size: 0.9rem; color: #8fa3b3; }}
-  .legend-row {{ display: flex; gap: 18px; padding: 0 24px 10px; font-size: 0.82rem; color: #8fa3b3; align-items: center; }}
-  .dot {{ width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 4px; }}
-  .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100vh - 110px); }}
-  #bic_chart, #dev_chart {{ height: 100%; }}
+  * {{ box-sizing:border-box; }}
+  html, body {{
+    margin:0; padding:0; width:100%; height:100%;
+    background:#0f1923; color:#e8edf2;
+    font-family:'Segoe UI',sans-serif; overflow:hidden;
+  }}
+  .hdr {{ padding:10px 18px 3px; }}
+  .hdr h2 {{ margin:0; font-size:1.0rem; color:#7fdee8; white-space:nowrap; }}
+  .hdr p  {{ margin:2px 0 0; font-size:0.76rem; color:#8fa3b3; }}
+  .leg {{
+    display:flex; gap:14px; padding:3px 18px 4px;
+    font-size:0.74rem; color:#8fa3b3; flex-wrap:nowrap; align-items:center;
+  }}
+  .ld {{ width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:3px; flex-shrink:0; }}
+  /* Two charts side by side, each exactly half width */
+  .charts {{
+    display:flex; flex-direction:row; width:100%;
+    height:calc(100vh - 72px);
+  }}
+  #bc, #rc {{ flex:1 1 50%; min-width:0; height:100%; }}
 </style>
 </head>
 <body>
-<div class="header">
+<div class="hdr">
   <h2>{dataset_label} — Search Convergence</h2>
-  <p>Each point = one candidate model. Running minimum = thick line. Star = best-ever.</p>
+  <p>Dotted = proposed path in order &nbsp;·&nbsp; Solid = running best &nbsp;·&nbsp;
+     Green = monotonic AADT &nbsp;·&nbsp; Grey = non-monotonic &nbsp;·&nbsp; Star = global best</p>
 </div>
-<div class="legend-row">
-  <span><span class="dot" style="background:#2a7f4f;"></span>Monotonic AADT OK</span>
-  <span><span class="dot" style="background:#8c959f;"></span>Not monotonic</span>
-  <span><span class="dot" style="background:#d96f32; border-radius:0; transform:rotate(45deg);"></span>Best ever</span>
+<div class="leg">
+  <span><span class="ld" style="background:#2a7f4f"></span>Monotonic</span>
+  <span><span class="ld" style="background:#8c959f"></span>Non-monotonic</span>
+  <span style="color:#ffd700">★ best</span>
+  <span>— running min</span>
+  <span style="color:#8fa3b3">····· proposed path</span>
 </div>
 <div class="charts">
-  <div id="bic_chart"></div>
-  <div id="dev_chart"></div>
+  <div id="bc"></div>
+  <div id="rc"></div>
 </div>
 <script>
 const D = {json.dumps(payload)};
 
-function makeCharts() {{
-  const iters = D.iterations;
+const BASE = {{
+  template:'plotly_dark',
+  paper_bgcolor:'#0f1923',
+  plot_bgcolor:'#172232',
+  font:{{color:'#c8d6e0', size:10}},
+  margin:{{l:60, r:18, t:38, b:44}},
+  legend:{{orientation:'h', y:-0.15, font:{{size:9}}, traceorder:'normal'}},
+  xaxis:{{title:'Search iteration', gridcolor:'#1e3045', zeroline:false}},
+}};
 
-  function scatterTrace(yVals, colors, label) {{
-    return {{
-      x: iters, y: yVals,
-      type: 'scatter', mode: 'markers',
-      marker: {{ color: colors, size: 7, opacity: 0.8 }},
-      name: label,
-      hovertemplate: 'Iter %{{x}}<br>' + label + ': %{{y:.2f}}<br>Upper: %{{customdata[0]}}<br>Lower: %{{customdata[1]}}<extra></extra>',
-      customdata: iters.map((_, i) => [D.upper_vars[i], D.lower_vars[i]])
-    }};
-  }}
+const cd = D.iters.map((_,i) =>
+  [D.upper_vars[i], D.lower_vars[i], D.monotonic[i]]);
+const dot_hover =
+  'Iter %{{x}}<br>Value: %{{y:.3f}}<br>' +
+  'Upper: %{{customdata[0]}}<br>Lower: %{{customdata[1]}}<br>' +
+  'Monotonic: %{{customdata[2]}}<extra></extra>';
 
-  function runMinTrace(yVals, color, label) {{
-    return {{
-      x: iters, y: yVals,
-      type: 'scatter', mode: 'lines',
-      line: {{ color: color, width: 3 }},
-      name: label
-    }};
-  }}
-
-  function starTrace(idx, yVals, color) {{
-    return {{
-      x: [iters[idx]], y: [yVals[idx]],
-      type: 'scatter', mode: 'markers',
-      marker: {{ symbol: 'star', size: 18, color: color, line: {{ color: '#fff', width: 1 }} }},
-      name: 'Best',
-      hovertemplate: 'BEST<br>Iter %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
-    }};
-  }}
-
-  const darkLayout = {{
-    template: 'plotly_dark',
-    paper_bgcolor: '#0f1923',
-    plot_bgcolor: '#172232',
-    font: {{ color: '#c8d6e0' }},
-    margin: {{ l: 70, r: 20, t: 50, b: 50 }},
-    legend: {{ orientation: 'h', y: -0.12 }},
-    xaxis: {{ title: 'Search iteration', gridcolor: '#243040' }},
+function pathT(y, name) {{
+  return {{
+    x:D.iters, y, type:'scatter', mode:'lines', name,
+    line:{{color:'rgba(160,200,240,0.15)', width:1.2, dash:'dot'}},
+    showlegend:false, hoverinfo:'skip'
   }};
-
-  Plotly.newPlot('bic_chart', [
-    scatterTrace(D.bic, D.dot_colors, 'BIC'),
-    runMinTrace(D.bic_running_min, '#7fdee8', 'Running min BIC'),
-    starTrace(D.best_bic_idx, D.bic, '#d96f32'),
-  ], {{ ...darkLayout, title: 'BIC over search iterations', yaxis: {{ title: 'BIC', gridcolor: '#243040' }} }}, {{ responsive: true }});
-
-  Plotly.newPlot('dev_chart', [
-    scatterTrace(D.val_dev, D.dot_colors, 'Val Poisson Dev'),
-    runMinTrace(D.dev_running_min, '#f0b060', 'Running min Val Dev'),
-    starTrace(D.best_dev_idx, D.val_dev, '#d96f32'),
-  ], {{ ...darkLayout, title: 'Validation Poisson Deviance over iterations', yaxis: {{ title: 'Val Poisson Deviance', gridcolor: '#243040' }} }}, {{ responsive: true }});
+}}
+function dotsT(y, name) {{
+  return {{
+    x:D.iters, y, type:'scatter', mode:'markers', name,
+    marker:{{color:D.dot_colors, size:6, opacity:0.85}},
+    customdata:cd, hovertemplate:dot_hover
+  }};
+}}
+function envT(y, color, name) {{
+  return {{
+    x:D.iters, y, type:'scatter', mode:'lines', name,
+    line:{{color, width:3, shape:'hv'}}
+  }};
+}}
+function starT(idx, y, name) {{
+  return {{
+    x:[D.iters[idx]], y:[y[idx]], type:'scatter', mode:'markers', name,
+    marker:{{symbol:'star', size:16, color:'#ffd700', line:{{color:'#fff',width:1}}}},
+    hovertemplate:'BEST<br>Iter %{{x}}<br>%{{y:.3f}}<extra></extra>'
+  }};
 }}
 
-makeCharts();
+Plotly.newPlot('bc',
+  [pathT(D.bic,'proposed'), dotsT(D.bic,'BIC'), envT(D.bic_rmin,'#7fdee8','Running best'), starT(D.best_bic_idx,D.bic,'Best')],
+  {{...BASE, title:{{text:'BIC over iterations',font:{{size:12}}}},
+    yaxis:{{title:'BIC', gridcolor:'#1e3045', zeroline:false}}}},
+  {{responsive:true, displayModeBar:false}});
+
+Plotly.newPlot('rc',
+  [pathT(D.rmse,'proposed'), dotsT(D.rmse,'Val RMSE'), envT(D.rmse_rmin,'#f0b060','Running best'), starT(D.best_rmse_idx,D.rmse,'Best')],
+  {{...BASE, title:{{text:'Validation RMSE over iterations',font:{{size:12}}}},
+    yaxis:{{title:'Val RMSE', gridcolor:'#1e3045', zeroline:false}}}},
+  {{responsive:true, displayModeBar:false}});
 </script>
 </body>
-</html>
-"""
+</html>"""
         path.write_text(html, encoding="utf-8")
     except Exception as exc:
         print(f"[WARNING] Could not save convergence HTML: {exc}")
@@ -1627,48 +1880,51 @@ def _save_obs_pred_aadt_html(
         y, p, a = y[:n], p[:n], a[:n]
         labels = list(split_labels)[:n] if split_labels else ["all"] * n
 
-        # LOWESS-style binning: sort by AADT, bin into 20 groups
-        sort_idx = np.argsort(a)
-        a_sorted = a[sort_idx]
-        p_sorted = p[sort_idx]
-        n_bins = min(20, n)
-        bin_edges = np.array_split(np.arange(n), n_bins)
-        smooth_aadt = [float(np.mean(a_sorted[b])) for b in bin_edges]
-        smooth_pred = [float(np.mean(p_sorted[b])) for b in bin_edges]
+        # Work in log(AADT) space throughout — the model is linear in log(AADT)
+        log_a  = np.log(np.clip(a, 1.0, None))          # log(AADT) for each obs
+        p_clip = np.clip(p, 0, np.quantile(p, 0.99))
+        try:
+            coeffs        = np.polyfit(log_a, p_clip, deg=3)
+            log_a_fine    = np.linspace(log_a.min(), log_a.max(), 200)
+            p_fine        = np.maximum(np.polyval(coeffs, log_a_fine), 0.0)
+            smooth_logaadt = log_a_fine.tolist()
+            smooth_pred    = p_fine.tolist()
+        except Exception:
+            si             = np.argsort(log_a)
+            smooth_logaadt = log_a[si].tolist()
+            smooth_pred    = p_clip[si].tolist()
 
-        # Residuals
-        residuals = (p - y) / np.maximum(y, 1.0)
+        residuals    = (p - y) / np.maximum(y, 1.0)
+        laadt_p10    = float(np.quantile(log_a, 0.10))
+        laadt_p25    = float(np.quantile(log_a, 0.25))
+        laadt_p75    = float(np.quantile(log_a, 0.75))
+        laadt_p90    = float(np.quantile(log_a, 0.90))
 
-        # AADT quantile bands (p25, p75)
-        aadt_p10 = float(np.quantile(a, 0.10))
-        aadt_p25 = float(np.quantile(a, 0.25))
-        aadt_p75 = float(np.quantile(a, 0.75))
-        aadt_p90 = float(np.quantile(a, 0.90))
-
-        color_map = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32", "test": "#7a3c8c", "all": "#1f5f8b"}
-        obs_colors = [color_map.get(str(lbl).lower(), "#4a6785") for lbl in labels]
+        color_map    = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32",
+                        "test": "#7a3c8c", "all": "#1f5f8b"}
+        obs_colors   = [color_map.get(str(lbl).lower(), "#4a6785") for lbl in labels]
         resid_colors = ["#d96f32" if r > 0 else "#0a6c74" for r in residuals]
 
         hover_text = [
-            f"AADT: {a[i]:,.0f}<br>Observed: {y[i]:.1f}<br>Predicted: {p[i]:.3f}<br>Resid%: {residuals[i]*100:+.1f}%<br>Split: {labels[i]}"
+            f"log(AADT): {log_a[i]:.3f}  (AADT≈{a[i]:,.0f})<br>"
+            f"Observed: {y[i]:.1f}<br>Predicted: {p[i]:.3f}<br>"
+            f"Resid%: {residuals[i]*100:+.1f}%<br>Split: {labels[i]}"
             for i in range(n)
         ]
 
         payload = {
-            "aadt": a.tolist(),
-            "y_true": y.tolist(),
-            "y_pred": p.tolist(),
-            "residuals": residuals.tolist(),
-            "labels": labels,
-            "obs_colors": obs_colors,
+            "log_aadt":    log_a.tolist(),           # x values for scatter
+            "y_true":      y.tolist(),
+            "y_pred":      p.tolist(),
+            "residuals":   residuals.tolist(),
+            "labels":      labels,
+            "obs_colors":  obs_colors,
             "resid_colors": resid_colors,
-            "smooth_aadt": smooth_aadt,
+            "smooth_logaadt": smooth_logaadt,        # x values for smooth line
             "smooth_pred": smooth_pred,
-            "hover_text": hover_text,
-            "aadt_p10": aadt_p10,
-            "aadt_p25": aadt_p25,
-            "aadt_p75": aadt_p75,
-            "aadt_p90": aadt_p90,
+            "hover_text":  hover_text,
+            "laadt_p10": laadt_p10, "laadt_p25": laadt_p25,
+            "laadt_p75": laadt_p75, "laadt_p90": laadt_p90,
             "title": title,
         }
 
@@ -1707,12 +1963,12 @@ function bandShape(x0, x1, color) {{
 }}
 
 const shapes_scatter = [
-  bandShape(D.aadt_p10, D.aadt_p25, '#0a6c74'),
-  bandShape(D.aadt_p75, D.aadt_p90, '#d96f32'),
+  bandShape(D.laadt_p10, D.laadt_p25, '#0a6c74'),
+  bandShape(D.laadt_p75, D.laadt_p90, '#d96f32'),
 ];
 
 const obsTrace = {{
-  x: D.aadt, y: D.y_true,
+  x: D.log_aadt, y: D.y_true,
   type: 'scatter', mode: 'markers',
   marker: {{ color: D.obs_colors, size: 7, opacity: 0.6, line: {{ color: 'rgba(255,255,255,0.4)', width: 0.5 }} }},
   name: 'Observed crashes',
@@ -1720,16 +1976,16 @@ const obsTrace = {{
 }};
 
 const predLine = {{
-  x: D.smooth_aadt, y: D.smooth_pred,
+  x: D.smooth_logaadt, y: D.smooth_pred,
   type: 'scatter', mode: 'lines',
   line: {{ color: '#d96f32', width: 3 }},
-  name: 'Predicted (binned smooth)'
+  name: 'Predicted (polynomial smooth)'
 }};
 
 Plotly.newPlot('scatter_chart', [obsTrace, predLine], {{
   template: 'plotly_white',
   title: D.title,
-  xaxis: {{ title: 'AADT (vehicles/day)', type: 'log', gridcolor: '#e0e4e8' }},
+  xaxis: {{ title: 'log(AADT)', gridcolor: '#e0e4e8' }},
   yaxis: {{ title: 'Crash count', gridcolor: '#e0e4e8' }},
   margin: {{ l: 70, r: 20, t: 60, b: 50 }},
   legend: {{ orientation: 'h' }},
@@ -1737,7 +1993,7 @@ Plotly.newPlot('scatter_chart', [obsTrace, predLine], {{
 }}, {{ responsive: true }});
 
 const residTrace = {{
-  x: D.aadt, y: D.residuals,
+  x: D.log_aadt, y: D.residuals,
   type: 'scatter', mode: 'markers',
   marker: {{ color: D.resid_colors, size: 7, opacity: 0.65 }},
   name: 'Normalized residual',
@@ -1745,7 +2001,7 @@ const residTrace = {{
 }};
 
 const zeroLine = {{
-  x: [Math.min(...D.aadt), Math.max(...D.aadt)],
+  x: [Math.min(...D.log_aadt), Math.max(...D.log_aadt)],
   y: [0, 0],
   type: 'scatter', mode: 'lines',
   line: {{ color: '#333', width: 1.5, dash: 'dash' }},
@@ -1754,14 +2010,14 @@ const zeroLine = {{
 
 Plotly.newPlot('resid_chart', [residTrace, zeroLine], {{
   template: 'plotly_white',
-  title: 'Normalized residuals by AADT',
-  xaxis: {{ title: 'AADT', type: 'log', gridcolor: '#e0e4e8' }},
+  title: 'Normalized residuals by log(AADT)',
+  xaxis: {{ title: 'log(AADT)', gridcolor: '#e0e4e8' }},
   yaxis: {{ title: '(pred - obs) / max(obs,1)', gridcolor: '#e0e4e8', zeroline: true }},
   margin: {{ l: 70, r: 20, t: 50, b: 50 }},
   legend: {{ orientation: 'h' }},
   shapes: [
-    bandShape(D.aadt_p10, D.aadt_p25, '#0a6c74'),
-    bandShape(D.aadt_p75, D.aadt_p90, '#d96f32'),
+    bandShape(D.laadt_p10, D.laadt_p25, '#0a6c74'),
+    bandShape(D.laadt_p75, D.laadt_p90, '#d96f32'),
   ],
 }}, {{ responsive: true }});
 
@@ -1792,32 +2048,35 @@ def _jax_random_params_refit(
     binary_vars: set[str],
 ) -> dict[str, Any] | None:
     """Attempt a random-parameters refit using ExperimentBuilder if available."""
+    # Ensure the package root is on sys.path regardless of how the script is invoked
+    import sys as _sys
+    _pkg_root = str(Path(__file__).resolve().parent.parent)
+    if _pkg_root not in _sys.path:
+        _sys.path.insert(0, _pkg_root)
+
     try:
+        from experiment_package import ExperimentBuilder  # type: ignore
+    except ImportError:
         try:
-            from experiment_package import ExperimentBuilder  # type: ignore
+            from ..experiment_package import ExperimentBuilder  # type: ignore
         except ImportError:
-            try:
-                from ..experiment_package import ExperimentBuilder  # type: ignore
-            except ImportError:
-                print("[INFO] ExperimentBuilder not available; skipping JAX random-parameters refit.")
-                return None
-    except Exception as exc:
-        print(f"[INFO] ExperimentBuilder import failed ({exc}); skipping JAX refit.")
+            return None
+    except Exception:
         return None
 
     try:
         df = df_trainval_raw.copy()
         df["_id"] = np.arange(len(df), dtype=int)
 
-        log_aadt = np.log(np.clip(pd.to_numeric(df[aadt_col], errors="coerce").to_numpy(dtype=float), 1e-12, None))
+        log_aadt = np.log(np.clip(
+            pd.to_numeric(df[aadt_col], errors="coerce").to_numpy(dtype=float), 1e-12, None
+        ))
         df["_log_aadt"] = log_aadt
 
-        # Interaction columns for lower vars
         for var in best_lower_raw:
             x = pd.to_numeric(df[var], errors="coerce").to_numpy(dtype=float)
             df[f"_inter_{var}"] = x * log_aadt
 
-        # Standardize continuous vars
         for var, (mu, sd) in scaler_stats.items():
             if var in df.columns:
                 df[f"{var}_Z"] = (pd.to_numeric(df[var], errors="coerce") - mu) / sd
@@ -1825,46 +2084,261 @@ def _jax_random_params_refit(
         def _model_name(v: str) -> str:
             return v if v in binary_vars else f"{v}_Z"
 
-        fixed_terms = ["_log_aadt"] + [_model_name(v) for v in best_upper_raw] + [f"_inter_{v}" for v in best_lower_raw]
-
         continuous_upper = [v for v in best_upper_raw if v not in binary_vars]
         continuous_lower = [v for v in best_lower_raw if v not in binary_vars]
 
-        rdm_terms = [f"{_model_name(v)}:normal" for v in continuous_upper]
-        rdm_cor_terms = [f"{_model_name(v)}:normal" for v in continuous_lower[:2]]
+        # Random params on continuous upper vars — these must NOT also appear
+        # in fixed_terms or Kr_ind/draws mismatch causes an einsum error.
+        rdm_var_names = {_model_name(v) for v in continuous_upper
+                         if _model_name(v) in df.columns}
+        rdm_terms     = [f"{n}:normal" for n in rdm_var_names]
 
-        builder = ExperimentBuilder()
-        result = builder.fit_manual_model(
-            data=df,
-            y_col=y_col,
-            id_col="_id",
-            fixed_terms=fixed_terms,
-            rdm_terms=rdm_terms if rdm_terms else None,
-            rdm_cor_terms=rdm_cor_terms if rdm_cor_terms else None,
-            offset_col=offset_col,
-            dispersion=1,
+        # Fixed terms: log_aadt + binary upper vars + lower interactions
+        # Continuous upper vars are handled by rdm_terms (random), not here.
+        fixed_upper = [_model_name(v) for v in best_upper_raw
+                       if _model_name(v) not in rdm_var_names]
+        fixed_terms = (
+            ["_log_aadt"]
+            + [t for t in fixed_upper if t in df.columns]
+            + [f"_inter_{v}" for v in best_lower_raw if f"_inter_{v}" in df.columns]
         )
 
-        summary = None
+        builder = ExperimentBuilder(df=df, id_col="_id", y_col=y_col,
+                                    offset_col=offset_col)
+        manual_spec = builder.make_manual_spec(
+            fixed_terms = fixed_terms,
+            rdm_terms   = rdm_terms or [],
+            dispersion  = 1,
+        )
+        fit = builder.fit_manual_model(manual_spec, model="nb", print_report=False)
+
+        # ── Extract readable coefficient table with means + SDs ──────────
+        spec   = fit["spec"]
+        params = np.array(fit["result"].params)
+
         try:
-            summary = result.summary() if hasattr(result, "summary") else str(result)
-        except Exception:
-            summary = str(result)
+            from main_hpc_lc_patch import build_base_index as _bidx
+            from main_hpc import unpack_params as _unpack
+            idx    = _bidx(spec)
+            blocks = _unpack(params, spec)
 
-        return {"result": result, "summary": str(summary)}
+            coef_rows = []
+            # Fixed params (exclude intercept placeholder)
+            fn = list(spec.fixed_names)
+            bf = np.array(blocks["beta_f"])
+            for k, name in enumerate(fn):
+                coef_rows.append({
+                    "Parameter": VARIABLE_LABELS.get(name.replace("_Z","").replace("_log_aadt",""),
+                                                      name.replace("__INTERCEPT__","Intercept")),
+                    "Type": "Fixed",
+                    "Mean": round(float(bf[k]), 5),
+                    "SD": "",
+                })
+            # Random means + SDs
+            if spec.Kr_ind > 0 and blocks.get("mean_ind") is not None:
+                means = np.array(blocks["mean_ind"])
+                sds   = np.abs(np.array(blocks["sd_ind"]))
+                for j, rname in enumerate(spec.random_ind_names):
+                    coef_rows.append({
+                        "Parameter": VARIABLE_LABELS.get(
+                            rname.replace("_Z",""), rname) + " (random)",
+                        "Type": "Random",
+                        "Mean": round(float(means[j]), 5),
+                        "SD":   round(float(sds[j]),   5),
+                    })
+            # Dispersion
+            if blocks.get("alpha") is not None:
+                import jax
+                coef_rows.append({
+                    "Parameter": "NB2 Dispersion (alpha)",
+                    "Type": "Fixed",
+                    "Mean": round(float(jax.nn.softplus(blocks["alpha"])), 5),
+                    "SD": "",
+                })
 
-    except Exception as exc:
-        print(f"[WARNING] JAX random-parameters refit failed: {exc}")
+            coef_df    = pd.DataFrame(coef_rows)
+            coef_str   = coef_df.to_string(index=False)
+            summary_d  = fit.get("summary", {})
+            ll  = summary_d.get("loglik",  float("nan")) if isinstance(summary_d, dict) else float("nan")
+            bic = summary_d.get("bic",     float("nan")) if isinstance(summary_d, dict) else float("nan")
+        except Exception as exc:
+            coef_str = f"(coefficient extraction failed: {exc})"
+            ll = bic = float("nan")
+            coef_df  = pd.DataFrame()
+
+        return {
+            "fit":      fit,
+            "summary":  str(fit.get("summary", {})),
+            "coef_str": coef_str,
+            "coef_df":  coef_df,
+            "loglik":   ll,
+            "bic":      bic,
+        }
+
+    except Exception:
         return None
+
+
+def _print_readable_model(
+    fitted: FittedModel,
+    scaler_stats: dict[str, tuple[float, float]],
+    binary_vars: set[str],
+    save_path: Path | None = None,
+) -> None:
+    """
+    Print (and optionally save) a plain-English model summary with:
+      - the full variable name beside each coefficient
+      - the original-scale effect (un-standardised)
+      - the implied CMF at median AADT for a 1-unit or 1-SD change
+    """
+    params = pd.Series(fitted.result.params)
+    lines: list[str] = []
+
+    w = 70
+    lines.append("=" * w)
+    lines.append("  FINAL HIERARCHICAL CMF MODEL — READABLE SUMMARY")
+    lines.append("=" * w)
+    lines.append("")
+    lines.append("  Model: log(crashes) = Intercept + b_AADT·log(AADT)")
+    lines.append("       + sum [Upper terms: direct effect on crash rate]")
+    lines.append("       + sum [Lower terms: modify AADT elasticity]")
+    lines.append("       + log(segment length)  [exposure offset]")
+    lines.append("")
+
+    # ── Core ──────────────────────────────────────────────────────────────
+    lines.append("  CORE PARAMETERS")
+    lines.append("  " + "-" * (w - 2))
+    for pname in ["const", "log_aadt"]:
+        if pname in params.index:
+            lbl = "Intercept" if pname == "const" else "log(AADT) elasticity"
+            lines.append(f"  {lbl:<45}  {params[pname]:>+9.4f}")
+    lines.append("")
+
+    # ── Upper terms ────────────────────────────────────────────────────────
+    upper_rows = [(n, v) for n, v in params.items() if str(n).startswith("upper::")]
+    if upper_rows:
+        lines.append("  UPPER-LEVEL TERMS  (direct effect — AADT-independent)")
+        lines.append(f"  {'Variable':<45}  {'Coef':>9}  {'Orig scale':>11}  {'CMF (1-unit)':>12}")
+        lines.append("  " + "-" * (w - 2))
+        for pname, coef in upper_rows:
+            raw = pname.replace("upper::", "")
+            is_std = raw.endswith("_Z")
+            base_var = raw[:-2] if is_std else raw
+            lbl = _label(base_var)
+            sd = scaler_stats.get(base_var, (0.0, 1.0))[1]
+            coef_orig = float(coef) / sd if is_std and sd > 0 else float(coef)
+            cmf = float(np.exp(coef_orig))
+            tag = " (per SD)" if is_std else ""
+            lines.append(
+                f"  {lbl:<45}  {coef:>+9.4f}  {coef_orig:>+11.4f}{tag}  CMF={cmf:>7.4f}"
+            )
+        lines.append("")
+
+    # ── Lower terms ────────────────────────────────────────────────────────
+    lower_rows = [(n, v) for n, v in params.items()
+                  if str(n).startswith("lower::") and str(n).endswith("*log_aadt")]
+
+    # Extract the base AADT elasticity for elasticity range display
+    beta_aadt = float(params.get("log_aadt", params.get("log(AADT)", 0.0)))
+
+    if lower_rows:
+        lines.append("  LOWER-LEVEL TERMS  (modify AADT elasticity — x × log(AADT) interaction)")
+        lines.append("")
+        lines.append("  These do NOT affect the baseline crash rate directly.  They shift")
+        lines.append("  how steeply crash risk scales with AADT:  a negative coefficient means")
+        lines.append("  segments with high values of that variable are LESS sensitive to AADT.")
+        lines.append("")
+        lines.append(f"  {'Variable':<45}  {'Coef':>9}  {'Interpretation'}")
+        lines.append("  " + "-" * (w - 2))
+        for pname, coef in lower_rows:
+            raw = pname.replace("lower::", "").replace("*log_aadt", "")
+            is_std = raw.endswith("_Z")
+            base_var = raw[:-2] if is_std else raw
+            lbl = _label(base_var)
+            sd = scaler_stats.get(base_var, (0.0, 1.0))[1]
+            coef_orig = float(coef) / sd if is_std and sd > 0 else float(coef)
+            direction = ("lower" if float(coef) < 0
+                         else "higher") + " AADT sensitivity"
+            lines.append(
+                f"  {lbl:<45}  {coef:>+9.4f}  => {direction}"
+            )
+        lines.append("")
+        lines.append(f"  Base AADT elasticity (log_aadt coeff): {beta_aadt:+.4f}")
+        lines.append("  Local elasticity = base + sum(lower_coeff_i * variable_i_std)")
+        lines.append("  Positive elasticity for all segments = AADT monotonicity holds.")
+        lines.append("")
+
+    # ── FC note ────────────────────────────────────────────────────────────
+    if any("FC" in str(n) for n in params.index):
+        lines.append("  NOTE — Functional Classification (FC) coding:")
+        for code, desc in FC_LABELS.items():
+            lines.append(f"    FC = {code}  →  {desc}")
+        lines.append("")
+
+    lines.append("=" * w)
+    text = "\n".join(lines)
+    print(text)
+    if save_path is not None:
+        save_path.write_text(text, encoding="utf-8")
+
+
+def _fit_benchmark(
+    df_tv: pd.DataFrame,
+    df_test: pd.DataFrame,
+    y_col: str,
+    aadt_col: str,
+    offset_col: str | None,
+    family: str,
+) -> dict[str, Any]:
+    """
+    Fit the simplest possible SPF (Safety Performance Function):
+        log(mu) = alpha + beta_AADT * log(AADT) + offset
+    No geometry, weather, or interaction terms.
+    Returns a dict of metrics on both train+val and test splits.
+    """
+    bench_fit = _fit_model(
+        df_tv,
+        aadt_col   = aadt_col,
+        y_col      = y_col,
+        upper_vars = [],
+        lower_vars = [],
+        family     = family,
+        offset_col = offset_col,
+    )
+    if bench_fit is None:
+        return {}
+
+    y_tv   = pd.to_numeric(df_tv[y_col],   errors="coerce").to_numpy(float)
+    y_test = pd.to_numeric(df_test[y_col], errors="coerce").to_numpy(float)
+
+    pred_tv   = _predict(df_tv,   bench_fit)
+    pred_test = _predict(df_test, bench_fit)
+
+    m_tv   = _metrics(y_tv,   pred_tv)
+    m_test = _metrics(y_test, pred_test)
+
+    return {
+        "family":           family,
+        "benchmark_model":  "Intercept + log(AADT) + offset only",
+        "tv_ll":            float(-getattr(bench_fit.result, "aic", np.nan) / 2 + 1) if hasattr(bench_fit.result, "aic") else float("nan"),
+        "tv_bic":           float(getattr(bench_fit.result, "bic", np.nan)),
+        "tv_aic":           float(getattr(bench_fit.result, "aic", np.nan)),
+        "tv_rmse":          m_tv["rmse"],
+        "tv_poisson_dev":   _poisson_deviance(y_tv, pred_tv),
+        "test_rmse":        m_test["rmse"],
+        "test_poisson_dev": _poisson_deviance(y_test, pred_test),
+        "test_r2":          m_test["r2"],
+        "fitted":           bench_fit,
+    }
 
 
 def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tuple[list[str], list[str]]:
     if {"FREQ", "LENGTH", "AADT", "CURVES"}.issubset(df.columns):
         # Expanded core_upper: all relevant road geometry and traffic variables
         core_upper = [
-            "LENGTH",
-            "INCLANES",
-            "DECLANES",
+            # LENGTH intentionally excluded — it is the exposure offset, not a predictor
+            # INCLANES/DECLANES replaced by composite LANES (total lanes both directions)
+            "LANES",
             "WIDTH",
             "MIMEDSH",
             "MXMEDSH",
@@ -1885,7 +2359,7 @@ def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tupl
             "ACCESS",
             "MEDWIDTH",
             "FRICTION",
-            "ADTLANE",
+            # ADTLANE excluded — collinear with AADT / lane count
             "SLOPE",
             "AVEPRE",
             "AVESNOW",
@@ -1898,8 +2372,7 @@ def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tupl
         core_lower = [
             "SPEED",
             "CURVES",
-            "INCLANES",
-            "DECLANES",
+            "LANES",       # replaces INCLANES / DECLANES
             "FRICTION",
             "SLOPE",
             "AVEPRE",
@@ -1912,7 +2385,7 @@ def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tupl
             "LNAADT",
         ]
         expanded_only_lower: list[str] = [
-            "LENGTH",
+            # LENGTH excluded — it is the exposure offset
             "WIDTH",
             "MEDWIDTH",
             "MINRAD",
@@ -1921,7 +2394,8 @@ def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tupl
             "ACCESS",
             "PEAKHR",
             "URB",
-            "ADTLANE",
+            # ADTLANE excluded — collinear with AADT and lane count; causes
+            # instability and multicollinearity in the hierarchical CMF model.
         ]
     else:
         core_upper = [
@@ -1979,6 +2453,413 @@ def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tupl
     return upper, lower
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Static PNG generators (for PPTX / offline use — parallel to Plotly HTMLs)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _save_convergence_png(path: Path, history_df: pd.DataFrame, dataset_label: str) -> None:
+    """Matplotlib version of the convergence plot for embedding in PPTX."""
+    df = history_df.copy()
+    n  = len(df)
+    iters     = list(range(1, n + 1))
+    bic_vals  = df["BIC"].tolist()
+    val_dev   = df["Val Poisson Dev"].tolist()
+    mono_ok   = [str(v).lower() == "yes" for v in df.get("Monotonic AADT OK", ["yes"] * n)]
+    colors    = ["#2a7f4f" if ok else "#9e9e9e" for ok in mono_ok]
+
+    run_min_bic = [min(bic_vals[: i + 1]) for i in range(n)]
+    run_min_dev = [min(val_dev[: i + 1]) for i in range(n)]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5), dpi=150)
+
+    ax1.scatter(iters, bic_vals, c=colors, s=22, alpha=0.65, zorder=3)
+    ax1.plot(iters, run_min_bic, color="#0a6c74", lw=2.5, label="Running min")
+    ax1.set_title("BIC over Search Iterations", fontsize=11, fontweight="bold")
+    ax1.set_xlabel("Iteration"); ax1.set_ylabel("BIC")
+    ax1.legend(fontsize=8); ax1.grid(alpha=0.2)
+
+    ax2.scatter(iters, val_dev, c=colors, s=22, alpha=0.65, zorder=3,
+                label="Green = monotonic AADT")
+    ax2.plot(iters, run_min_dev, color="#d96f32", lw=2.5, label="Running min")
+    ax2.set_title("Validation Deviance over Iterations", fontsize=11, fontweight="bold")
+    ax2.set_xlabel("Iteration"); ax2.set_ylabel("Val Poisson Deviance")
+    ax2.legend(fontsize=8); ax2.grid(alpha=0.2)
+
+    fig.suptitle(f"{dataset_label} — Search Convergence", fontsize=12, y=1.01)
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _save_obs_pred_aadt_png(
+    path: Path,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    aadt: np.ndarray,
+    title: str,
+    split_labels: list[str],
+) -> None:
+    """Matplotlib AADT obs/pred plot for PPTX."""
+    y, p, a  = (np.asarray(x, float) for x in (y_true, y_pred, aadt))
+    p_clip   = np.clip(p, 0, np.quantile(p, 0.99))
+    labels   = list(split_labels)
+
+    log_a = np.log(np.clip(a, 1.0, None))   # compute before loop
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), dpi=150)
+    color_map = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32",
+                 "test": "#7a3c8c", "all": "#1f5f8b"}
+
+    for lbl in sorted(set(labels)):
+        mask = np.array([l == lbl for l in labels])
+        ax1.scatter(log_a[mask], y[mask], s=18, alpha=0.55,
+                    color=color_map.get(lbl, "#4a6785"), label=f"Observed ({lbl})", zorder=3)
+    try:
+        coeffs      = np.polyfit(log_a, p_clip, deg=3)
+        log_a_fine  = np.linspace(log_a.min(), log_a.max(), 200)
+        p_fine      = np.maximum(np.polyval(coeffs, log_a_fine), 0.0)
+    except Exception:
+        si         = np.argsort(log_a)
+        log_a_fine = log_a[si]
+        p_fine     = p_clip[si]
+    ax1.plot(log_a_fine, p_fine, color="#d96f32", lw=2.5, label="Predicted (polynomial smooth)")
+    ax1.set_xlabel("log(AADT)")
+    ax1.set_ylabel("Crashes"); ax1.set_title(title, fontsize=11, fontweight="bold")
+    ax1.legend(fontsize=8); ax1.grid(alpha=0.2)
+
+    resid        = (p - y) / np.maximum(y, 1.0)
+    resid_colors = ["#d96f32" if r > 0 else "#0a6c74" for r in resid]
+    ax2.scatter(log_a, resid, c=resid_colors, s=14, alpha=0.55)
+    ax2.axhline(0, color="#333", lw=1.5)
+    ax2.set_xlabel("log(AADT)")
+    ax2.set_ylabel("Norm. Residual"); ax2.set_title("Residuals = (pred-obs)/max(obs,1)", fontsize=10)
+    ax2.grid(alpha=0.2)
+
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _save_model_comparison_html(
+    path: Path,
+    y_all: np.ndarray,
+    aadt_all: np.ndarray,
+    pred_benchmark: np.ndarray,
+    pred_hierarchical: np.ndarray,
+    split_labels: list[str],
+    title: str,
+) -> None:
+    """
+    Single Plotly HTML showing observed crashes, benchmark predictions, and
+    hierarchical model predictions — all vs AADT on the same axes.
+
+    Top panel   : observed points + both smooth predicted curves
+    Bottom panel: per-model normalised residuals side by side
+    """
+    try:
+        y = np.asarray(y_all, float)
+        a = np.asarray(aadt_all, float)
+        pb = np.clip(np.asarray(pred_benchmark, float),    0, np.quantile(pred_benchmark, 0.99))
+        ph = np.clip(np.asarray(pred_hierarchical, float), 0, np.quantile(pred_hierarchical, 0.99))
+        labels = list(split_labels)
+        n      = len(y)
+        log_a  = np.log(np.clip(a, 1.0, None))
+
+        def _psmooth(loga, pred, deg=3):
+            try:
+                c  = np.polyfit(loga, pred, deg=deg)
+                xf = np.linspace(loga.min(), loga.max(), 200)
+                return xf.tolist(), np.maximum(np.polyval(c, xf), 0.0).tolist()
+            except Exception:
+                si = np.argsort(loga)
+                return loga[si].tolist(), pred[si].tolist()
+
+        sla_b, sp_b = _psmooth(log_a, pb)
+        sla_h, sp_h = _psmooth(log_a, ph)
+        rb = (pb - y) / np.maximum(y, 1.0)
+        rh = (ph - y) / np.maximum(y, 1.0)
+        y_max = float(max(y.max(), pb.max(), ph.max())) * 1.05
+
+        color_map  = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32",
+                      "test": "#7a3c8c", "all": "#4a6785"}
+        obs_colors = [color_map.get(str(l).lower(), "#4a6785") for l in labels]
+
+        hover_b = [f"log(AADT):{log_a[i]:.3f}<br>Obs:{y[i]:.0f}<br>Benchmark:{pb[i]:.2f}<br>Split:{labels[i]}" for i in range(n)]
+        hover_h = [f"log(AADT):{log_a[i]:.3f}<br>Obs:{y[i]:.0f}<br>Hierarchical:{ph[i]:.2f}<br>Split:{labels[i]}" for i in range(n)]
+
+        payload = {
+            "log_aadt": log_a.tolist(), "y": y.tolist(),
+            "obs_colors": obs_colors,
+            "hover_b": hover_b, "hover_h": hover_h,
+            "sla_b": sla_b, "sp_b": sp_b,
+            "sla_h": sla_h, "sp_h": sp_h,
+            "rb": rb.tolist(), "rh": rh.tolist(),
+            "y_max": y_max, "title": title,
+        }
+
+        html = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>{title}</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; padding:0; width:100%; height:100%;
+    background:#f8f6f2; font-family:'Segoe UI',sans-serif; overflow:hidden; }}
+  .hdr {{ background:linear-gradient(120deg,#0a6c74,#18435a);
+    color:#fff; padding:8px 18px 4px; }}
+  .hdr h2 {{ margin:0; font-size:1.0rem; white-space:nowrap; }}
+  .hdr p  {{ margin:2px 0 0; font-size:0.78rem; color:rgba(255,255,255,0.85); }}
+  /* Two columns for side-by-side, two rows per column */
+  .grid {{ display:grid; grid-template-columns:1fr 1fr; grid-template-rows:58% 42%;
+    height:calc(100vh - 56px); gap:0; }}
+  .panel {{ position:relative; }}
+  .label {{ position:absolute; top:6px; left:50%; transform:translateX(-50%);
+    background:rgba(255,255,255,0.92); padding:2px 10px; border-radius:12px;
+    font-size:0.78rem; font-weight:600; z-index:10; white-space:nowrap; }}
+  .benchmark {{ color:#1f6bb5; border:1px solid #1f6bb5; }}
+  .hierarchical {{ color:#d96f32; border:1px solid #d96f32; }}
+  #bL, #bR, #hL, #hR {{ width:100%; height:100%; }}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <h2>{title}</h2>
+  <p>Side by side: Benchmark (left) vs Hierarchical CMF (right) — x axis = log(AADT)</p>
+</div>
+<div class="grid">
+  <div class="panel"><div class="label benchmark">Benchmark — AADT-only SPF</div><div id="bL"></div></div>
+  <div class="panel"><div class="label hierarchical">Hierarchical CMF model</div><div id="hL"></div></div>
+  <div id="bR"></div>
+  <div id="hR"></div>
+</div>
+<script>
+const D = {json.dumps(payload)};
+const BASE = {{
+  template:'plotly_white', paper_bgcolor:'#f8f6f2', plot_bgcolor:'#fff',
+  font:{{size:10, color:'#152238'}},
+  margin:{{l:54, r:8, t:28, b:38}},
+  showlegend:false,
+  xaxis:{{title:'log(AADT)', gridcolor:'#eee', zeroline:false}},
+}};
+const yax_top = {{title:'Crashes', gridcolor:'#eee', range:[0, D.y_max]}};
+const yax_bot = {{title:'Norm. residual', gridcolor:'#eee', zeroline:false}};
+const xr = [Math.min(...D.log_aadt), Math.max(...D.log_aadt)];
+
+// Benchmark top
+Plotly.newPlot('bL', [
+  {{x:D.log_aadt, y:D.y, type:'scatter', mode:'markers', name:'Observed',
+    marker:{{color:D.obs_colors, size:6, opacity:0.6}},
+    hovertext:D.hover_b, hoverinfo:'text'}},
+  {{x:D.sla_b, y:D.sp_b, mode:'lines',
+    line:{{color:'#1f6bb5', width:3}}, name:'Benchmark predicted'}},
+], {{...BASE, title:{{text:'Observed vs Benchmark',font:{{size:11}}}}, yaxis:yax_top}},
+{{responsive:true, displayModeBar:false}});
+
+// Hierarchical top
+Plotly.newPlot('hL', [
+  {{x:D.log_aadt, y:D.y, type:'scatter', mode:'markers', name:'Observed',
+    marker:{{color:D.obs_colors, size:6, opacity:0.6}},
+    hovertext:D.hover_h, hoverinfo:'text'}},
+  {{x:D.sla_h, y:D.sp_h, mode:'lines',
+    line:{{color:'#d96f32', width:3}}, name:'Hierarchical predicted'}},
+], {{...BASE, title:{{text:'Observed vs Hierarchical CMF',font:{{size:11}}}}, yaxis:yax_top}},
+{{responsive:true, displayModeBar:false}});
+
+// Benchmark residuals
+Plotly.newPlot('bR', [
+  {{x:D.log_aadt, y:D.rb, mode:'markers',
+    marker:{{color:D.rb.map(r=>r>0?'#1f6bb5':'#93c5e8'), size:5, opacity:0.65}},
+    hovertemplate:'log(AADT) %{{x:.3f}}<br>Resid: %{{y:.2f}}<extra></extra>'}},
+  {{x:xr, y:[0,0], mode:'lines', line:{{color:'#999', width:1.2}}, hoverinfo:'skip'}},
+], {{...BASE, title:{{text:'Benchmark residuals',font:{{size:10}}}}, yaxis:yax_bot}},
+{{responsive:true, displayModeBar:false}});
+
+// Hierarchical residuals
+Plotly.newPlot('hR', [
+  {{x:D.log_aadt, y:D.rh, mode:'markers',
+    marker:{{color:D.rh.map(r=>r>0?'#d96f32':'#0a6c74'), size:5, opacity:0.65}},
+    hovertemplate:'log(AADT) %{{x:.3f}}<br>Resid: %{{y:.2f}}<extra></extra>'}},
+  {{x:xr, y:[0,0], mode:'lines', line:{{color:'#999', width:1.2}}, hoverinfo:'skip'}},
+], {{...BASE, title:{{text:'Hierarchical residuals',font:{{size:10}}}}, yaxis:yax_bot}},
+{{responsive:true, displayModeBar:false}});
+</script>
+</body>
+</html>"""
+        path.write_text(html, encoding="utf-8")
+    except Exception as exc:
+        print(f"[WARNING] Could not save model comparison HTML: {exc}")
+
+
+def _save_model_comparison_png(
+    path: Path,
+    y_all: np.ndarray,
+    aadt_all: np.ndarray,
+    pred_benchmark: np.ndarray,
+    pred_hierarchical: np.ndarray,
+    split_labels: list[str],
+    title: str,
+) -> None:
+    """Matplotlib version of the comparison plot for PPTX."""
+    try:
+        y  = np.asarray(y_all, float)
+        a  = np.asarray(aadt_all, float)
+        pb = np.clip(np.asarray(pred_benchmark, float),    0, np.quantile(pred_benchmark, 0.99))
+        ph = np.clip(np.asarray(pred_hierarchical, float), 0, np.quantile(pred_hierarchical, 0.99))
+
+        log_a = np.log(np.clip(a, 1.0, None))   # log(AADT) as x
+
+        def _smooth_log(log_aadt, pred):
+            """Return (log_aadt_fine, pred_fine) on log(AADT) linear axis."""
+            try:
+                coeffs     = np.polyfit(log_aadt, pred, deg=3)
+                la_fine    = np.linspace(log_aadt.min(), log_aadt.max(), 200)
+                p_fine     = np.maximum(np.polyval(coeffs, la_fine), 0.0)
+                return la_fine, p_fine
+            except Exception:
+                si = np.argsort(log_aadt)
+                return log_aadt[si], pred[si]
+
+        sla_b, sp_b = _smooth_log(log_a, pb)
+        sla_h, sp_h = _smooth_log(log_a, ph)
+
+        color_map = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32",
+                     "test": "#7a3c8c", "all": "#4a6785"}
+        obs_c = [color_map.get(str(l).lower(), "#4a6785") for l in split_labels]
+
+        rb     = (pb - y) / np.maximum(y, 1.0)
+        rh     = (ph - y) / np.maximum(y, 1.0)
+        y_max  = max(y.max(), pb.max(), ph.max()) * 1.05
+
+        # 2×2 grid: top-left=benchmark obs/pred, top-right=hierarchical obs/pred,
+        #           bottom-left=benchmark residuals, bottom-right=hierarchical residuals
+        fig, axes = plt.subplots(2, 2, figsize=(12, 7), dpi=150)
+        (ax_bl, ax_hr), (ax_br, ax_hrr) = axes
+
+        ax_bl.scatter(log_a, y, c=obs_c, s=14, alpha=0.55, zorder=3, label="Observed")
+        ax_bl.plot(sla_b, sp_b, "-", color="#1f6bb5", lw=2.5, label="Predicted")
+        ax_bl.set_ylim(0, y_max)
+        ax_bl.set_xlabel("log(AADT)"); ax_bl.set_ylabel("Crashes")
+        ax_bl.set_title("Benchmark: AADT-only SPF", fontsize=10, fontweight="bold", color="#1f6bb5")
+        ax_bl.legend(fontsize=7); ax_bl.grid(alpha=0.18)
+
+        ax_hr.scatter(log_a, y, c=obs_c, s=14, alpha=0.55, zorder=3, label="Observed")
+        ax_hr.plot(sla_h, sp_h, "-", color="#d96f32", lw=2.5, label="Predicted")
+        ax_hr.set_ylim(0, y_max)
+        ax_hr.set_xlabel("log(AADT)"); ax_hr.set_ylabel("Crashes")
+        ax_hr.set_title("Hierarchical CMF model", fontsize=10, fontweight="bold", color="#d96f32")
+        ax_hr.legend(fontsize=7); ax_hr.grid(alpha=0.18)
+
+        ax_br.scatter(log_a, rb, c=["#1f6bb5" if r > 0 else "#93c5e8" for r in rb],
+                      s=12, alpha=0.55)
+        ax_br.axhline(0, color="#555", lw=1.2)
+        ax_br.set_xlabel("log(AADT)"); ax_br.set_ylabel("(pred-obs)/max(obs,1)")
+        ax_br.set_title("Benchmark residuals", fontsize=9); ax_br.grid(alpha=0.18)
+
+        ax_hrr.scatter(log_a, rh, c=["#d96f32" if r > 0 else "#0a6c74" for r in rh],
+                       s=12, alpha=0.55)
+        ax_hrr.axhline(0, color="#555", lw=1.2)
+        ax_hrr.set_xlabel("log(AADT)"); ax_hrr.set_ylabel("(pred-obs)/max(obs,1)")
+        ax_hrr.set_title("Hierarchical residuals", fontsize=9); ax_hrr.grid(alpha=0.18)
+
+        fig.suptitle(title, fontsize=11, fontweight="bold", y=1.01)
+        fig.tight_layout()
+        fig.savefig(path, bbox_inches="tight")
+        plt.close(fig)
+    except Exception as exc:
+        print(f"[WARNING] Could not save comparison PNG: {exc}")
+
+
+def _save_readable_coef_csv(
+    path: Path,
+    fitted: FittedModel,
+    scaler_stats: dict[str, tuple[float, float]],
+    binary_vars: set[str],
+) -> pd.DataFrame:
+    """Save a human-readable coefficient CSV with full variable names and CMF."""
+    params = pd.Series(fitted.result.params)
+    rows: list[dict] = []
+
+    for pname, coef in params.items():
+        pname = str(pname)
+        if pname == "const":
+            rows.append({"Component": "Core", "Variable": "Intercept",
+                         "Full Name": "Intercept",
+                         "Coefficient": round(float(coef), 5), "CMF": ""})
+        elif pname == "log_aadt":
+            rows.append({"Component": "Core", "Variable": "log(AADT)",
+                         "Full Name": "log(AADT) Elasticity",
+                         "Coefficient": round(float(coef), 5), "CMF": ""})
+        elif pname.startswith("upper::"):
+            raw     = pname.replace("upper::", "")
+            is_std  = raw.endswith("_Z")
+            base    = raw[:-2] if is_std else raw
+            sd      = scaler_stats.get(base, (0.0, 1.0))[1]
+            orig    = float(coef) / sd if is_std and sd > 0 else float(coef)
+            rows.append({"Component": "Upper (AADT-independent)",
+                         "Variable": base, "Full Name": _label(base),
+                         "Coefficient": round(float(coef), 5),
+                         "CMF": round(float(np.exp(orig)), 4)})
+        elif pname.startswith("lower::") and pname.endswith("*log_aadt"):
+            raw    = pname.replace("lower::", "").replace("*log_aadt", "")
+            is_std = raw.endswith("_Z")
+            base   = raw[:-2] if is_std else raw
+            sd     = scaler_stats.get(base, (0.0, 1.0))[1]
+            orig   = float(coef) / sd if is_std and sd > 0 else float(coef)
+            rows.append({"Component": "Lower (AADT interaction)",
+                         "Variable": base, "Full Name": _label(base),
+                         "Coefficient": round(float(coef), 5),
+                         "CMF": "varies with AADT"})
+
+    df = pd.DataFrame(rows)
+    path.write_text(df.to_csv(index=False), encoding="utf-8")
+
+    # Write Quarto-compatible pipe tables (no tabulate needed) ─────────────
+    # Split into upper and lower tables to keep each slide uncluttered.
+
+    def _pipe_table(sub: pd.DataFrame, cols: list[str]) -> str:
+        """Build a plain-pipe Pandoc markdown table without tabulate."""
+        sub = sub[cols].copy()
+        # Format numeric columns
+        for c in cols:
+            sub[c] = sub[c].apply(
+                lambda x: (f"{x:+.4f}" if isinstance(x, float) and np.isfinite(x)
+                           else str(x) if not (isinstance(x, float)) else str(x))
+            )
+        widths = {c: max(len(c), sub[c].str.len().max()) for c in cols}
+        header  = "| " + " | ".join(c.ljust(widths[c]) for c in cols) + " |"
+        divider = "| " + " | ".join("-" * widths[c] for c in cols) + " |"
+        data_rows = [
+            "| " + " | ".join(str(row[c]).ljust(widths[c]) for c in cols) + " |"
+            for _, row in sub.iterrows()
+        ]
+        return "\n".join([header, divider] + data_rows)
+
+    upper_df = df[df["Component"].str.startswith("Core") |
+                  df["Component"].str.startswith("Upper")].copy()
+    upper_df["CMF"] = upper_df["CMF"].apply(
+        lambda x: f"{x:.4f}" if isinstance(x, float) else str(x)
+    )
+
+    lower_df = df[df["Component"].str.startswith("Lower")].copy()
+    lower_df["CMF"] = lower_df["CMF"].apply(
+        lambda x: f"{x:.4f}" if isinstance(x, float) else str(x)
+    )
+
+    upper_cols = ["Variable", "Full Name", "Coefficient", "CMF"]
+    lower_cols = ["Variable", "Full Name", "Coefficient"]
+
+    (path.parent / "readable_coef_upper.md").write_text(
+        _pipe_table(upper_df, upper_cols), encoding="utf-8"
+    )
+    (path.parent / "readable_coef_lower.md").write_text(
+        _pipe_table(lower_df, lower_cols), encoding="utf-8"
+    )
+
+    return df
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Set up and run a hierarchical CMF experiment with validation outputs and an interactive AADT dashboard."
@@ -1989,15 +2870,23 @@ def main() -> None:
     parser.add_argument("--aadt-col", default="AADT", help="AADT traffic-response column.")
     parser.add_argument("--offset-col", default="OFFSET", help="Offset column name to use if available.")
     parser.add_argument("--disable-offset", action="store_true", help="Disable offset during fitting.")
-    parser.add_argument("--family", choices=["nb", "poisson"], default="poisson", help="Count family for fitting.")
+    parser.add_argument("--family", choices=["nb", "poisson"], default="nb",
+                        help="Count family for final refit (default: nb).")
+    parser.add_argument("--families", default=None,
+                        help="Comma-separated families to search over, or 'both'/'all' "
+                             "for nb+poisson. Overrides --family for the search phase. "
+                             "Example: --families both  or  --families nb,poisson")
 
     parser.add_argument("--train-frac", type=float, default=0.60, help="Training split fraction.")
     parser.add_argument("--val-frac", type=float, default=0.20, help="Validation split fraction.")
     parser.add_argument("--seed", type=int, default=17, help="Random seed.")
 
-    parser.add_argument("--search-iter", type=int, default=120, help="Random search iterations.")
-    parser.add_argument("--max-upper-terms", type=int, default=6, help="Max upper-level terms per candidate.")
-    parser.add_argument("--max-lower-terms", type=int, default=5, help="Max lower-level terms per candidate.")
+    parser.add_argument("--search-iter", type=int, default=300,
+                        help="Random search iterations (default 300 — more = better BIC exploration).")
+    parser.add_argument("--max-upper-terms", type=int, default=6,
+                        help="Max upper-level terms per candidate (default 6).")
+    parser.add_argument("--max-lower-terms", type=int, default=4,
+                        help="Max lower-level terms per candidate (default 4).")
     parser.add_argument(
         "--candidate-profile",
         choices=["core", "expanded"],
@@ -2063,14 +2952,23 @@ def main() -> None:
 
     offset_col = None if args.disable_offset else (args.offset_col if args.offset_col in df_train.columns else None)
 
-    best_fit_train, search_history = _random_search(
+    # Build family list from --families argument (e.g. "nb", "poisson", "both")
+    _fam_arg = getattr(args, "families", args.family)
+    if _fam_arg in ("both", "all"):
+        search_families = ["nb", "poisson"]
+    elif "," in str(_fam_arg):
+        search_families = [f.strip() for f in str(_fam_arg).split(",")]
+    else:
+        search_families = [str(_fam_arg)]
+
+    best_fit_train, search_history, search_history_ordered, top_k_fits = _random_search(
         df_train=df_train,
         df_val=df_val,
         aadt_col=args.aadt_col,
         y_col=args.y_col,
         upper_candidates=upper_model_vars,
         lower_candidates=lower_model_vars,
-        family=args.family,
+        families=search_families,
         offset_col=offset_col,
         search_iter=int(args.search_iter),
         max_upper_terms=int(args.max_upper_terms),
@@ -2137,6 +3035,33 @@ def main() -> None:
             {"Split": "test (held out)", **metrics_test},
         ]
     )
+
+    # ── Benchmark comparison ──────────────────────────────────────────────
+    bench = _fit_benchmark(
+        df_tv=df_trainval, df_test=df_test_final,
+        y_col=args.y_col, aadt_col=args.aadt_col,
+        offset_col=offset_col, family=args.family,
+    )
+    bench_compare_df = pd.DataFrame([
+        {
+            "Model":           "Benchmark (AADT-only SPF)",
+            "BIC":             round(bench.get("tv_bic", float("nan")), 2),
+            "AIC":             round(bench.get("tv_aic", float("nan")), 2),
+            "Test RMSE":       round(bench.get("test_rmse", float("nan")), 4),
+            "Test Poisson Dev":round(bench.get("test_poisson_dev", float("nan")), 2),
+            "Test R2":         round(bench.get("test_r2", float("nan")), 4),
+        },
+        {
+            "Model":           "Hierarchical CMF (selected)",
+            "BIC":             round(float(getattr(final_fit.result, "bic", np.nan)), 2),
+            "AIC":             round(float(getattr(final_fit.result, "aic", np.nan)), 2),
+            "Test RMSE":       round(metrics_test["rmse"], 4),
+            "Test Poisson Dev":round(_poisson_deviance(y_test, pred_test), 2),
+            "Test R2":         round(metrics_test["r2"], 4),
+        },
+    ])
+    print("\n  BENCHMARK VS HIERARCHICAL CMF:")
+    print(bench_compare_df.to_string(index=False))
 
     settings_df = pd.DataFrame(
         [
@@ -2232,55 +3157,182 @@ def main() -> None:
 
     # --- New outputs ---
 
-    # JAX random-parameters refit
-    jax_result = _jax_random_params_refit(
-        df_trainval_raw=df_trainval_raw,
-        best_upper_raw=selected_upper_raw,
-        best_lower_raw=selected_lower_raw,
-        y_col=args.y_col,
-        aadt_col=args.aadt_col,
-        offset_col=offset_col,
-        scaler_stats=scaler_trainval,
-        binary_vars=binary_vars,
-    )
+    # ── Random-parameters sweep over top-K specs ─────────────────────────
+    # For each of the top-K fixed-effects models found by the search, attempt
+    # a random-params NB2 refit.  The spec whose random-params BIC is lowest
+    # becomes the "promoted" final model (reported instead of fixed-effects).
+    best_rp_result: dict | None = None
+    best_rp_bic = float("nan")
+
+    print(f"  Running random-params sweep on {len(top_k_fits)} top candidates ...")
+    for _rp_candidate in top_k_fits:
+        _cand_upper = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.upper_vars})
+        _cand_lower = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.lower_vars})
+        _rp = _jax_random_params_refit(
+            df_trainval_raw=df_trainval_raw,
+            best_upper_raw=_cand_upper,
+            best_lower_raw=_cand_lower,
+            y_col=args.y_col,
+            aadt_col=args.aadt_col,
+            offset_col=offset_col,
+            scaler_stats=scaler_trainval,
+            binary_vars=binary_vars,
+        )
+        if _rp is None:
+            continue
+        _rp_bic = _rp.get("bic", float("nan"))
+        if not np.isfinite(_rp_bic):
+            continue
+        if best_rp_result is None or _rp_bic < best_rp_bic:
+            best_rp_bic    = _rp_bic
+            best_rp_result = _rp
+            # Promote the best fixed-effects candidate to match this random spec
+            selected_upper_raw = _cand_upper
+            selected_lower_raw = _cand_lower
+
+    # Use the best random-params result (from sweep) as jax_result
+    jax_result = best_rp_result
+    if jax_result is None:
+        # Fallback: try random-params on the primary selected spec
+        jax_result = _jax_random_params_refit(
+            df_trainval_raw=df_trainval_raw,
+            best_upper_raw=selected_upper_raw,
+            best_lower_raw=selected_lower_raw,
+            y_col=args.y_col,
+            aadt_col=args.aadt_col,
+            offset_col=offset_col,
+            scaler_stats=scaler_trainval,
+            binary_vars=binary_vars,
+        )
     if jax_result is not None:
         try:
-            jax_summary = {"summary": str(jax_result.get("summary", ""))}
+            coef_str = jax_result.get("coef_str", "(unavailable)")
+            rp_ll    = jax_result.get("loglik", float("nan"))
+            rp_bic   = jax_result.get("bic",    float("nan"))
+
+            print("\n" + "="*70)
+            print("  RANDOM-PARAMETERS NB2 MODEL — FINAL COEFFICIENTS")
+            print(f"  LL={rp_ll:.2f}   BIC={rp_bic:.2f}")
+            print("="*70)
+            print(coef_str)
+            print("="*70 + "\n")
+
+            rp_txt = (
+                f"Random-parameters NB2  |  LL={rp_ll:.2f}  BIC={rp_bic:.2f}\n"
+                "Fixed params (beta) + Random params (mean ± SD):\n\n"
+                + coef_str + "\n\n"
+                "Interpretation: 'Random' rows show the population mean (Mean) and\n"
+                "heterogeneity (SD) of that coefficient across road segments."
+            )
+
+            (output_dir / "random_params_note.md").write_text(rp_txt, encoding="utf-8")
             (output_dir / "random_params_summary.json").write_text(
-                json.dumps(jax_summary, indent=2), encoding="utf-8"
+                json.dumps({"summary": rp_txt, "loglik": rp_ll, "bic": rp_bic}, indent=2),
+                encoding="utf-8",
             )
             print("  random_params_summary.json written.")
+
+            # Use random-params predictions for the AADT obs/pred plot
+            rp_fit = jax_result.get("fit")
+            if rp_fit is not None:
+                rp_preds = np.asarray(rp_fit.get("predictions", [])).squeeze()
+                if rp_preds.shape == (len(df_trainval_raw),):
+                    pred_all_rp_tv = rp_preds
+                    # For full-dataset predictions, fall back to fixed-effects
+                    # (random-params builder only covers trainval)
         except Exception as exc:
             print(f"[WARNING] Could not write random_params_summary.json: {exc}")
+    else:
+        # Write a placeholder so the QMD include never fails
+        note = (
+            "**Note:** The search finds the best *fixed-effects* NB2 specification "
+            "(which variables to include and whether they enter as upper or lower terms). "
+            "After the best specification is selected, a random-parameters refit "
+            "is attempted using the MetaCount JAX engine — giving each site its own "
+            "draw of the continuous predictor coefficients, capturing unobserved "
+            "heterogeneity across road segments.\n\n"
+            "The random-parameters model (`random_params_summary.json`) was not "
+            "generated this run because the `ExperimentBuilder` dependency was not "
+            "available in the subprocess path. Run from within the package directory "
+            "for the full mixed-model refit."
+        )
+        (output_dir / "random_params_note.md").write_text(note, encoding="utf-8")
 
     # Convergence HTML (uses original iteration order from search_history)
     # Reconstruct in-order history from the sorted df by sorting on Iteration
-    convergence_df = search_history.copy()
-    _save_convergence_html(output_dir / "search_convergence.html", convergence_df, dataset_label)
-    print("  search_convergence.html written.")
+    # Pass iteration-ordered history so the convergence trace is meaningful
+    _save_convergence_html(output_dir / "search_convergence.html",
+                           search_history_ordered, dataset_label)
+    _save_convergence_png(output_dir / "search_convergence.png", search_history_ordered, dataset_label)
+    print("  search_convergence.html / .png written.")
 
-    # AADT obs/pred HTML over full dataset
+    # AADT obs/pred HTML + PNG over full dataset
     df_all_std = _apply_standardization(df, scaler_trainval)
     pred_all = _predict(df_all_std, final_fit)
     y_all = pd.to_numeric(df[args.y_col], errors="coerce").to_numpy(float)
     aadt_all = pd.to_numeric(df[args.aadt_col], errors="coerce").to_numpy(float)
 
-    # Build split labels for all rows
     split_label_arr = np.array(["test"] * len(df), dtype=object)
     split_label_arr[train_idx] = "train"
     split_label_arr[val_idx] = "val"
     split_labels_list = split_label_arr.tolist()
 
+    _aadt_title = f"{dataset_label} — Observed vs Predicted by AADT"
     _save_obs_pred_aadt_html(
         output_dir / "aadt_obs_pred.html",
-        df_all=df,
-        y_true=y_all,
-        y_pred=pred_all,
-        aadt=aadt_all,
-        title=f"{dataset_label} — Observed vs Predicted by AADT",
-        split_labels=split_labels_list,
+        df_all=df, y_true=y_all, y_pred=pred_all, aadt=aadt_all,
+        title=_aadt_title, split_labels=split_labels_list,
     )
-    print("  aadt_obs_pred.html written.")
+    _save_obs_pred_aadt_png(
+        output_dir / "aadt_obs_pred.png",
+        y_true=y_all, y_pred=pred_all, aadt=aadt_all,
+        title=_aadt_title, split_labels=split_labels_list,
+    )
+    print("  aadt_obs_pred.html / .png written.")
+
+    # Comparison plot: observed vs benchmark vs hierarchical on same axes
+    if bench and bench.get("fitted") is not None:
+        pred_bench_all = _predict(
+            _apply_standardization(df, scaler_trainval), bench["fitted"]
+        )
+        _comp_title = f"{dataset_label} — Observed vs Benchmark vs Hierarchical"
+        _save_model_comparison_html(
+            output_dir / "model_comparison.html",
+            y_all=y_all, aadt_all=aadt_all,
+            pred_benchmark=pred_bench_all,
+            pred_hierarchical=pred_all,
+            split_labels=split_labels_list,
+            title=_comp_title,
+        )
+        _save_model_comparison_png(
+            output_dir / "model_comparison.png",
+            y_all=y_all, aadt_all=aadt_all,
+            pred_benchmark=pred_bench_all,
+            pred_hierarchical=pred_all,
+            split_labels=split_labels_list,
+            title=_comp_title,
+        )
+        print("  model_comparison.html / .png written.")
+
+    # Readable coefficient CSV (human-readable names + CMF)
+    readable_coef_df = _save_readable_coef_csv(
+        output_dir / "readable_coefficients.csv", final_fit, scaler_trainval, binary_vars
+    )
+
+    # Benchmark comparison CSV + markdown include
+    bench_compare_df.to_csv(output_dir / "benchmark_comparison.csv", index=False)
+    # Build pipe-table for QMD include
+    def _pipe(df: pd.DataFrame) -> str:
+        cols   = list(df.columns)
+        widths = {c: max(len(c), df[c].astype(str).str.len().max()) for c in cols}
+        header  = "| " + " | ".join(c.ljust(widths[c]) for c in cols) + " |"
+        divider = "| " + " | ".join("-" * widths[c] for c in cols) + " |"
+        rows    = ["| " + " | ".join(str(r[c]).ljust(widths[c]) for c in cols) + " |"
+                   for _, r in df.iterrows()]
+        return "\n".join([header, divider] + rows)
+    (output_dir / "benchmark_comparison.md").write_text(
+        _pipe(bench_compare_df), encoding="utf-8"
+    )
 
     # Write tabular outputs.
     (output_dir / "search_history_full.csv").write_text(search_history.to_csv(index=False), encoding="utf-8")
@@ -2298,6 +3350,10 @@ def main() -> None:
 
     (output_dir / "coefficients_standardized_and_original.md").write_text(_to_markdown(coef_df), encoding="utf-8")
     (output_dir / "coefficients_standardized_and_original.csv").write_text(coef_df.to_csv(index=False), encoding="utf-8")
+
+    # ── Human-readable model summary printed to console and saved ──────────
+    _print_readable_model(final_fit, scaler_trainval, binary_vars,
+                          output_dir / "model_summary_readable.txt")
 
     scaler_rows = [
         {"Variable": var, "Mean (train/final)": mu, "Std (train/final)": sd}

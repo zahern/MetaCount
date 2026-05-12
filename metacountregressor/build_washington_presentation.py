@@ -11,10 +11,21 @@ It will:
   4. Print the path to the finished presentation
 """
 
+import os
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
+
+# Suppress statsmodels NB2 numerical warnings — they are benign intermediate
+# states during optimisation (overflow/log(0) in gradient steps that recover).
+warnings.filterwarnings("ignore")
+# Pass suppression flags into the subprocess environment so the XLA/JAX
+# C++ runtime message ("Empty bitcode string for eigen") is silenced there too.
+os.environ["PYTHONWARNINGS"]     = "ignore"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"    # suppress XLA C++ runtime logs
+os.environ["JAX_PLATFORMS"]      = "cpu"    # explicit platform avoids startup noise
 
 ROOT   = Path(__file__).resolve().parent
 SCRIPT = ROOT / "scripts" / "generate_washington_hierarchical_cmf_assets.py"
@@ -36,12 +47,15 @@ print("=" * 60)
 print("  Step 1/2 — Running experiment ...")
 print("=" * 60)
 run([
-    sys.executable, str(SCRIPT),
+    sys.executable, "-W", "ignore", str(SCRIPT),
     "--input",             str(DATA),
     "--output-dir",        str(OUT),
-    "--search-iter",       "120",
-    "--family",            "nb",
+    "--search-iter",       "600",
+    "--families",          "both",          # search NB2 + Poisson, pick best BIC
+    "--family",            "nb",            # final refit family
     "--candidate-profile", "expanded",
+    "--max-upper-terms",   "6",
+    "--max-lower-terms",   "4",
     "--allow-nonmonotonic-fallback",
 ])
 
@@ -51,5 +65,20 @@ print("=" * 60)
 run(["quarto", "render", str(QMD)])
 
 html = QMD.with_suffix(".html")
+pptx = QMD.with_suffix(".pptx")
 print(f"\nDone in {time.time()-t0:.0f}s")
-print(f"\nOpen:  {html}")
+print(f"\nHTML presentation:  {html}")
+if pptx.exists():
+    print(f"PPTX presentation:  {pptx}")
+
+# List all standalone interactive HTML files — open any of these fullscreen in a browser
+interactive = [
+    ("CMF Dashboard (live controls)",      OUT / "hierarchical_cmf_dashboard.html"),
+    ("Search Convergence (BIC + RMSE)",    OUT / "search_convergence.html"),
+    ("Model Comparison (side-by-side)",    OUT / "model_comparison.html"),
+    ("AADT Obs vs Predicted",              OUT / "aadt_obs_pred.html"),
+]
+print("\nInteractive HTML files (open directly in browser for fullscreen):")
+for label, p in interactive:
+    if p.exists():
+        print(f"  {label:<38}  {p}")

@@ -4,7 +4,7 @@
 | Train rows | 165 |
 | Validation rows | 55 |
 | Test rows | 55 |
-| Search iterations | 120 |
+| Search iterations | 1000 |
 | Candidate profile | expanded |
 | Family | nb |
 | AADT column | AADT |
@@ -12,7 +12,7 @@
 | Enforce AADT increase | yes |
 | Min AADT elasticity | 0.0 |
 | Allow nonmonotonic fallback | yes |
-| Upper candidate count | 35 |
-| Lower candidate count | 19 |
-| Selected upper vars | LENGTH, MIMEDSH, SLOPE |
-| Selected lower vars | ACCESS, ADTLANE, FRICTION, HISNOW, URB |
+| Upper candidate count | 32 |
+| Lower candidate count | 16 |
+| Selected upper vars | LANES, WIDTH |
+| Selected lower vars | SPEED |

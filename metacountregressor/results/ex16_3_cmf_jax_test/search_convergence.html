@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Search Convergence — Ex-16-3</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body { margin: 0; background: #0f1923; color: #e8edf2; font-family: 'Segoe UI', sans-serif; }
+  .header { padding: 18px 24px 6px; }
+  .header h2 { margin: 0; font-size: 1.3rem; color: #7fdee8; }
+  .header p { margin: 4px 0 0; font-size: 0.9rem; color: #8fa3b3; }
+  .legend-row { display: flex; gap: 18px; padding: 0 24px 10px; font-size: 0.82rem; color: #8fa3b3; align-items: center; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100vh - 110px); }
+  #bic_chart, #dev_chart { height: 100%; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h2>Ex-16-3 — Search Convergence</h2>
+  <p>Each point = one candidate model. Running minimum = thick line. Star = best-ever.</p>
+</div>
+<div class="legend-row">
+  <span><span class="dot" style="background:#2a7f4f;"></span>Monotonic AADT OK</span>
+  <span><span class="dot" style="background:#8c959f;"></span>Not monotonic</span>
+  <span><span class="dot" style="background:#d96f32; border-radius:0; transform:rotate(45deg);"></span>Best ever</span>
+</div>
+<div class="charts">
+  <div id="bic_chart"></div>
+  <div id="dev_chart"></div>
+</div>
+<script>
+const D = {"iterations": [1, 2, 3, 4, 5, 6, 7], "bic": [2836.3507500856012, 2888.611884175948, 1738.538281065066, 1747.8505301768216, 2917.08007923138, 1667.0256360860526, 1753.300664662943], "val_dev": [3.576522897520833e+99, NaN, 284629878.5823116, 1397623032.5368564, NaN, 9139478.386114264, 782289190.2366909], "bic_running_min": [2836.3507500856012, 2836.3507500856012, 1738.538281065066, 1738.538281065066, 1738.538281065066, 1667.0256360860526, 1667.0256360860526], "dev_running_min": [3.576522897520833e+99, 1e+18, 284629878.5823116, 284629878.5823116, 284629878.5823116, 9139478.386114264, 9139478.386114264], "best_bic_idx": 5, "best_dev_idx": 5, "upper_vars": ["LENGTH_Z", "(none)", "GRADEBR_Z, MIMEDSH_Z, SLOPE_Z, TANGENT_Z, WIDTH_Z", "CURVES_Z, DECLANES_Z, DOUBLE_Z, MIMEDSH_Z", "ACCESS_Z, CURVES_Z", "ACCESS_Z, LENGTH_Z, MXGRADE_Z, MXMEDSH_Z", "AVESNOW_Z, LOWPRE, SPEED_Z"], "lower_vars": ["SPEED_Z", "(none)", "AVESNOW_Z, CURVES_Z, HISNOW, INCLANES_Z, SLOPE_Z", "AVESNOW_Z", "(none)", "DECLANES_Z, SLOPE_Z", "AVESNOW_Z, CURVES_Z, DECLANES_Z, FRICTION_Z"], "monotonic": ["no", "yes", "no", "yes", "yes", "yes", "no"], "dot_colors": ["#8c959f", "#2a7f4f", "#8c959f", "#2a7f4f", "#2a7f4f", "#2a7f4f", "#8c959f"], "label": "Ex-16-3"};
+
+function makeCharts() {
+  const iters = D.iterations;
+
+  function scatterTrace(yVals, colors, label) {
+    return {
+      x: iters, y: yVals,
+      type: 'scatter', mode: 'markers',
+      marker: { color: colors, size: 7, opacity: 0.8 },
+      name: label,
+      hovertemplate: 'Iter %{x}<br>' + label + ': %{y:.2f}<br>Upper: %{customdata[0]}<br>Lower: %{customdata[1]}<extra></extra>',
+      customdata: iters.map((_, i) => [D.upper_vars[i], D.lower_vars[i]])
+    };
+  }
+
+  function runMinTrace(yVals, color, label) {
+    return {
+      x: iters, y: yVals,
+      type: 'scatter', mode: 'lines',
+      line: { color: color, width: 3 },
+      name: label
+    };
+  }
+
+  function starTrace(idx, yVals, color) {
+    return {
+      x: [iters[idx]], y: [yVals[idx]],
+      type: 'scatter', mode: 'markers',
+      marker: { symbol: 'star', size: 18, color: color, line: { color: '#fff', width: 1 } },
+      name: 'Best',
+      hovertemplate: 'BEST<br>Iter %{x}<br>Value: %{y:.2f}<extra></extra>'
+    };
+  }
+
+  const darkLayout = {
+    template: 'plotly_dark',
+    paper_bgcolor: '#0f1923',
+    plot_bgcolor: '#172232',
+    font: { color: '#c8d6e0' },
+    margin: { l: 70, r: 20, t: 50, b: 50 },
+    legend: { orientation: 'h', y: -0.12 },
+    xaxis: { title: 'Search iteration', gridcolor: '#243040' },
+  };
+
+  Plotly.newPlot('bic_chart', [
+    scatterTrace(D.bic, D.dot_colors, 'BIC'),
+    runMinTrace(D.bic_running_min, '#7fdee8', 'Running min BIC'),
+    starTrace(D.best_bic_idx, D.bic, '#d96f32'),
+  ], { ...darkLayout, title: 'BIC over search iterations', yaxis: { title: 'BIC', gridcolor: '#243040' } }, { responsive: true });
+
+  Plotly.newPlot('dev_chart', [
+    scatterTrace(D.val_dev, D.dot_colors, 'Val Poisson Dev'),
+    runMinTrace(D.dev_running_min, '#f0b060', 'Running min Val Dev'),
+    starTrace(D.best_dev_idx, D.val_dev, '#d96f32'),
+  ], { ...darkLayout, title: 'Validation Poisson Deviance over iterations', yaxis: { title: 'Val Poisson Deviance', gridcolor: '#243040' } }, { responsive: true });
+}
+
+makeCharts();
+</script>
+</body>
+</html>

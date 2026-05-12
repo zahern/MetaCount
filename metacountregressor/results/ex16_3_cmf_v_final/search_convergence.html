@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Search Convergence</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  * { box-sizing:border-box; }
+  html, body {
+    margin:0; padding:0; width:100%; height:100%;
+    background:#0f1923; color:#e8edf2;
+    font-family:'Segoe UI',sans-serif; overflow:hidden;
+  }
+  .hdr { padding:10px 18px 3px; }
+  .hdr h2 { margin:0; font-size:1.0rem; color:#7fdee8; white-space:nowrap; }
+  .hdr p  { margin:2px 0 0; font-size:0.76rem; color:#8fa3b3; }
+  .leg {
+    display:flex; gap:14px; padding:3px 18px 4px;
+    font-size:0.74rem; color:#8fa3b3; flex-wrap:nowrap; align-items:center;
+  }
+  .ld { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:3px; flex-shrink:0; }
+  /* Two charts side by side, each exactly half width */
+  .charts {
+    display:flex; flex-direction:row; width:100%;
+    height:calc(100vh - 72px);
+  }
+  #bc, #rc { flex:1 1 50%; min-width:0; height:100%; }
+</style>
+</head>
+<body>
+<div class="hdr">
+  <h2>Ex-16-3 — Search Convergence</h2>
+  <p>Dotted = proposed path in order &nbsp;·&nbsp; Solid = running best &nbsp;·&nbsp;
+     Green = monotonic AADT &nbsp;·&nbsp; Grey = non-monotonic &nbsp;·&nbsp; Star = global best</p>
+</div>
+<div class="leg">
+  <span><span class="ld" style="background:#2a7f4f"></span>Monotonic</span>
+  <span><span class="ld" style="background:#8c959f"></span>Non-monotonic</span>
+  <span style="color:#ffd700">★ best</span>
+  <span>— running min</span>
+  <span style="color:#8fa3b3">····· proposed path</span>
+</div>
+<div class="charts">
+  <div id="bc"></div>
+  <div id="rc"></div>
+</div>
+<script>
+const D = {"iters": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22], "bic": [1171.92519428276, 1171.92519428276, 1184.6105592612025, 1175.4144004382745, 1180.735485393981, 1182.2670675214204, 1177.396621916444, 1177.977488527973, 1192.5880659402458, 1179.964439965108, 1181.5684459898132, 1182.7718056853423, 1160.1018818259433, 1182.8030300260987, 1175.7738711641928, 1195.195492568932, 1183.2137585424168, 1180.5999340830658, 1181.438119264818, 1188.0940393862045, 1180.1999753553175, 1179.5609020137279], "bic_rmin": [1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1160.1018818259433, 1160.1018818259433, 1160.1018818259433, 1160.1018818259433, 1160.1018818259433, 1160.1018818259433, 1160.1018818259433, 1160.1018818259433, 1160.1018818259433, 1160.1018818259433], "rmse": [17.703780292736674, 17.703780292736674, 16.762733837057496, 17.878925566874976, 17.132191178024215, 17.54377205010079, 16.84966539954677, 17.67482667028782, 16.480856657924946, 16.806795128696695, 18.41559673092156, 17.640538473218594, 17.259482919754415, 18.224827305414703, 16.979912004650693, 17.349031935728004, 17.379740515492735, 17.96223561880508, 17.865659199224584, 18.049083268789833, 16.575874355382428, 16.549225234243487], "rmse_rmin": [17.703780292736674, 17.703780292736674, 16.762733837057496, 16.762733837057496, 16.762733837057496, 16.762733837057496, 16.762733837057496, 16.762733837057496, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946, 16.480856657924946], "dev": [652.6977083589481, 652.6977083589481, 696.6117839758633, 711.4671955482243, 670.4997271692866, 700.2811535511739, 648.383598430484, 663.6436224944036, 620.5545066256713, 587.9170036897439, 743.1925175428156, 703.4356345145205, 723.5124407790419, 707.34855411524, 643.1688094346437, 663.3732857765116, 641.2231474989967, 672.695840940713, 669.3727627626289, 686.6958683044493, 616.4515422197621, 618.7828651121106], "upper_vars": ["LANES_Z, WIDTH_Z", "LANES_Z, WIDTH_Z", "GRADEBR_Z, MIMEDSH_Z, PEAKHR_Z, SLOPE_Z, SPEED_Z, TANGENT_Z", "CURVES_Z, SINGLE_Z", "EXPOSE_Z, MEDWIDTH_Z", "CURVES_Z, FRICTION_Z, MINRAD_Z, TANGENT_Z", "CURVES_Z, GRADEBR_Z, MIGRADE_Z, MXGRDIFF_Z", "AVESNOW_Z, GRADEBR_Z, TRAIN_Z", "ACCESS_Z, FC_Z, FRICTION_Z, MINRAD_Z, MXGRADE_Z, SINGLE_Z, SPEED_Z", "AVEPRE_Z, GRADEBR_Z, LANES_Z, LOWPRE, MXGRADE_Z, MXMEDSH_Z", "FRICTION_Z, MINRAD_Z", "GRADEBR_Z, TANGENT_Z", "CURVES_Z, MIMEDSH_Z, PEAKHR_Z", "ACCESS_Z, LANES_Z, SLOPE_Z, SPEED_Z, TRAIN_Z", "CURVES_Z, FC_Z, INTPM_Z", "ACCESS_Z, CURVES_Z, FRICTION_Z, GRADEBR_Z, MINRAD_Z, SPEED_Z, URB", "GRADEBR_Z, LANES_Z, MEDWIDTH_Z, TANGENT_Z, URB", "FC_Z, LOWPRE, MXGRDIFF_Z, SPEED_Z, WIDTH_Z", "CPM_Z, LANES_Z, MEDWIDTH_Z, WIDTH_Z", "DOUBLE_Z, MINRAD_Z, PEAKHR_Z, SLOPE_Z, SPEED_Z", "ACCESS_Z, GRADEBR_Z, MXMEDSH_Z", "CURVES_Z, LANES_Z, MXGRADE_Z, MXGRDIFF_Z, TRAIN_Z, WIDTH_Z"], "lower_vars": ["SPEED_Z", "SPEED_Z", "HISNOW, LANES_Z, SLOPE_Z", "SLOPE_Z", "AVESNOW_Z", "CURVES_Z", "HISNOW", "AVESNOW_Z, LANES_Z, SLOPE_Z", "CURVES_Z, FRICTION_Z, HISNOW", "LANES_Z, SPEED_Z", "FRICTION_Z, SLOPE_Z", "AVESNOW_Z, FRICTION_Z", "SPEED_Z", "AVEPRE_Z", "AVESNOW_Z, FRICTION_Z", "HISNOW, SPEED_Z", "CURVES_Z, SPEED_Z", "AVESNOW_Z, SLOPE_Z", "AVEPRE_Z", "AVEPRE_Z, AVESNOW_Z, LANES_Z", "CURVES_Z, HISNOW", "AVEPRE_Z, LANES_Z"], "monotonic": ["yes", "yes", "yes", "yes", "yes", "yes", "yes", "no", "yes", "yes", "yes", "yes", "yes", "yes", "yes", "yes", "yes", "yes", "yes", "yes", "yes", "yes"], "phases": [NaN, NaN, "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random", "random"], "dot_colors": ["#d96f32", "#d96f32", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#8c959f", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8"], "best_bic_idx": 12, "best_rmse_idx": 8, "label": "Ex-16-3"};
+
+const BASE = {
+  template:'plotly_dark',
+  paper_bgcolor:'#0f1923',
+  plot_bgcolor:'#172232',
+  font:{color:'#c8d6e0', size:10},
+  margin:{l:60, r:18, t:38, b:44},
+  legend:{orientation:'h', y:-0.15, font:{size:9}, traceorder:'normal'},
+  xaxis:{title:'Search iteration', gridcolor:'#1e3045', zeroline:false},
+};
+
+const cd = D.iters.map((_,i) =>
+  [D.upper_vars[i], D.lower_vars[i], D.monotonic[i]]);
+const dot_hover =
+  'Iter %{x}<br>Value: %{y:.3f}<br>' +
+  'Upper: %{customdata[0]}<br>Lower: %{customdata[1]}<br>' +
+  'Monotonic: %{customdata[2]}<extra></extra>';
+
+function pathT(y, name) {
+  return {
+    x:D.iters, y, type:'scatter', mode:'lines', name,
+    line:{color:'rgba(160,200,240,0.15)', width:1.2, dash:'dot'},
+    showlegend:false, hoverinfo:'skip'
+  };
+}
+function dotsT(y, name) {
+  return {
+    x:D.iters, y, type:'scatter', mode:'markers', name,
+    marker:{color:D.dot_colors, size:6, opacity:0.85},
+    customdata:cd, hovertemplate:dot_hover
+  };
+}
+function envT(y, color, name) {
+  return {
+    x:D.iters, y, type:'scatter', mode:'lines', name,
+    line:{color, width:3, shape:'hv'}
+  };
+}
+function starT(idx, y, name) {
+  return {
+    x:[D.iters[idx]], y:[y[idx]], type:'scatter', mode:'markers', name,
+    marker:{symbol:'star', size:16, color:'#ffd700', line:{color:'#fff',width:1}},
+    hovertemplate:'BEST<br>Iter %{x}<br>%{y:.3f}<extra></extra>'
+  };
+}
+
+Plotly.newPlot('bc',
+  [pathT(D.bic,'proposed'), dotsT(D.bic,'BIC'), envT(D.bic_rmin,'#7fdee8','Running best'), starT(D.best_bic_idx,D.bic,'Best')],
+  {...BASE, title:{text:'BIC over iterations',font:{size:12}},
+    yaxis:{title:'BIC', gridcolor:'#1e3045', zeroline:false}},
+  {responsive:true, displayModeBar:false});
+
+Plotly.newPlot('rc',
+  [pathT(D.rmse,'proposed'), dotsT(D.rmse,'Val RMSE'), envT(D.rmse_rmin,'#f0b060','Running best'), starT(D.best_rmse_idx,D.rmse,'Best')],
+  {...BASE, title:{text:'Validation RMSE over iterations',font:{size:12}},
+    yaxis:{title:'Val RMSE', gridcolor:'#1e3045', zeroline:false}},
+  {responsive:true, displayModeBar:false});
+</script>
+</body>
+</html>

@@ -350,6 +350,15 @@ def build_jax_data(
     else:
         offset = np.zeros((N, P, 1))
 
+    # Auto-generate Halton draws when not provided but random cols are present.
+    # Without this, draws stay zeros((N, 0, R)) and cause Kr_ind mismatch errors.
+    if draws_ind is None and random_ind_cols:
+        draws_ind = generate_halton_normal(N, len(random_ind_cols), R, seed=42)
+    if draws_cor is None and random_cor_cols:
+        draws_cor = generate_halton_normal(N, len(random_cor_cols), R, seed=43)
+    if draws_g is None and grouped_cols:
+        draws_g   = generate_halton_normal(N, len(grouped_cols),    R, seed=44)
+
     data = {
         "Xf":       jnp.array(Xf),
         "Xr_ind":   jnp.array(Xr_ind),

@@ -1,0 +1,596 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Washington Hierarchical CMF Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+        :root {
+            --ink: #152238;
+            --teal: #0a6c74;
+            --orange: #d96f32;
+            --paper: #f8f6f2;
+            --panel: #ffffff;
+            --line: #d4d8de;
+            --muted: #5d6b79;
+            --green: #2a7f4f;
+            --red: #b93a2b;
+        }
+        body {
+            margin: 0;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at 0% 0%, #dceff1 0%, transparent 45%),
+                radial-gradient(circle at 100% 100%, #f4ddcf 0%, transparent 45%),
+                var(--paper);
+        }
+        .wrap { max-width: 1280px; margin: 0 auto; padding: 20px; }
+        .hero {
+            background: linear-gradient(120deg, #0a6c74 0%, #18435a 45%, #8a4e2c 100%);
+            color: #fff;
+            border-radius: 14px;
+            padding: 18px 20px;
+            box-shadow: 0 12px 28px rgba(0,0,0,0.14);
+        }
+        .hero h1 { margin: 0; font-size: 1.45rem; letter-spacing: 0.2px; }
+        .hero p { margin: 6px 0 0; color: rgba(255,255,255,0.94); font-size: 0.95rem; }
+        .grid {
+            margin-top: 16px;
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 14px;
+        }
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 14px;
+            box-shadow: 0 8px 18px rgba(21,34,56,0.08);
+        }
+        .control-row { display: grid; gap: 6px; margin-bottom: 14px; }
+        .label {
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--muted);
+            font-weight: 700;
+        }
+        select { width: 100%; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); }
+        /* Gradient-track slider */
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 4px;
+            outline: none;
+            cursor: pointer;
+            background: linear-gradient(to right, #0a6c74 0%, #d96f32 100%);
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            background: var(--teal);
+            border: 2px solid #fff;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+        }
+        .slider-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 2px;
+        }
+        .slider-value {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--teal);
+        }
+        .cmf-badge {
+            font-size: 0.78rem;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 10px;
+            background: #e8f5ee;
+            color: var(--green);
+        }
+        .cmf-badge.over { background: #fdecea; color: var(--red); }
+        .tick-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.68rem;
+            color: var(--muted);
+            margin-top: 1px;
+        }
+        /* Toggle switch for binary */
+        .toggle-wrap {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 4px;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 46px; height: 24px;
+        }
+        .toggle-switch input { display: none; }
+        .toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: #ccc;
+            border-radius: 24px;
+            cursor: pointer;
+            transition: 0.25s;
+        }
+        .toggle-slider:before {
+            content: "";
+            position: absolute;
+            left: 3px; top: 3px;
+            width: 18px; height: 18px;
+            border-radius: 50%;
+            background: #fff;
+            transition: 0.25s;
+        }
+        .toggle-switch input:checked + .toggle-slider { background: var(--teal); }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); }
+        .toggle-label { font-size: 0.82rem; font-weight: 600; }
+        /* Prediction Summary */
+        .pred-summary {
+            background: linear-gradient(135deg, #f0fafa 0%, #fff8f3 100%);
+            border: 1px solid #c5dfe0;
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin-bottom: 14px;
+        }
+        .pred-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+        .pred-number { font-size: 2rem; font-weight: 800; color: var(--teal); line-height: 1; }
+        .pred-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 8px; }
+        .pred-row { display: flex; justify-content: space-between; font-size: 0.8rem; margin-top: 4px; }
+        .pred-row .pk { color: var(--muted); }
+        .pred-row .pv { font-weight: 600; }
+        .pv.good { color: var(--green); }
+        .pv.bad { color: var(--red); }
+        #chart { height: 58vh; }
+        .kpi { margin-top: 8px; font-size: 0.88rem; color: var(--ink); line-height: 1.6; }
+        .warn {
+            margin-top: 8px;
+            color: #8b3e12;
+            font-size: 0.85rem;
+            background: #fff1e9;
+            border: 1px solid #f1c9b4;
+            border-radius: 8px;
+            padding: 8px;
+        }
+        button#resetButton {
+            margin-top: 10px;
+            padding: 6px 14px;
+            background: var(--teal);
+            color: #fff;
+            border: none;
+            border-radius: 7px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        button#resetButton:hover { background: #085a61; }
+        .controls-scroll { max-height: 55vh; overflow-y: auto; padding-right: 4px; }
+        @media (max-width: 960px) {
+            .grid { grid-template-columns: 1fr; }
+            #chart { height: 50vh; }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="hero">
+        <h1>Ex-16-3 Hierarchical CMF Explorer</h1>
+        <p>Adjust AADT and road geometry variables to explore how the model changes predicted crash likelihood. CMF badges show the effect relative to the current profile baseline.</p>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="control-row">
+                <span class="label">Variable</span>
+                <select id="varSelect"></select>
+            </div>
+            <div class="control-row">
+                <span class="label">Display</span>
+                <select id="modeSelect">
+                    <option value="pred">Predicted crashes</option>
+                    <option value="cmf">CMF (relative to profile baseline)</option>
+                </select>
+            </div>
+
+            <!-- Prediction Summary Panel -->
+            <div class="pred-summary" id="predSummary">
+                <div class="pred-title">Prediction Summary</div>
+                <div class="pred-number" id="predNumber">--</div>
+                <div class="pred-label">predicted crashes</div>
+                <div class="pred-row"><span class="pk">AADT elasticity</span><span class="pv" id="summElast">--</span></div>
+                <div class="pred-row"><span class="pk">CMF vs baseline AADT</span><span class="pv" id="summCmf">--</span></div>
+                <div class="pred-row"><span class="pk">Upper-level contribution</span><span class="pv" id="summUpper">--</span></div>
+                <div class="pred-row"><span class="pk">Lower-level contribution</span><span class="pv" id="summLower">--</span></div>
+            </div>
+
+            <!-- AADT Slider -->
+            <div class="control-row">
+                <span class="label" id="aadtLabel">AADT</span>
+                <input id="aadtSlider" type="range" />
+                <div class="slider-footer">
+                    <span class="slider-value" id="aadtValueDisplay">--</span>
+                    <span class="cmf-badge" id="aadtCmfBadge">CMF: --</span>
+                </div>
+            </div>
+
+            <div class="controls-scroll" id="dynamicControls"></div>
+
+            <button id="resetButton" type="button">Reset Profile</button>
+            <div class="warn" id="binaryNote" style="display:none;">Binary feature: interpret as a class toggle.</div>
+            <div class="kpi" id="hierarchyInfo"></div>
+        </div>
+
+        <div class="card">
+            <div id="chart"></div>
+            <div id="aadtChart" style="height: 36vh; margin-top: 12px;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+const model = {"aadt_col": "AADT", "aadt_range": {"min": 8158.75, "max": 144040.0, "default": 25481.5, "step": 1132.34375}, "default_profile": {"ACCESS": 2.0, "DECLANES": 2.0, "LENGTH": 1.61, "MXGRADE": -1.01, "MXMEDSH": 4.0, "SLOPE": 0.0, "OFFSET": 6.338758563000001}, "variables": {"ACCESS": {"is_binary": false, "min": 1.0, "max": 2.0, "step": 0.01, "default": 2.0, "q10": 1.0, "q50": 2.0, "q90": 2.0, "label": "ACCESS", "unit": ""}, "DECLANES": {"is_binary": false, "min": 2.0, "max": 3.0, "step": 0.01, "default": 2.0, "q10": 2.0, "q50": 2.0, "q90": 3.0, "label": "DECLANES", "unit": ""}, "LENGTH": {"is_binary": false, "min": 0.589, "max": 5.173, "step": 0.04584, "default": 1.61, "q10": 0.589, "q50": 1.61, "q90": 5.173, "label": "LENGTH", "unit": "mi"}, "MXGRADE": {"is_binary": false, "min": -3.96, "max": 3.625, "step": 0.07585, "default": -1.01, "q10": -3.96, "q50": -1.01, "q90": 3.625, "label": "MXGRADE", "unit": ""}, "MXMEDSH": {"is_binary": false, "min": 4.0, "max": 10.0, "step": 0.06, "default": 4.0, "q10": 4.0, "q50": 4.0, "q90": 10.0, "label": "MXMEDSH", "unit": ""}, "SLOPE": {"is_binary": false, "min": 0.0, "max": 2.0, "step": 0.02, "default": 0.0, "q10": 0.0, "q50": 0.0, "q90": 2.0, "label": "SLOPE", "unit": ""}}, "binary_variables": ["HISNOW", "LOWPRE", "URB"], "scaler_stats": {"ACCESS": {"mean": 1.8318181818181818, "sd": 0.4088635731972258}, "ADTLANE": {"mean": 7623.040909090909, "sd": 5802.51593105479}, "AVEPRE": {"mean": 3.1629545454545456, "sd": 2.3445412223691933}, "AVESNOW": {"mean": 1.2552272727272726, "sd": 2.1229827737026072}, "CPM": {"mean": 1.4195817943681817, "sd": 0.9671827038898527}, "CURVES": {"mean": 2.8454545454545452, "sd": 3.0141676482190314}, "DECLANES": {"mean": 2.309090909090909, "sd": 0.5599586761612544}, "DOUBLE": {"mean": 7.696954545454546, "sd": 4.616592338090477}, "EXPOSE": {"mean": 0.23136034682727274, "sd": 0.22393579169432412}, "FC": {"mean": 3.809090909090909, "sd": 1.8215650341268959}, "FRICTION": {"mean": 49.55181818181819, "sd": 4.630103706244442}, "GRADEBR": {"mean": 3.959090909090909, "sd": 4.0612536231729655}, "INCLANES": {"mean": 2.3454545454545452, "sd": 0.6169774363984417}, "INTPM": {"mean": 0.48163842335, "sd": 0.6008750944635536}, "LENGTH": {"mean": 2.5365909090909087, "sd": 2.6893733159687274}, "MEDWIDTH": {"mean": 3.7, "sd": 1.4177446878757824}, "MIGRADE": {"mean": 0.005681818181818174, "sd": 1.0756258172619002}, "MIMEDSH": {"mean": 4.572727272727272, "sd": 1.5980618426370619}, "MINRAD": {"mean": 4485.786363636364, "sd": 5257.532029452901}, "MXGRADE": {"mean": -0.2498636363636364, "sd": 3.048670571598747}, "MXGRDIFF": {"mean": 3.099318181818181, "sd": 1.991171420554508}, "MXMEDSH": {"mean": 5.368181818181818, "sd": 2.4542887071107264}, "PEAKHR": {"mean": 10.568818181818182, "sd": 8.008957057492587}, "SINGLE": {"mean": 4.160090909090909, "sd": 1.157165420291047}, "SLOPE": {"mean": 0.5318181818181819, "sd": 0.8112203846037735}, "SPEED": {"mean": 59.68181818181818, "sd": 5.591278627846664}, "TANGENT": {"mean": 0.37236363636363645, "sd": 6.834071051759404}, "TRAIN": {"mean": 2.1744090909090907, "sd": 1.5684839570597207}, "WIDTH": {"mean": 58.304545454545455, "sd": 16.13896969992839}}, "coefficients": {"const": -6.051546989684152, "log_aadt": 0.3570016756934691}, "upper_terms": [{"variable": "ACCESS", "coefficient": 0.09720452693162193, "standardized": true}, {"variable": "LENGTH", "coefficient": 5.838306293683256, "standardized": true}, {"variable": "MXGRADE", "coefficient": 0.12828576611710518, "standardized": true}, {"variable": "MXMEDSH", "coefficient": 0.39139642881385595, "standardized": true}], "lower_terms": [{"variable": "DECLANES", "coefficient": -0.035009346706793815, "standardized": true}, {"variable": "SLOPE", "coefficient": 0.009127712621329723, "standardized": true}], "offset_col": "OFFSET", "offset_value": 6.338758563000001};
+const variables = Object.keys(model.variables);
+
+const varSelect = document.getElementById('varSelect');
+const modeSelect = document.getElementById('modeSelect');
+const aadtSlider = document.getElementById('aadtSlider');
+const aadtLabel = document.getElementById('aadtLabel');
+const aadtValueDisplay = document.getElementById('aadtValueDisplay');
+const aadtCmfBadge = document.getElementById('aadtCmfBadge');
+const dynamicControls = document.getElementById('dynamicControls');
+const hierarchyInfo = document.getElementById('hierarchyInfo');
+const binaryNote = document.getElementById('binaryNote');
+const resetButton = document.getElementById('resetButton');
+const predNumber = document.getElementById('predNumber');
+const summElast = document.getElementById('summElast');
+const summCmf = document.getElementById('summCmf');
+const summUpper = document.getElementById('summUpper');
+const summLower = document.getElementById('summLower');
+
+for (const v of variables) {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v;
+    varSelect.appendChild(o);
+}
+
+aadtSlider.min = String(model.aadt_range.min);
+aadtSlider.max = String(model.aadt_range.max);
+aadtSlider.step = String(model.aadt_range.step);
+aadtSlider.value = String(model.aadt_range.default);
+
+function fmt(value, unit) {
+    if (!Number.isFinite(value)) return 'n/a';
+    let s;
+    if (Math.abs(value) >= 10000) s = value.toLocaleString('en-US', {maximumFractionDigits: 0});
+    else if (Math.abs(value) >= 100) s = value.toFixed(1);
+    else if (Math.abs(value) >= 1) s = value.toFixed(3);
+    else s = value.toFixed(4);
+    return unit ? s + ' ' + unit : s;
+}
+
+function normalizeValue(variable, rawValue) {
+    const stats = model.scaler_stats[variable];
+    if (!stats) return rawValue;
+    return (rawValue - stats.mean) / stats.sd;
+}
+
+function currentProfile() {
+    const profile = { ...model.default_profile };
+    profile[model.aadt_col] = Number(aadtSlider.value);
+    for (const variable of variables) {
+        const spec = model.variables[variable];
+        const el = document.getElementById('control-' + variable);
+        if (!el) continue;
+        if (spec.is_binary) {
+            profile[variable] = el.checked ? 1 : 0;
+        } else {
+            profile[variable] = Number(el.value);
+        }
+    }
+    return profile;
+}
+
+function predict(profile, aadtValue) {
+    const safeAadt = Math.max(aadtValue, 1e-9);
+    const logAadt = Math.log(safeAadt);
+    let linear = model.coefficients.const + model.coefficients.log_aadt * logAadt + (model.offset_value || 0);
+    for (const term of model.upper_terms) {
+        const rawValue = Number(profile[term.variable] ?? model.default_profile[term.variable] ?? 0);
+        const modelValue = term.standardized ? normalizeValue(term.variable, rawValue) : rawValue;
+        linear += term.coefficient * modelValue;
+    }
+    for (const term of model.lower_terms) {
+        const rawValue = Number(profile[term.variable] ?? model.default_profile[term.variable] ?? 0);
+        const modelValue = term.standardized ? normalizeValue(term.variable, rawValue) : rawValue;
+        linear += term.coefficient * modelValue * logAadt;
+    }
+    return Math.exp(linear);
+}
+
+function decompose(profile, aadtValue) {
+    const safeAadt = Math.max(aadtValue, 1e-9);
+    const logAadt = Math.log(safeAadt);
+    const coreConst = model.coefficients.const;
+    const coreAadt = model.coefficients.log_aadt * logAadt;
+    let upperSum = 0.0, lowerSum = 0.0;
+    const upperItems = [], lowerItems = [];
+    for (const term of model.upper_terms) {
+        const rawValue = Number(profile[term.variable] ?? model.default_profile[term.variable] ?? 0);
+        const modelValue = term.standardized ? normalizeValue(term.variable, rawValue) : rawValue;
+        const contribution = term.coefficient * modelValue;
+        upperSum += contribution;
+        upperItems.push({ variable: term.variable, coefficient: term.coefficient, value: rawValue, contribution, standardized: term.standardized });
+    }
+    for (const term of model.lower_terms) {
+        const rawValue = Number(profile[term.variable] ?? model.default_profile[term.variable] ?? 0);
+        const modelValue = term.standardized ? normalizeValue(term.variable, rawValue) : rawValue;
+        const contribution = term.coefficient * modelValue * logAadt;
+        lowerSum += contribution;
+        lowerItems.push({ variable: term.variable, coefficient: term.coefficient, value: rawValue, contribution, standardized: term.standardized });
+    }
+    const offset = model.offset_value || 0;
+    const linear = coreConst + coreAadt + upperSum + lowerSum + offset;
+    const prediction = Math.exp(linear);
+    const aadtElasticity = model.coefficients.log_aadt + lowerItems.reduce((acc, item) => {
+        const stats = model.scaler_stats[item.variable];
+        const modelValue = item.standardized && stats ? (item.value - stats.mean) / stats.sd : item.value;
+        return acc + item.coefficient * modelValue;
+    }, 0);
+    return { coreConst, coreAadt, upperSum, lowerSum, linear, prediction, aadtElasticity, upperItems, lowerItems };
+}
+
+function buildGrid(spec) {
+    if (spec.is_binary) return [0, 1];
+    const values = [];
+    const points = 41;
+    const width = spec.max - spec.min;
+    for (let i = 0; i < points; i++) values.push(spec.min + (width * i) / (points - 1));
+    return values;
+}
+
+function cmfBadgeHTML(cmf) {
+    const pct = ((cmf - 1) * 100).toFixed(1);
+    const sign = cmf >= 1 ? '+' : '';
+    const cls = cmf > 1 ? ' over' : '';
+    return '<span class="cmf-badge' + cls + '">CMF: ' + cmf.toFixed(3) + ' (' + sign + pct + '%)</span>';
+}
+
+let baselinePred = null;
+
+function draw() {
+    const variable = varSelect.value;
+    const mode = modeSelect.value;
+    const spec = model.variables[variable];
+    const profile = currentProfile();
+    const aadtValue = Number(aadtSlider.value);
+    const x = buildGrid(spec);
+    const pred = x.map(value => predict({ ...profile, [variable]: value }, aadtValue));
+    const currentValue = spec.is_binary ? (profile[variable] || 0) : Number(profile[variable] ?? spec.default);
+    const decomp = decompose(profile, aadtValue);
+    const baseline = Math.max(decomp.prediction, 1e-9);
+    const y = mode === 'pred' ? pred : pred.map(v => v / baseline);
+    const selectedY = mode === 'pred' ? baseline : 1.0;
+    binaryNote.style.display = spec.is_binary ? 'block' : 'none';
+
+    // Update CMF badges on all sliders
+    for (const v of variables) {
+        const badgeEl = document.getElementById('cmf-badge-' + v);
+        if (!badgeEl) continue;
+        const vspec = model.variables[v];
+        const baselineProf = { ...model.default_profile };
+        baselineProf[model.aadt_col] = model.aadt_range.default;
+        const baseVal = predict(baselineProf, model.aadt_range.default);
+        const curVal = predict(profile, aadtValue);
+        // per-var CMF: prediction with this var at current vs at default
+        const profileWithDefault = { ...profile };
+        profileWithDefault[v] = vspec.default;
+        const predWithDefault = predict(profileWithDefault, aadtValue);
+        const predWithCurrent = predict(profile, aadtValue);
+        const varCmf = predWithDefault > 1e-9 ? predWithCurrent / predWithDefault : 1.0;
+        badgeEl.className = 'cmf-badge' + (varCmf > 1 ? ' over' : '');
+        const pct = ((varCmf - 1) * 100).toFixed(1);
+        const sign = varCmf >= 1 ? '+' : '';
+        badgeEl.textContent = 'CMF: ' + varCmf.toFixed(3) + ' (' + sign + pct + '%)';
+    }
+
+    // Update AADT slider display
+    const aadtUnit = 'veh/day';
+    aadtValueDisplay.textContent = fmt(aadtValue, aadtUnit);
+    const aadtBaselinePred = predict(profile, model.aadt_range.default);
+    const aadtCmf = aadtBaselinePred > 1e-9 ? baseline / aadtBaselinePred : 1.0;
+    aadtCmfBadge.className = 'cmf-badge' + (aadtCmf > 1 ? ' over' : '');
+    aadtCmfBadge.textContent = 'CMF: ' + aadtCmf.toFixed(3);
+
+    // Update prediction summary
+    predNumber.textContent = baseline.toFixed(3);
+    const elast = decomp.aadtElasticity;
+    summElast.textContent = elast.toFixed(4);
+    summElast.className = 'pv' + (elast > 0 ? ' good' : ' bad');
+    summCmf.textContent = aadtCmf.toFixed(4);
+    summCmf.className = 'pv' + (aadtCmf <= 1 ? ' good' : ' bad');
+    summUpper.textContent = decomp.upperSum.toFixed(4);
+    summUpper.className = 'pv';
+    summLower.textContent = decomp.lowerSum.toFixed(4);
+    summLower.className = 'pv';
+
+    const mainTrace = {
+        x, y,
+        type: 'scatter', mode: 'lines+markers',
+        marker: { size: 5, color: '#0a6c74' },
+        line: { width: 3, color: '#0a6c74' },
+        name: mode === 'pred' ? 'Predicted crashes' : 'CMF'
+    };
+    const markerTrace = {
+        x: [currentValue], y: [selectedY],
+        type: 'scatter', mode: 'markers',
+        marker: { size: 12, color: '#d96f32', symbol: 'diamond' },
+        name: 'Current profile'
+    };
+    const yTitle = mode === 'pred' ? 'Predicted crashes' : 'CMF';
+    Plotly.react('chart', [mainTrace, markerTrace], {
+        template: 'plotly_white',
+        title: variable + ' response at AADT ' + fmt(aadtValue, ''),
+        xaxis: { title: variable },
+        yaxis: { title: yTitle },
+        margin: { l: 64, r: 20, t: 56, b: 52 },
+        legend: { orientation: 'h' }
+    }, { responsive: true });
+
+    const aadtGrid = [], aadtPred = [];
+    const aadtPoints = 61;
+    for (let i = 0; i < aadtPoints; i++) {
+        const v = model.aadt_range.min + ((model.aadt_range.max - model.aadt_range.min) * i) / (aadtPoints - 1);
+        aadtGrid.push(v);
+        aadtPred.push(predict(profile, v));
+    }
+    const aadtDefaultPred = Math.max(predict(profile, model.aadt_range.default), 1e-9);
+    const aadtY = mode === 'pred' ? aadtPred : aadtPred.map(v => v / aadtDefaultPred);
+    Plotly.react('aadtChart', [
+        { x: aadtGrid, y: aadtY, type: 'scatter', mode: 'lines', line: { width: 3, color: '#18435a' }, name: mode === 'pred' ? 'AADT response' : 'AADT CMF' },
+        { x: [aadtValue], y: [mode === 'pred' ? baseline : baseline / aadtDefaultPred], type: 'scatter', mode: 'markers', marker: { size: 12, color: '#d96f32', symbol: 'diamond' }, name: 'Current AADT' }
+    ], {
+        template: 'plotly_white',
+        title: 'AADT response for current profile',
+        xaxis: { title: model.aadt_col },
+        yaxis: { title: yTitle },
+        margin: { l: 64, r: 20, t: 56, b: 52 },
+        legend: { orientation: 'h' }
+    }, { responsive: true });
+
+    aadtLabel.textContent = 'AADT (' + fmt(aadtValue, '') + ')';
+    const topUpper = [...decomp.upperItems]
+        .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution))
+        .slice(0, 5)
+        .map(item => item.variable + ': ' + fmt(item.value, '') + ' → ' + fmt(item.contribution, ''))
+        .join('<br/>') || '(none)';
+    const topLower = [...decomp.lowerItems]
+        .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution))
+        .slice(0, 5)
+        .map(item => item.variable + ': ' + fmt(item.value, '') + ' → ' + fmt(item.contribution, ''))
+        .join('<br/>') || '(none)';
+    hierarchyInfo.innerHTML = [
+        '<strong>Top Upper-Level Terms</strong><br/>' + topUpper,
+        '<strong>Top Lower-Level Terms (×log AADT)</strong><br/>' + topLower,
+    ].join('<br/>');
+}
+
+function buildControls() {
+    dynamicControls.innerHTML = '';
+    for (const variable of variables) {
+        const spec = model.variables[variable];
+        const wrapper = document.createElement('div');
+        wrapper.className = 'control-row';
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = spec.label || variable;
+        wrapper.appendChild(label);
+
+        if (spec.is_binary) {
+            const toggleWrap = document.createElement('div');
+            toggleWrap.className = 'toggle-wrap';
+            const switchEl = document.createElement('label');
+            switchEl.className = 'toggle-switch';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.id = 'control-' + variable;
+            input.checked = spec.default === 1;
+            const slider = document.createElement('span');
+            slider.className = 'toggle-slider';
+            switchEl.appendChild(input);
+            switchEl.appendChild(slider);
+            const toggleLabel = document.createElement('span');
+            toggleLabel.className = 'toggle-label';
+            toggleLabel.id = 'toggle-label-' + variable;
+            toggleLabel.textContent = input.checked ? 'Present (1)' : 'Absent (0)';
+            input.addEventListener('change', () => {
+                toggleLabel.textContent = input.checked ? 'Present (1)' : 'Absent (0)';
+                draw();
+            });
+            const badgeSpan = document.createElement('span');
+            badgeSpan.id = 'cmf-badge-' + variable;
+            badgeSpan.className = 'cmf-badge';
+            badgeSpan.textContent = 'CMF: --';
+            toggleWrap.appendChild(switchEl);
+            toggleWrap.appendChild(toggleLabel);
+            toggleWrap.appendChild(badgeSpan);
+            wrapper.appendChild(toggleWrap);
+        } else {
+            const input = document.createElement('input');
+            input.type = 'range';
+            input.id = 'control-' + variable;
+            input.min = String(spec.min);
+            input.max = String(spec.max);
+            input.step = String(spec.step);
+            input.value = String(spec.default);
+
+            const footer = document.createElement('div');
+            footer.className = 'slider-footer';
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'slider-value';
+            valueSpan.id = 'value-' + variable;
+            valueSpan.textContent = fmt(spec.default, spec.unit || '');
+            const badgeSpan = document.createElement('span');
+            badgeSpan.id = 'cmf-badge-' + variable;
+            badgeSpan.className = 'cmf-badge';
+            badgeSpan.textContent = 'CMF: --';
+            footer.appendChild(valueSpan);
+            footer.appendChild(badgeSpan);
+
+            const tickRow = document.createElement('div');
+            tickRow.className = 'tick-row';
+            tickRow.innerHTML = '<span>p10: ' + fmt(spec.q10, '') + '</span><span>p50: ' + fmt(spec.q50, '') + '</span><span>p90: ' + fmt(spec.q90, '') + '</span>';
+
+            input.addEventListener('input', () => {
+                valueSpan.textContent = fmt(Number(input.value), spec.unit || '');
+                draw();
+            });
+            wrapper.appendChild(input);
+            wrapper.appendChild(footer);
+            wrapper.appendChild(tickRow);
+        }
+        dynamicControls.appendChild(wrapper);
+    }
+}
+
+function resetProfile() {
+    aadtSlider.value = String(model.aadt_range.default);
+    for (const variable of variables) {
+        const spec = model.variables[variable];
+        const control = document.getElementById('control-' + variable);
+        if (!control) continue;
+        if (spec.is_binary) {
+            control.checked = spec.default === 1;
+            const lbl = document.getElementById('toggle-label-' + variable);
+            if (lbl) lbl.textContent = control.checked ? 'Present (1)' : 'Absent (0)';
+        } else {
+            control.value = String(spec.default);
+            const valueText = document.getElementById('value-' + variable);
+            if (valueText) valueText.textContent = fmt(Number(spec.default), spec.unit || '');
+        }
+    }
+    draw();
+}
+
+varSelect.value = variables[0];
+buildControls();
+draw();
+varSelect.addEventListener('change', draw);
+modeSelect.addEventListener('change', draw);
+aadtSlider.addEventListener('input', () => {
+    aadtValueDisplay.textContent = fmt(Number(aadtSlider.value), 'veh/day');
+    draw();
+});
+resetButton.addEventListener('click', resetProfile);
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+Component,Variable,Full Name,Coefficient,CMF
+Core,Intercept,Intercept,-7.57551,
+Core,log(AADT),log(AADT) Elasticity,0.9385,
+Upper (AADT-independent),LANES,Total Lane Count — both directions (lanes),-0.01033,0.9912
+Upper (AADT-independent),WIDTH,Pavement Width (ft),-0.14308,0.9912
+Lower (AADT interaction),SPEED,Posted Speed Limit (mph),-0.01459,varies with AADT

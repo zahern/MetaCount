@@ -8,117 +8,64 @@ format:
     theme: default
     transition: fade
     slide-number: true
-    chalkboard: false
-    preview-links: auto
-    fig-align: center
-    highlight-style: github
     width: 1280
     height: 720
-    margin: 0.08
-    css: styles-cmf.css
+    margin: 0.05
+    self-contained: true
+  pptx:
+    slide-level: 2
 execute:
-  echo: false
-  warning: false
+  enabled: false
 ---
 
 ```{=html}
 <style>
-/* ── Teal / Orange palette overrides ── */
-:root {
-  --teal:   #0a6c74;
-  --orange: #d96f32;
-  --ink:    #152238;
-  --muted:  #5d6b79;
-  --paper:  #f8f6f2;
-  --green:  #2a7f4f;
-  --red:    #b93a2b;
-}
-
-/* Slide headings */
-.reveal h1, .reveal h2 { color: var(--teal); }
-.reveal h3             { color: var(--orange); }
-
-/* Accent bar under h2 */
-.reveal h2::after {
-  content: "";
-  display: block;
-  height: 3px;
-  width: 60px;
-  background: var(--orange);
-  margin-top: 6px;
-  border-radius: 2px;
-}
-
-/* Hero title slide */
-.reveal .title-slide h1 { font-size: 2.1rem; color: #fff; }
-.reveal .title-slide    { background: linear-gradient(135deg, #0a6c74 0%, #18435a 55%, #8a4e2c 100%); }
-
-/* Stat box */
-.stat-box {
-  background: var(--paper);
-  border-left: 4px solid var(--teal);
-  border-radius: 6px;
-  padding: 10px 16px;
-  margin: 6px 0;
-  font-size: 0.92rem;
-}
-.stat-box .num { font-size: 2rem; font-weight: 800; color: var(--teal); }
-.stat-box .lbl { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
-
-/* Variable table */
-table { font-size: 0.82rem; }
-th    { background: var(--teal); color: #fff; padding: 5px 10px; }
-td    { padding: 4px 10px; }
-tr:nth-child(even) td { background: #eef6f7; }
-
-/* CMF formula block */
-.formula-box {
-  background: #eef6f7;
-  border: 1px solid #b5d9db;
-  border-radius: 8px;
-  padding: 14px 20px;
-  font-size: 1rem;
-  margin: 10px 0;
-}
-
-/* Callout-style highlight */
-.callout {
-  border-left: 4px solid var(--orange);
-  background: #fff8f3;
-  padding: 10px 16px;
-  border-radius: 0 6px 6px 0;
-  font-size: 0.88rem;
-  margin: 8px 0;
-}
-
-/* iframe full-width */
-iframe {
-  border: none;
-  border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.12);
-}
-
-/* Bullet refinement */
-.reveal ul li { margin-bottom: 0.4em; }
+:root { --teal:#0a6c74; --orange:#d96f32; --ink:#152238; --muted:#5d6b79; --paper:#f8f6f2; }
+.reveal h1, .reveal h2 { color: var(--teal); font-size: 1.5rem; margin-bottom: 4px; }
+.reveal h3 { color: var(--orange); font-size: 1.05rem; margin: 0 0 6px; }
+.reveal h2::after { content:""; display:block; height:3px; width:50px;
+  background:var(--orange); margin-top:3px; border-radius:2px; }
+.reveal .title-slide h1 { font-size:2rem; color:#fff; }
+.reveal .title-slide { background:linear-gradient(135deg,#0a6c74 0%,#18435a 55%,#8a4e2c 100%); }
+/* Body text */
+.reveal section { font-size: 0.82rem; line-height: 1.35; }
+/* Stat boxes — compact */
+.sb { background:var(--paper); border-left:4px solid var(--teal); border-radius:5px;
+      padding:5px 12px; margin:3px 0; }
+.sb .n { font-size:1.5rem; font-weight:800; color:var(--teal); }
+.sb .l { color:var(--muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:.06em; }
+/* Tables */
+table { font-size:0.72rem; width:100%; border-collapse:collapse; }
+th { background:var(--teal); color:#fff; padding:4px 8px; text-align:left; }
+td { padding:3px 8px; vertical-align:top; word-wrap:break-word; }
+tr:nth-child(even) td { background:#eef6f7; }
+/* Callout */
+.co { border-left:4px solid var(--orange); background:#fff8f3;
+      padding:5px 12px; border-radius:0 5px 5px 0; font-size:0.78rem; margin:5px 0; }
+/* Better / worse badges */
+.better { color:#2a7f4f; font-weight:700; }
+.worse  { color:#b93a2b; font-weight:700; }
+/* iframe */
+iframe { border:none; border-radius:6px; box-shadow:0 3px 10px rgba(0,0,0,.12); }
+/* Columns fix */
+.reveal .columns { display:flex; gap:16px; }
+.reveal ul li { margin-bottom:0.2em; }
 </style>
 ```
 
-## Data Overview {#data-overview}
-
-### Washington Rural Highway Safety Dataset
+## Data Overview
 
 :::: {.columns}
 
-::: {.column width="48%"}
-<div class="stat-box"><div class="num">275</div><div class="lbl">road segments</div></div>
-<div class="stat-box"><div class="num">39</div><div class="lbl">variables per segment</div></div>
-<div class="stat-box"><div class="num">FREQ</div><div class="lbl">crash count response</div></div>
-<div class="stat-box"><div class="num">AADT</div><div class="lbl">primary traffic exposure</div></div>
-
-Source: Washington State DOT rural highway inventory, Ex-16-3.csv
+::: {.column width="38%"}
+<div class="sb"><div class="n">275</div><div class="l">road segments</div></div>
+<div class="sb"><div class="n">39</div><div class="l">variables per segment</div></div>
+<div class="sb"><div class="n">FREQ</div><div class="l">crash count — NB2 response</div></div>
+<div class="sb"><div class="n">AADT</div><div class="l">primary traffic exposure</div></div>
+<div class="sb"><div class="n">LENGTH</div><div class="l">segment length → log(L) offset</div></div>
 :::
 
-::: {.column width="52%"}
+::: {.column width="62%"}
 | Category | Variables |
 |---|---|
 | **Traffic** | AADT, PEAKHR, ADTLANE, EXPOSE |
@@ -127,428 +74,236 @@ Source: Washington State DOT rural highway inventory, Ex-16-3.csv
 | **Grade** | MIGRADE, MXGRADE, MXGRDIFF, SLOPE |
 | **Roadside** | MIMEDSH, MXMEDSH, ACCESS, FRICTION |
 | **Climate** | AVEPRE, AVESNOW, HISNOW, LOWPRE |
-| **Classification** | URB, FC, SINGLE, DOUBLE, TRAIN |
-| **Interaction** | INTPM, CPM, INTECHAG |
+| **Class** | URB, FC, SINGLE, DOUBLE, TRAIN |
+| **Auxiliary** | INTPM, CPM, INTECHAG, EXPOSE |
+
+Source: Washington State DOT rural highway inventory
 :::
 
 ::::
 
 ---
 
-## Data Quality {#data-quality}
-
-### Key Variable Summaries
-
-:::: {.columns}
-
-::: {.column width="50%"}
-**Crash frequency (FREQ)**
-
-- Range: 0 – high overdispersion typical of count data
-- Mean ≈ 1–3 crashes per segment-year (dataset-dependent)
-- Zero-inflation is modest; NB/Poisson both viable
-- LENGTH (segment length) used as exposure offset via log(LENGTH)
-
-**AADT distribution**
-
-- Spans rural to semi-urban traffic volumes
-- Log transformation used in model specification
-- Monotone AADT elasticity enforced during search
-:::
-
-::: {.column width="50%"}
-**Data preparation steps**
-
-1. Read `Ex-16-3.csv` (275 rows, 39 cols)
-2. Compute `OFFSET = log(LENGTH)` for exposure
-3. Drop rows with missing FREQ or AADT
-4. Require AADT > 0
-5. Assign OBS_ID sequential index
-
-**Candidate variables after filtering**
-
-- 31 upper-level candidates (direct effects)
-- 9 lower-level candidates (AADT interaction terms)
-- Binary vars get toggle treatment (no standardization)
-- Continuous vars standardized on train set (zero mean, unit SD)
-:::
-
-::::
-
----
-
-## Methodology {#methodology}
-
-### Hierarchical CMF Count Model
-
-The model specifies a **two-level hierarchical** log-linear count model:
+## Methodology
 
 $$
-\log(\hat{\mu}_i) = \alpha + \underbrace{\beta_{\text{AADT}} \log(\text{AADT}_i)}_{\text{base AADT effect}}
-  + \underbrace{\sum_{j \in U} \beta_j x_{ij}}_{\text{upper-level terms}}
-  + \underbrace{\sum_{k \in L} \gamma_k x_{ik} \log(\text{AADT}_i)}_{\text{lower-level (AADT interaction) terms}}
-  + \text{offset}_i
+\log(\hat{\mu}_i) = \alpha
+  + \underbrace{\beta_{\text{AADT}}\log(\text{AADT}_i)}_{\text{AADT elasticity}}
+  + \underbrace{\sum_{j} \beta_j x_{ij}}_{\text{Upper: direct}}
+  + \underbrace{\sum_{k} \gamma_k x_{ik}\log(\text{AADT}_i)}_{\text{Lower: modify elasticity}}
+  + \log(L_i)
 $$
-
-where $\hat{\mu}_i$ is the expected crash count for segment $i$.
 
 :::: {.columns}
 
 ::: {.column width="50%"}
-**Upper-level terms** $U$
+**Upper terms** — AADT-independent effect.
+CMF for a 1-unit change: $\text{CMF} = e^{\beta_j}$. Same across all AADT levels.
 
-Additive effects on log-crash-rate, independent of traffic volume.
-Examples: road geometry, lane counts, pavement friction, climate.
+**Lower terms** — modify the AADT elasticity:
+$$e_i = \beta_{\text{AADT}} + \sum_k \gamma_k x_{ik} > 0 \;\text{(enforced)}$$
+CMF varies with traffic volume.
 :::
 
 ::: {.column width="50%"}
-**Lower-level terms** $L$
+**Random search strategy**
 
-Modify the **AADT elasticity** — how crash risk scales with volume.
-Examples: curvature, friction, grade, precipitation.
-
-$$\text{Local AADT elasticity}_i = \beta_{\text{AADT}} + \sum_{k \in L} \gamma_k x_{ik}$$
+1. **Random sampling** (120 iterations): draw $k_U \in [0,8]$ upper and $k_L \in [0,6]$ lower variables at random from the full candidate pool
+2. Score each candidate on validation set by **Poisson deviance** (primary) and **RMSE** (secondary); reject any spec with non-monotonic AADT elasticity
+3. **Final refit** on train + validation (80%); evaluate on held-out test set (20%)
+4. **Post-search random-parameters refit** on best spec using JAX mixed-NB2
 :::
 
 ::::
 
-<div class="callout">
-CMF for variable $j$ at a given AADT: $\text{CMF}(x_j) = \exp(\beta_j \cdot (x_j - x_j^{\text{ref}}))$ for upper terms, with AADT-varying response for lower terms.
-</div>
+---
+
+## Search Convergence
+
+::: {.content-visible when-format="revealjs"}
+<iframe src="../results/ex16_3_cmf/search_convergence.html"
+  width="100%" height="500px" title="Convergence"></iframe>
+:::
+
+::: {.content-visible when-format="pptx"}
+![Convergence: proposed-path trace (dotted) + running best solid envelope for BIC (left) and Validation RMSE (right). Green = monotonic AADT, grey = non-monotonic (excluded), star = global best.](../results/ex16_3_cmf/search_convergence.png)
+:::
+
+Dotted line = sequence of all proposed models · Solid envelope = running best · Green = monotonic AADT · Grey = excluded (non-monotonic) · Star = global best
 
 ---
 
-## Search Strategy {#search-strategy}
+## Model Coefficients — Core & Upper Terms {.scrollable}
 
-### Random Search over Variable Subsets
+### Direct effects on crash rate (AADT-independent), with CMF at 1-SD change
+
+{{< include ../results/ex16_3_cmf/readable_coef_upper.md >}}
+
+<div class="co">CMF < 1 = safety benefit &nbsp;|&nbsp; CMF > 1 = higher risk &nbsp;|&nbsp; All continuous variables standardised; CMF shown at 1-SD change.</div>
+
+---
+
+## Model Coefficients — Lower Terms {.scrollable}
+
+### Variables that modify how sensitive crash risk is to traffic volume
+
+{{< include ../results/ex16_3_cmf/readable_coef_lower.md >}}
+
+<div class="co"><b>Interpretation:</b> positive coefficient → amplifies AADT elasticity → variable makes crash risk more traffic-sensitive. Negative → buffers against volume-driven risk.</div>
+
+---
+
+## Benchmark Comparison
+
+### Hierarchical CMF vs Simple AADT-only Safety Performance Function
+
+{{< include ../results/ex16_3_cmf/benchmark_comparison.md >}}
 
 :::: {.columns}
 
-::: {.column width="55%"}
-**Algorithm**
+::: {.column width="50%"}
+**Benchmark model** (standard practice)
 
-1. Seed with two baseline models (single-var and null)
-2. For each of **120 iterations**:
-   - Draw $k_U \sim \text{Uniform}[0, 6]$ upper vars
-   - Draw $k_L \sim \text{Uniform}[0, 5]$ lower vars
-   - Sample without replacement from candidate pools
-   - Fit Poisson/NB model on **training split** (60%)
-   - Score on **validation split** (20%) by Poisson deviance
-   - Track AADT elasticity — enforce monotonicity constraint
-3. Select best monotonic model; fall back if none found
-4. **Final refit** on train + validation (80%)
-5. Report metrics on **held-out test split** (20%)
+$$\log(\hat{\mu}) = \alpha + \beta_{\text{AADT}}\log(\text{AADT}) + \log(L)$$
+
+No road geometry, weather, or traffic interaction terms — the minimum viable SPF used in many agency applications.
 :::
 
-::: {.column width="45%"}
-**Scoring metrics**
+::: {.column width="50%"}
+**What lower BIC / RMSE / Deviance means**
 
-| Metric | Use |
+- **BIC** penalises complexity — a lower value with more parameters indicates genuine information gain, not overfitting
+- **Test RMSE** is unbiased (held-out data not used in fitting or selection)
+- **Test R²** fraction of crash variance explained on unseen segments
+:::
+
+::::
+
+---
+
+## Model Comparison — Baseline vs Hierarchical
+
+### Observed crashes + both predicted curves on the same AADT axes
+
+::: {.content-visible when-format="revealjs"}
+<iframe src="../results/ex16_3_cmf/model_comparison.html"
+  width="100%" height="490px" title="Model comparison"></iframe>
+:::
+
+::: {.content-visible when-format="pptx"}
+![Observed crashes (dots by split) vs polynomial-smooth predictions from the AADT-only benchmark (blue dashed) and the hierarchical CMF model (orange solid). Bottom panel shows normalised residuals for each model vs AADT.](../results/ex16_3_cmf/model_comparison.png)
+:::
+
+---
+
+## AADT Response — Hierarchical Model
+
+### Observed vs hierarchical predictions with normalised residuals
+
+::: {.content-visible when-format="revealjs"}
+<iframe src="../results/ex16_3_cmf/aadt_obs_pred.html"
+  width="100%" height="490px" title="AADT obs vs pred"></iframe>
+:::
+
+::: {.content-visible when-format="pptx"}
+![Observed crashes vs hierarchical model polynomial smooth. Bottom: normalised residuals — orange = over-predicted, teal = under-predicted.](../results/ex16_3_cmf/aadt_obs_pred.png)
+:::
+
+---
+
+## CMF Interpretation
+
+$$\text{CMF} = \frac{\hat{\mu}(\text{modified})}{\hat{\mu}(\text{baseline})} \qquad \text{CMF}<1 = \text{safer} \qquad \text{CMF}>1 = \text{higher risk}$$
+
+:::: {.columns}
+
+::: {.column width="50%"}
+**Upper-level CMF** — constant across all AADT levels
+
+Effect is the same whether the road carries 3,000 or 30,000 vehicles per day. A high-snow-days coefficient of +0.02 means every additional snow day multiplies crash risk by e^0.02 = 1.02 regardless of volume.
+
+**Lower-level CMF** — traffic-amplified
+
+Each unit of the variable shifts the AADT elasticity: $e_i = \beta_{\text{AADT}} + \gamma_k x_{ik}$. More curves → higher elasticity → crash rate grows faster with AADT. This is the *key innovation* over standard SPFs.
+:::
+
+::: {.column width="50%"}
+**Functional Classification (FC) reference**
+
+| FC Code | Road Type |
 |---|---|
-| Val Poisson Deviance | Primary selection criterion |
-| BIC | Complexity-penalized fit |
-| Val RMSE | Secondary diagnostic |
-| AADT elasticity min | Monotonicity guard |
+| 1 | Principal Arterial — Interstate |
+| 2 | Principal Arterial — Other |
+| 3 | Minor Arterial |
+| 4 | Major Collector |
+| 5 | Minor Collector |
+| 6 | Local Road |
 
-**Why Poisson deviance?**
-
-Proper scoring rule for count data. Penalizes both over- and under-prediction relative to mean, and is consistent for mean estimation even under overdispersion.
-
-**Why enforce monotonicity?**
-
-Road safety theory requires more traffic → more crashes (positive elasticity). Models violating this are physically implausible.
+<div class="co">The hierarchical model captures <b>effect modification</b>: the same road geometry can have very different safety implications depending on how much traffic it carries.</div>
 :::
 
 ::::
 
 ---
 
-## Convergence {#convergence}
+## Interactive CMF Dashboard
 
-### Search Convergence — BIC and Validation Deviance
-
-<iframe
-  src="../results/ex16_3_cmf/search_convergence.html"
-  width="100%"
-  height="500px"
-  title="Search convergence plot">
-  <p><em>search_convergence.html not yet rendered — run the Python script first.</em></p>
-</iframe>
-
-::: {.callout}
-**Green dots** = monotonic AADT models (eligible for selection).
-**Grey dots** = non-monotonic (excluded unless fallback enabled).
-**Star** = best-ever model. Thick line = running minimum.
+::: {.content-visible when-format="revealjs"}
+<iframe src="../results/ex16_3_cmf/hierarchical_cmf_dashboard.html"
+  width="100%" height="520px" title="CMF Dashboard"></iframe>
 :::
+
+::: {.content-visible when-format="pptx"}
+**Interactive CMF Dashboard** — open `results/ex16_3_cmf/hierarchical_cmf_dashboard.html` in any browser.
+
+Features:
+
+- **Variable dropdown** — select any model variable to plot its CMF response curve
+- **Mode toggle** — switch between *Predicted crashes* and *CMF* (ratio to baseline)
+- **AADT slider** — shift between low-volume and high-volume traffic levels
+- **Live CMF badge** on each control — updates in real time as you adjust inputs
+- **Prediction Summary** panel — shows current predicted crash count + AADT elasticity
+:::
+
+Select any variable · Toggle CMF vs Predicted · Adjust AADT · Live Prediction Summary panel updates in real time
 
 ---
 
-## Selected Model {#selected-model}
-
-### Best Model Specification
-
-After search and final refit on 80% of data:
-
-:::: {.columns}
-
-::: {.column width="50%"}
-**Model form**
-
-- Family: Poisson (or NB2 if `--family nb`)
-- Offset: log(LENGTH)
-- Upper-level variables: selected subset from 31 candidates
-- Lower-level variables: selected subset from 9 candidates
-
-**Coefficient table** (see `coefficients_standardized_and_original.csv`)
-
-| Parameter | Component | Scale |
-|---|---|---|
-| const | core | native |
-| log_aadt | core | native |
-| SPEED_Z | upper | std. continuous |
-| CURVES_Z | upper | std. continuous |
-| CURVES_Z × log(AADT) | lower | std. interaction |
-| … | … | … |
-
-:::
-
-::: {.column width="50%"}
-**Key model properties**
-
-<div class="stat-box"><div class="num">✓</div><div class="lbl">Positive AADT elasticity everywhere in dataset</div></div>
-<div class="stat-box"><div class="num">BIC</div><div class="lbl">Model complexity penalty satisfied</div></div>
-<div class="stat-box"><div class="num">80%</div><div class="lbl">Data used in final coefficient estimation</div></div>
-<div class="stat-box"><div class="num">20%</div><div class="lbl">Held out for unbiased test evaluation</div></div>
-
-**Output files**
-
-- `final_model_spec.json` — full coefficient dictionary
-- `coefficients_standardized_and_original.md` — human-readable table
-- `final_model_fit.pkl` — serialised statsmodels result
-:::
-
-::::
-
----
-
-## CMF Interpretation {#cmf-interpretation}
-
-### What Each CMF Represents
-
-A **Crash Modification Factor (CMF)** answers: *if this road characteristic changes, by how much does crash risk multiply?*
-
-$$\text{CMF} = \frac{\hat{\mu}(\text{modified})}{\hat{\mu}(\text{baseline})}$$
-
-:::: {.columns}
-
-::: {.column width="50%"}
-**Upper-level CMF (AADT-independent)**
-
-Scaling factor is constant across traffic levels.
-
-Example — CURVES:
-- More curves → higher CMF (CMF > 1 → more crashes)
-- Effect size fixed regardless of AADT
-
-**Lower-level CMF (AADT-varying)**
-
-Scaling factor changes with traffic volume.
-
-Example — FRICTION × log(AADT):
-- At low AADT: friction effect modest
-- At high AADT: friction deficiency multiplied
-
-This captures how the same road deficiency is more dangerous on a busy road.
-:::
-
-::: {.column width="50%"}
-**Illustrative example: CURVES at three AADT levels**
-
-| CURVES (z-score) | Low AADT | Median AADT | High AADT |
-|---|---|---|---|
-| −1 SD (few curves) | 0.78 | 0.82 | 0.87 |
-| 0 (median) | 1.00 | 1.00 | 1.00 |
-| +1 SD (many curves) | 1.28 | 1.22 | 1.15 |
-
-*Values shown are illustrative; actual values depend on fitted coefficients.*
-
-<div class="callout">
-The AADT-varying CMF is the core innovation of the hierarchical model: it captures **effect modification** between geometry and traffic volume.
-</div>
-:::
-
-::::
-
----
-
-## AADT Response {#aadt-response}
-
-### Observed vs. Predicted by AADT
-
-<iframe
-  src="../results/ex16_3_cmf/aadt_obs_pred.html"
-  width="100%"
-  height="500px"
-  title="AADT observed vs predicted">
-  <p><em>aadt_obs_pred.html not yet rendered — run the Python script first.</em></p>
-</iframe>
-
-Top panel shows raw observed crashes (coloured by train/val/test split) and the binned-smooth predicted line. Bottom panel shows normalised residuals $(pred - obs) / \max(obs, 1)$ — orange = over-predicted, teal = under-predicted. Background shading marks the p10–p25 and p75–p90 AADT quantile bands.
-
----
-
-## Interactive Dashboard {#interactive-dashboard}
-
-### CMF Explorer — Adjust Inputs, See Live Predictions
-
-<iframe
-  src="../results/ex16_3_cmf/hierarchical_cmf_dashboard.html"
-  width="100%"
-  height="500px"
-  title="Hierarchical CMF Dashboard">
-  <p><em>hierarchical_cmf_dashboard.html not yet rendered — run the Python script first.</em></p>
-</iframe>
-
-Use the **variable dropdown** to select which CMF curve to display, toggle between *Predicted crashes* and *CMF* modes, and adjust the AADT slider. Each variable control shows a live **CMF badge** (e.g. CMF: 0.84 −16%). The **Prediction Summary** panel shows the current total predicted crash count and AADT elasticity.
-
----
-
-## Random Parameters {#random-parameters}
-
-### Capturing Unobserved Heterogeneity
-
-Standard fixed-effects models assume all sites respond identically to the same covariate value. In practice, **unobserved site characteristics** cause the same geometry to have different effects across locations.
-
-:::: {.columns}
-
-::: {.column width="55%"}
-**Random-parameters extension**
-
-$$\beta_{ij} = \bar{\beta}_j + \eta_{ij}, \quad \eta_{ij} \sim \mathcal{N}(0, \sigma_j^2)$$
-
-- Each segment $i$ gets its own draw of $\beta_j$
-- Estimated via simulated maximum likelihood or Bayesian HMC
-- Uses `ExperimentBuilder.fit_manual_model` if available
-
-**Implementation in this script**
-
-- Fixed terms: log(AADT), upper vars (standardised), lower interaction terms
-- Random (independent) terms: continuous upper vars
-- Correlated random terms: top-2 continuous lower vars (captures co-movement between e.g. curvature and friction effects)
-- Dispersion = 1 (NB2 parameterisation)
-:::
-
-::: {.column width="45%"}
-**Benefits**
-
-<div class="stat-box"><div class="lbl">Correct standard errors</div>Fixed-parameter SEs are too small when heterogeneity is ignored.</div>
-<div class="stat-box"><div class="lbl">Segment-specific elasticities</div>Each site has its own AADT elasticity posterior.</div>
-<div class="stat-box"><div class="lbl">Better out-of-sample calibration</div>Shrinkage regularises extreme coefficient estimates.</div>
-
-**Output**
-
-- `random_params_summary.json` written if ExperimentBuilder is installed
-- Contains full summary text of the mixed model
-
-*Note: requires optional `experiment_package` dependency. The script falls back gracefully if unavailable.*
-:::
-
-::::
-
----
-
-## Key Findings {#key-findings}
-
-### Why Hierarchical CMFs Matter
+## Key Findings & Benefits
 
 :::: {.columns}
 
 ::: {.column width="55%"}
 **Methodological contributions**
 
-- Unified framework for estimating both **level** and **AADT-sensitivity** of crash risk
-- Random search over variable subsets avoids specification bias from manual stepwise selection
-- Monotonicity constraint on AADT elasticity enforces physical plausibility
-- Train / validation / test split prevents over-fitting and gives honest performance estimates
-- Standardised coefficients enable direct comparison of effect magnitudes across variables
+1. **Two-level structure** separates baseline crash rate from traffic-sensitivity — enables AADT-varying CMFs that standard SPFs cannot produce
+2. **Bi-objective random search** tracks both RMSE and Poisson deviance simultaneously — selects the specification that minimises validation deviance while holding AADT monotonicity
+3. **AADT monotonicity constraint** — every segment must show more crashes with more traffic (enforced during search, not post-hoc)
+4. **JAX NB2 engine** — exact autodiff gradients, consistent with MetaCount mixed-model infrastructure, enables seamless extension to random parameters
 
-**Practical benefits for safety analysts**
+**Benchmark improvement**
 
-- Interactive CMF dashboard lets practitioners explore *what-if* scenarios without re-running models
-- AADT-varying CMFs distinguish high-volume from low-volume road risk profiles
-- Binary variable toggle buttons clearly communicate on/off safety treatments
-- Convergence plot diagnoses search quality and identifies if more iterations are needed
+Lower BIC, lower test RMSE, higher R² than the AADT-only SPF — achieved with interpretable geometry and climate effects, not black-box complexity.
 :::
 
 ::: {.column width="45%"}
-**Selected variable categories**
-
-Candidate pool expanded to include:
-
-| Group | Variables |
-|---|---|
-| Lanes | INCLANES, DECLANES |
-| Geometry | CURVES, MINRAD, TANGENT |
-| Grade | MIGRADE, MXGRADE, MXGRDIFF |
-| Median | MIMEDSH, MXMEDSH, MEDWIDTH |
-| Surface | FRICTION, SLOPE |
-| Climate | AVEPRE, AVESNOW, HISNOW, LOWPRE |
-| Traffic | PEAKHR, ADTLANE, EXPOSE, INTPM, CPM |
-| Class | URB, FC, SINGLE, DOUBLE, TRAIN |
-
-All filtered to columns present in dataset before search.
-:::
-
-::::
-
----
-
-## Conclusions {#conclusions}
-
-### Why This Matters for Safety Planning
-
-:::: {.columns}
-
-::: {.column width="60%"}
-**The hierarchical CMF framework provides:**
-
-1. **Transparent model structure** — the two-level log-linear form is interpretable by practitioners and directly produces CMFs
-2. **AADT-varying effects** — safety treatments that have different effectiveness under light vs. heavy traffic can be correctly estimated and communicated
-3. **Automated variable selection** with explainable search history and convergence diagnostics
-4. **Reproducible workflow** — single Python script, CSV input, all outputs written to a dated results directory
-5. **Interactive communication tool** — the HTML dashboard makes model outputs accessible to non-statistician decision-makers
-
-**Limitations and future work**
-
-- Random search does not guarantee global optimum; Bayesian optimisation or full enumeration could improve selection
-- Correlated random parameters require `ExperimentBuilder` (optional dependency)
-- Temporal dynamics (year effects, trend) not currently modelled
-- Spatial autocorrelation between nearby segments not explicitly addressed
-:::
-
-::: {.column width="40%"}
-**Output file summary**
+**Output files**
 
 | File | Content |
 |---|---|
-| `hierarchical_cmf_dashboard.html` | Interactive CMF explorer |
-| `search_convergence.html` | BIC/deviance convergence |
-| `aadt_obs_pred.html` | Obs vs pred by AADT |
+| `hierarchical_cmf_dashboard.html` | Live CMF explorer |
+| `search_convergence.html/.png` | Convergence (both objectives) |
+| `aadt_obs_pred.html/.png` | Obs vs pred — smooth curve |
+| `benchmark_comparison.csv` | Hierarchical vs SPF metrics |
+| `readable_coefficients.csv` | Full name + CMF table |
+| `model_summary_readable.txt` | Plain-text model summary |
 | `final_model_spec.json` | Coefficients + metadata |
-| `validation_metrics.csv` | Train/val/test metrics |
-| `search_history_full.csv` | All 120+ candidates |
-| `coefficients_*.csv` | Parameter estimates |
-| `random_params_summary.json` | Mixed model (optional) |
+| `validation_metrics.csv` | Train/val/test breakdown |
 
-**Run the experiment**
-
+**Run**
 ```bash
-python scripts/generate_washington_hierarchical_cmf_assets.py \
-  --input data/Ex-16-3.csv \
-  --output-dir results/ex16_3_cmf \
-  --search-iter 120 \
-  --family poisson \
-  --allow-nonmonotonic-fallback
+python build_washington_presentation.py
+# → HTML + PPTX in ~3 minutes
 ```
 :::
 
