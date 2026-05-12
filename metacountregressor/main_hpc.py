@@ -1408,7 +1408,10 @@ def compute_standard_errors(params, objective):
 
     # Mark unidentified directions with nan
     # A parameter is unidentified if it loads primarily onto a zero-eigenvalue direction
-    unidentified_loading = np.abs(eigvecs[:, ~identified]).max(axis=1) > 0.1
+    if (~identified).any():
+        unidentified_loading = np.abs(eigvecs[:, ~identified]).max(axis=1) > 0.1
+    else:
+        unidentified_loading = np.zeros(eigvecs.shape[0], dtype=bool)
     diag_cov             = np.diag(cov_np)
     diag_cov             = np.where(unidentified_loading, np.nan, diag_cov)
     diag_cov             = np.where(diag_cov < 0,         np.nan, diag_cov)

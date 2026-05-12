@@ -1,6 +1,8 @@
 Component,Variable,Full Name,Coefficient,CMF
-Core,Intercept,Intercept,-7.57551,
-Core,log(AADT),log(AADT) Elasticity,0.9385,
-Upper (AADT-independent),LANES,Total Lane Count — both directions (lanes),-0.01033,0.9912
-Upper (AADT-independent),WIDTH,Pavement Width (ft),-0.14308,0.9912
-Lower (AADT interaction),SPEED,Posted Speed Limit (mph),-0.01459,varies with AADT
+Core,Intercept,Intercept,-6.61523,
+Core,log(AADT),log(AADT) Elasticity,0.84274,
+Upper (AADT-independent),DOUBLE,Double-Unit Trucks (%),-0.20019,0.9576
+Upper (AADT-independent),MEDWIDTH,Median Width (ft),0.0564,1.0406
+Upper (AADT-independent),MIMEDSH,Minimum Median/Shoulder Width (ft),-0.13393,0.9196
+Upper (AADT-independent),MXGRDIFF,Max-Min Grade Difference (%) — difference between steepest and flattest grade on segment,0.08083,1.0414
+Lower (AADT interaction),AVEPRE,Average Annual Precipitation (in/yr),0.00587,varies with AADT

@@ -54,7 +54,7 @@ run([
     "--families",          "both",          # search NB2 + Poisson, pick best BIC
     "--family",            "nb",            # final refit family
     "--candidate-profile", "expanded",
-    "--max-upper-terms",   "6",
+    "--max-upper-terms",   "10",
     "--max-lower-terms",   "4",
     "--allow-nonmonotonic-fallback",
 ])

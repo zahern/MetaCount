@@ -4,7 +4,7 @@
 | Train rows | 165 |
 | Validation rows | 55 |
 | Test rows | 55 |
-| Search iterations | 1000 |
+| Search iterations | 600 |
 | Candidate profile | expanded |
 | Family | nb |
 | AADT column | AADT |
@@ -14,5 +14,5 @@
 | Allow nonmonotonic fallback | yes |
 | Upper candidate count | 32 |
 | Lower candidate count | 16 |
-| Selected upper vars | LANES, WIDTH |
-| Selected lower vars | SPEED |
+| Selected upper vars | DOUBLE, MEDWIDTH, MIMEDSH, MXGRDIFF |
+| Selected lower vars | AVEPRE |

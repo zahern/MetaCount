@@ -4,39 +4,45 @@
   "y_col": "FREQ",
   "offset_col": "OFFSET",
   "selected_upper_model_vars": [
-    "LANES_Z",
-    "WIDTH_Z"
+    "DOUBLE_Z",
+    "MEDWIDTH_Z",
+    "MIMEDSH_Z",
+    "MXGRDIFF_Z"
   ],
   "selected_lower_model_vars": [
-    "SPEED_Z"
+    "AVEPRE_Z"
   ],
   "selected_upper_raw_vars": [
-    "LANES",
-    "WIDTH"
+    "DOUBLE",
+    "MEDWIDTH",
+    "MIMEDSH",
+    "MXGRDIFF"
   ],
   "selected_lower_raw_vars": [
-    "SPEED"
+    "AVEPRE"
   ],
   "coefficients": {
-    "const": -7.575510986612722,
-    "log_aadt": 0.9384953958892557,
-    "upper::LANES_Z": -0.010331644582236184,
-    "upper::WIDTH_Z": -0.14307715857369913,
-    "lower::SPEED_Z*log_aadt": -0.014587873689441989
+    "const": -6.615231313846183,
+    "log_aadt": 0.8427380198274569,
+    "upper::DOUBLE_Z": -0.20019217096080982,
+    "upper::MEDWIDTH_Z": 0.05640403381027534,
+    "upper::MIMEDSH_Z": -0.13393262379848755,
+    "upper::MXGRDIFF_Z": 0.08082666680538719,
+    "lower::AVEPRE_Z*log_aadt": 0.005868135702686672
   },
   "aadt_monotonicity": {
     "trainval": {
-      "aadt_elasticity_min": 0.9246200429002737,
-      "aadt_elasticity_p10": 0.9246200429002737,
-      "aadt_elasticity_median": 0.9507104502299834,
-      "aadt_elasticity_p90": 0.9507104502299834,
+      "aadt_elasticity_min": 0.835772582508068,
+      "aadt_elasticity_p10": 0.8360979585919137,
+      "aadt_elasticity_median": 0.8432562324365188,
+      "aadt_elasticity_p90": 0.8501892459153846,
       "aadt_elasticity_share_positive": 1.0
     },
     "test": {
-      "aadt_elasticity_min": 0.9246200429002737,
-      "aadt_elasticity_p10": 0.9246200429002737,
-      "aadt_elasticity_median": 0.9507104502299834,
-      "aadt_elasticity_p90": 0.9507104502299834,
+      "aadt_elasticity_min": 0.835772582508068,
+      "aadt_elasticity_p10": 0.8360979585919137,
+      "aadt_elasticity_median": 0.8422300463259286,
+      "aadt_elasticity_p90": 0.8506647955763899,
       "aadt_elasticity_share_positive": 1.0
     }
   }
