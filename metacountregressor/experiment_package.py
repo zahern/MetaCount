@@ -935,11 +935,14 @@ class ExperimentBuilder:
 
             # Attempt 0 uses cluster-based seeding; remaining attempts fall
             # back to decreasing noise perturbations of the single-class fit.
+
+            # Always guarantee at least some noise for all but the last fallback
             retry_configs = [
                 ("cluster", 0),
                 (0.05, 1),
                 (0.02, 2),
-                (0.00, 3),
+                (0.01, 3),  # never zero noise except as a last fallback
+                ("force_min_noise", 4),  # last fallback: forcibly add small noise if all else fails
             ]
 
             for noise_scale, seed in retry_configs:
@@ -952,17 +955,30 @@ class ExperimentBuilder:
                             )
                             theta_init = np.concatenate(per_class)
                         except Exception:
+                            # fallback: add moderate noise
                             theta_init = np.concatenate([
                                 theta_1 + rng.normal(0.0, 0.05, K_base)
                                 for _ in range(C)
                             ])
-                    elif noise_scale > 0.0:
+                    elif noise_scale == "force_min_noise":
+                        # forcibly guarantee different initializations
                         theta_init = np.concatenate([
-                            theta_1 + rng.normal(0.0, noise_scale, K_base)
-                            for _ in range(C)
+                            theta_1 + rng.normal(0.0, 0.01, K_base) + 0.01 * (i+1)
+                            for i in range(C)
                         ])
                     else:
-                        theta_init = np.concatenate([theta_1.copy() for _ in range(C)])
+                        # always add noise, never allow all classes to be identical
+                        theta_init = np.concatenate([
+                            theta_1 + rng.normal(0.0, noise_scale, K_base) + 1e-4 * (i+1)
+                            for i in range(C)
+                        ])
+
+                    # Check: if all classes are still identical, forcibly add small offset
+                    theta_blocks = np.split(theta_init, C)
+                    if all(np.allclose(theta_blocks[0], tb) for tb in theta_blocks[1:]):
+                        for i in range(1, C):
+                            theta_blocks[i] = theta_blocks[i] + 1e-3 * i
+                        theta_init = np.concatenate(theta_blocks)
 
                     gamma_init = np.zeros((C - 1) * (K_mem + 1), dtype=float)
                     init_params = np.concatenate([theta_init, gamma_init])

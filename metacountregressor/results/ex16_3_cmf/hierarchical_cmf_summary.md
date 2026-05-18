@@ -7,44 +7,62 @@ Configuration
 | Train rows | 165 |
 | Validation rows | 55 |
 | Test rows | 55 |
-| Search iterations | 600 |
+| Search iterations | 2100 |
+| Search method | harmony |
+| Harmony HMS | 12 |
+| Harmony HMCR | 0.9 |
+| Harmony PAR | 0.35 |
 | Candidate profile | expanded |
-| Family | nb |
+| Final family | nb |
+| Search families | nb, poisson |
+| Benchmark upper vars (literature) | LOWPRE, GBRPM, FRICTION, EXPOSE, INTPM, CPM, HISNOW |
 | AADT column | AADT |
 | Offset used | yes |
 | Enforce AADT increase | yes |
 | Min AADT elasticity | 0.0 |
 | Allow nonmonotonic fallback | yes |
-| Upper candidate count | 32 |
-| Lower candidate count | 16 |
-| Selected upper vars | DOUBLE, MEDWIDTH, MIMEDSH, MXGRDIFF |
-| Selected lower vars | AVEPRE |
+| Pareto benchmark dominance required | yes |
+| Final benchmark dominance required | yes |
+| Selection benchmark BIC (train) | 1195.2218 |
+| Selection benchmark RMSE (validation) | 17.63176 |
+| Selected by Pareto iteration | 1278 |
+| Upper candidate count | 29 |
+| Lower candidate count | 15 |
+| Selected upper vars | CURVES, GBRPM, MEDWIDTH, MIGRADE, SLOPE, SPEED, WIDTH |
+| Selected lower vars | AVEPRE, MXMEDSH, SLOPE |
 
 Validation and held-out crash-frequency metrics
 | Split | n | obs_mean | pred_mean | rmse | mae | bias | corr | r2 | poisson_dev |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| train (selection fit) | 165 | 17.09090909090909 | 18.570679880495984 | 15.809146060859698 | 8.0141223465914 | 1.4797707895868906 | 0.7411459664134352 | 0.438488800011789 | 1204.0615243318587 |
-| validation (selection fit) | 55 | 19.12727272727273 | 17.169843000455657 | 17.166629047870643 | 11.257458828742678 | -1.95742972681707 | 0.6438580108921568 | 0.39970155849655276 | 707.9576088853765 |
-| train+validation (final fit) | 220 | 17.6 | 19.640174615607645 | 16.804382574029816 | 9.067436797558587 | 2.0401746156076426 | 0.7275148591669969 | 0.38253184274010343 | 1903.6446653267972 |
-| test (held out) | 55 | 13.927272727272728 | 14.681071799672456 | 16.177170175962058 | 7.651411417772466 | 0.7537990723997294 | 0.666000993144132 | 0.4059546540320452 | 349.8683216080811 |
+| train (selection fit) | 165.00 | 17.0909 | 18.5380 | 15.5309 | 8.0752 | 1.4471 | 0.745937 | 0.458081 | 1,263.84 |
+| validation (selection fit) | 55.0000 | 19.1273 | 19.3096 | 14.2129 | 9.9172 | 0.182314 | 0.772304 | 0.588507 | 497.71 |
+| train+validation (final fit) | 220.00 | 17.6000 | 18.8478 | 14.8340 | 8.3427 | 1.2478 | 0.761984 | 0.518847 | 1,703.28 |
+| test (held out) | 55.0000 | 13.9273 | 16.1600 | 11.6113 | 7.1498 | 2.2327 | 0.851983 | 0.693959 | 289.96 |
 
 Test calibration by predicted decile
 | Predicted Bin | N | Observed Mean | Predicted Mean |
 | --- | --- | --- | --- |
-| (0.981, 2.339] | 6 | 1.8333 | 1.5555 |
-| (2.339, 3.198] | 5 | 3.2 | 2.8041 |
-| (3.198, 3.877] | 6 | 2.3333 | 3.4668 |
-| (3.877, 6.134] | 5 | 4.0 | 5.2682 |
-| (6.134, 7.67] | 6 | 5.5 | 6.8854 |
-| (7.67, 10.65] | 5 | 7.6 | 9.4951 |
-| (10.65, 12.529] | 5 | 14.2 | 11.7565 |
-| (12.529, 18.789] | 6 | 16.6667 | 15.5852 |
-| (18.789, 35.056] | 5 | 38.0 | 29.3412 |
-| (35.056, 89.182] | 6 | 45.5 | 58.1959 |
+| (0.959, 2.276] | 6.0000 | 2.8333 | 1.6420 |
+| (2.276, 3.357] | 5.0000 | 1.8000 | 2.9194 |
+| (3.357, 4.171] | 6.0000 | 3.0000 | 3.6909 |
+| (4.171, 5.343] | 5.0000 | 2.2000 | 4.7222 |
+| (5.343, 8.546] | 6.0000 | 7.3333 | 6.9535 |
+| (8.546, 12.514] | 5.0000 | 9.4000 | 10.0820 |
+| (12.514, 14.222] | 5.0000 | 16.0000 | 13.1792 |
+| (14.222, 24.95] | 6.0000 | 12.8333 | 18.2381 |
+| (24.95, 41.969] | 5.0000 | 36.8000 | 31.0209 |
+| (41.969, 116.965] | 6.0000 | 46.5000 | 66.0061 |
 
 Outputs
 - search_history_full.csv
 - search_history_top25.md / .csv
+- pareto_selection_summary.md / .csv
+- harmony_search_summary.md / .csv
+- refinement_phase_traces.png
+- refinement_convergence_harmony.png
+- refinement_convergence_sa.png
+- search_phase_comparison.md / .csv / .png
+- refinement_convergence.png
 - model_settings.md
 - validation_metrics.md / .csv
 - test_calibration_deciles.md / .csv
@@ -64,3 +82,7 @@ Outputs
 - search_convergence.html
 - aadt_obs_pred.html
 - random_params_summary.json (if ExperimentBuilder available)
+- literature_vs_proposed_coefficients.md / .csv
+- literature_benchmark_reference.md
+- benchmark_metacount_summary.md
+- benchmark_metacount_coefficients.md / .csv

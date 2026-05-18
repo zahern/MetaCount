@@ -1,0 +1,9 @@
+Parameter,Benchmark coef,Proposed coef,Safety implication
+Intercept,-8.227983683000344,-6.718771576913614,higher value linked with lower crashes; weaker than benchmark
+Average Longitudinal Slope (%),,-1.5021923736983958,higher value linked with lower crashes; new or benchmark-missing term
+log(AADT),,0.8516712428611302,higher value linked with higher crashes; new or benchmark-missing term
+Average Longitudinal Slope (%) x log(AADT),,0.15370289570882642,higher value linked with higher crashes; new or benchmark-missing term
+Minimum Vertical Grade (%),,-0.06642544968140543,higher value linked with lower crashes; new or benchmark-missing term
+Grade-Break Rate per Mile,0.011866793934524111,0.02599856397851985,higher value linked with higher crashes; stronger than benchmark
+Number of Horizontal Curves (count),,-0.025426873484540886,higher value linked with lower crashes; new or benchmark-missing term
+Median Width (ft),,0.02223122723129324,higher value linked with higher crashes; new or benchmark-missing term

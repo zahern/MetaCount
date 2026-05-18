@@ -1,0 +1,7 @@
+Parameter,Model term,Literature benchmark coefficient,Proposed fixed coefficient,Proposed random distribution,Proposed random mean,Proposed random sd
+Intercept,const,-6.888304016464314,-8.071075413944937,,,
+Lane Width (ft),upper::WIDTH_Z,,-0.012445438295341131,normal,-0.21086,15.5988
+Maximum Median Shoulder Width (ft),upper::MXMEDSH_Z,,0.09062704454047793,normal,0.17209,21.74874
+Minimum Median Shoulder Width (ft),upper::MIMEDSH_Z,,-0.11126050065540852,normal,-0.16483,1.2528
+"Pavement Friction, Skid Number (higher = more grip) x log(AADT)",lower::FRICTION_Z*log_aadt,,-0.0011979979589484538,,,
+log(AADT),log_aadt,0.8731183402927425,0.9856257320332631,,,

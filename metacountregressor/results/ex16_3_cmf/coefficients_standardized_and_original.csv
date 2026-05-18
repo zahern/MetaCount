@@ -1,8 +1,13 @@
 Parameter,Component,Variable,Scale Type,Estimate (standardized fit scale),Std. Error,Estimate (original variable scale)
-const,core,const,native,-6.615231313846183,,-6.615231313846183
-log_aadt,core,log_aadt,native,0.8427380198274569,,0.8427380198274569
-upper::DOUBLE_Z,upper,DOUBLE,standardized-continuous,-0.20019217096080982,,-0.043363623274480775
-upper::MEDWIDTH_Z,upper,MEDWIDTH,standardized-continuous,0.05640403381027534,,0.03978433796481786
-upper::MIMEDSH_Z,upper,MIMEDSH,standardized-continuous,-0.13393262379848755,,-0.0838094122674733
-upper::MXGRDIFF_Z,upper,MXGRDIFF,standardized-continuous,0.08082666680538719,,0.040592520548973283
-lower::AVEPRE_Z*log_aadt,lower,AVEPRE,standardized-continuous,0.005868135702686672,,0.0025028929526591283
+const,core,const,native,-6.718771576913614,,-6.718771576913614
+log_aadt,core,log_aadt,native,0.8516712428611302,,0.8516712428611302
+upper::CURVES_Z,upper,CURVES,standardized-continuous,-0.07664085945246145,,-0.025426873484540886
+upper::GBRPM_Z,upper,GBRPM,standardized-continuous,0.04461275552479011,,0.02599856397851985
+upper::MEDWIDTH_Z,upper,MEDWIDTH,standardized-continuous,0.03151820431212543,,0.02223122723129324
+upper::MIGRADE_Z,upper,MIGRADE,standardized-continuous,-0.07144892860055094,,-0.06642544968140543
+upper::SLOPE_Z,upper,SLOPE,standardized-continuous,-1.2186090751404681,,-1.5021923736983958
+upper::SPEED_Z,upper,SPEED,standardized-continuous,-0.08510459852484276,,-0.015220954666968291
+upper::WIDTH_Z,upper,WIDTH,standardized-continuous,-0.27836962933408405,,-0.017248289978220803
+lower::AVEPRE_Z*log_aadt,lower,AVEPRE,standardized-continuous,0.010216580867985867,,0.0043576034281290485
+lower::MXMEDSH_Z*log_aadt,lower,MXMEDSH,standardized-continuous,0.011132020819334445,,0.004535742183501893
+lower::SLOPE_Z*log_aadt,lower,SLOPE,standardized-continuous,0.12468692217162787,,0.15370289570882642

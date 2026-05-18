@@ -1,0 +1,10 @@
+Variable,Role,Estimate,StdDev
+__INTERCEPT__,Nonrandom parameter,-8.22578414341131,
+Low-Precipitation Days per Year (precip < 1.5 in/month),Nonrandom parameter,60.389821936522296,
+Grade-Break Rate per Mile,Nonrandom parameter,-0.00925887392396418,
+"Pavement Friction, Skid Number (higher = more grip)",Nonrandom parameter,0.10578318877207589,
+Exposure Index,Random mean (normal),-0.06941048607826301,11.767937854397308
+Intersection Density (intersections per mile),Random mean (normal),0.004959585488706705,13.209543599257458
+Horizontal Curve Density (curves per mile),Random mean (normal),0.1564277843615053,8.751718783731036
+High-Snow Days per Year (snowfall > 1 in/day),Random mean (normal),0.2426219322630529,7.70625867284625
+NB2 Dispersion (alpha),Dispersion,11.07675289687326,

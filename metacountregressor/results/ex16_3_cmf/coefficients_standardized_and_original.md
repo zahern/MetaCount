@@ -1,9 +1,14 @@
 | Parameter | Component | Variable | Scale Type | Estimate (standardized fit scale) | Std. Error | Estimate (original variable scale) |
 | --- | --- | --- | --- | --- | --- | --- |
-| const | core | const | native | -6.615231313846183 | nan | -6.615231313846183 |
-| log_aadt | core | log_aadt | native | 0.8427380198274569 | nan | 0.8427380198274569 |
-| upper::DOUBLE_Z | upper | DOUBLE | standardized-continuous | -0.20019217096080982 | nan | -0.043363623274480775 |
-| upper::MEDWIDTH_Z | upper | MEDWIDTH | standardized-continuous | 0.05640403381027534 | nan | 0.03978433796481786 |
-| upper::MIMEDSH_Z | upper | MIMEDSH | standardized-continuous | -0.13393262379848755 | nan | -0.0838094122674733 |
-| upper::MXGRDIFF_Z | upper | MXGRDIFF | standardized-continuous | 0.08082666680538719 | nan | 0.040592520548973283 |
-| lower::AVEPRE_Z*log_aadt | lower | AVEPRE | standardized-continuous | 0.005868135702686672 | nan | 0.0025028929526591283 |
+| const | core | const | native | -6.7188 |  | -6.7188 |
+| log_aadt | core | log_aadt | native | 0.851671 |  | 0.851671 |
+| upper::CURVES_Z | upper | CURVES | standardized-continuous | -0.076641 |  | -0.025427 |
+| upper::GBRPM_Z | upper | GBRPM | standardized-continuous | 0.044613 |  | 0.025999 |
+| upper::MEDWIDTH_Z | upper | MEDWIDTH | standardized-continuous | 0.031518 |  | 0.022231 |
+| upper::MIGRADE_Z | upper | MIGRADE | standardized-continuous | -0.071449 |  | -0.066425 |
+| upper::SLOPE_Z | upper | SLOPE | standardized-continuous | -1.2186 |  | -1.5022 |
+| upper::SPEED_Z | upper | SPEED | standardized-continuous | -0.085105 |  | -0.015221 |
+| upper::WIDTH_Z | upper | WIDTH | standardized-continuous | -0.278370 |  | -0.017248 |
+| lower::AVEPRE_Z*log_aadt | lower | AVEPRE | standardized-continuous | 0.010217 |  | 0.004358 |
+| lower::MXMEDSH_Z*log_aadt | lower | MXMEDSH | standardized-continuous | 0.011132 |  | 0.004536 |
+| lower::SLOPE_Z*log_aadt | lower | SLOPE | standardized-continuous | 0.124687 |  | 0.153703 |

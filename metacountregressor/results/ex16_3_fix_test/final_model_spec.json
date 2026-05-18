@@ -1,0 +1,43 @@
+{
+  "family": "nb",
+  "aadt_col": "AADT",
+  "y_col": "FREQ",
+  "offset_col": "OFFSET",
+  "selected_upper_model_vars": [
+    "LANES_Z",
+    "WIDTH_Z"
+  ],
+  "selected_lower_model_vars": [
+    "SPEED_Z"
+  ],
+  "selected_upper_raw_vars": [
+    "LANES",
+    "WIDTH"
+  ],
+  "selected_lower_raw_vars": [
+    "SPEED"
+  ],
+  "coefficients": {
+    "const": -7.575510986612722,
+    "log_aadt": 0.9384953958892557,
+    "upper::LANES_Z": -0.010331644582236184,
+    "upper::WIDTH_Z": -0.14307715857369913,
+    "lower::SPEED_Z*log_aadt": -0.014587873689441989
+  },
+  "aadt_monotonicity": {
+    "trainval": {
+      "aadt_elasticity_min": 0.9246200429002737,
+      "aadt_elasticity_p10": 0.9246200429002737,
+      "aadt_elasticity_median": 0.9507104502299834,
+      "aadt_elasticity_p90": 0.9507104502299834,
+      "aadt_elasticity_share_positive": 1.0
+    },
+    "test": {
+      "aadt_elasticity_min": 0.9246200429002737,
+      "aadt_elasticity_p10": 0.9246200429002737,
+      "aadt_elasticity_median": 0.9507104502299834,
+      "aadt_elasticity_p90": 0.9507104502299834,
+      "aadt_elasticity_share_positive": 1.0
+    }
+  }
+}

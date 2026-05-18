@@ -1,0 +1,2 @@
+attempt,seed,exit_code,success,benchmark_bic,proposed_bic,beats_bic,benchmark_test_rmse,proposed_test_rmse,beats_rmse,beats_both,strict_selection_dominance,strict_final_dominance
+1,17,0,True,1607.72,1602.27,True,14.186,11.6113,True,True,True,True

@@ -1,23 +1,3 @@
-Random-parameters NB2  |  LL=-764.90  BIC=1583.73
+**Note:** The search finds the best *fixed-effects* NB2 specification (which variables to include and whether they enter as upper or lower terms). After the best specification is selected, a random-parameters refit is attempted using the MetaCount JAX engine — giving each site its own draw of the continuous predictor coefficients, capturing unobserved heterogeneity across road segments.
 
-COEFFICIENT TABLE
-  Fixed:       same value for every segment
-  Random-Ind:  independently distributed across segments (Mean +/- SD)
-  Random-Cor:  jointly distributed (see correlation matrix below)
-
-                                               Parameter       Type     Mean       SD
-                                               Intercept      Fixed  1.91191         
-                                               _log_aadt      Fixed  0.71371         
-                                          _inter_AVESNOW      Fixed  0.08248         
-                                         _inter_MEDWIDTH      Fixed -0.02375         
-                                           _inter_MINRAD      Fixed -0.03754         
-     Double-Unit Trucks, % of AADT [random, independent] Random-Ind -0.16004  4.77893
-Minimum Median Shoulder Width (ft) [random, independent] Random-Ind -0.12390  1.18901
-                                  NB2 Dispersion (alpha)      Fixed  0.38305         
-
-INTERPRETATION
-  A large SD on a variable means its effect varies substantially
-  across road segments — some sites respond much more (or less)
-  to that characteristic than the population average.
-  The correlation matrix shows whether two variables' effects
-  tend to move together across sites.
+The random-parameters model (`random_params_summary.json`) was not generated this run because the `ExperimentBuilder` dependency was not available in the subprocess path. Run from within the package directory for the full mixed-model refit.

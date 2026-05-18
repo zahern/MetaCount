@@ -4,45 +4,56 @@
   "y_col": "FREQ",
   "offset_col": "OFFSET",
   "selected_upper_model_vars": [
-    "DOUBLE_Z",
-    "MEDWIDTH_Z",
-    "MIMEDSH_Z",
-    "MXGRDIFF_Z"
+    "CPM_Z",
+    "GBRPM_Z",
+    "SLOPE_Z",
+    "WIDTH_Z"
   ],
   "selected_lower_model_vars": [
-    "AVEPRE_Z"
+    "AVEPRE_Z",
+    "SLOPE_Z"
   ],
   "selected_upper_raw_vars": [
-    "DOUBLE",
-    "MIMEDSH"
+    "CURVES",
+    "GBRPM",
+    "MEDWIDTH",
+    "MIGRADE",
+    "SLOPE",
+    "SPEED",
+    "WIDTH"
   ],
   "selected_lower_raw_vars": [
-    "AVESNOW",
-    "MEDWIDTH",
-    "MINRAD"
+    "AVEPRE",
+    "MXMEDSH",
+    "SLOPE"
   ],
   "coefficients": {
-    "const": -6.615231313846183,
-    "log_aadt": 0.8427380198274569,
-    "upper::DOUBLE_Z": -0.20019217096080982,
-    "upper::MEDWIDTH_Z": 0.05640403381027534,
-    "upper::MIMEDSH_Z": -0.13393262379848755,
-    "upper::MXGRDIFF_Z": 0.08082666680538719,
-    "lower::AVEPRE_Z*log_aadt": 0.005868135702686672
+    "const": -6.718771576913614,
+    "log_aadt": 0.8516712428611302,
+    "upper::CURVES_Z": -0.07664085945246145,
+    "upper::GBRPM_Z": 0.04461275552479011,
+    "upper::MEDWIDTH_Z": 0.03151820431212543,
+    "upper::MIGRADE_Z": -0.07144892860055094,
+    "upper::SLOPE_Z": -1.2186090751404681,
+    "upper::SPEED_Z": -0.08510459852484276,
+    "upper::WIDTH_Z": -0.27836962933408405,
+    "lower::AVEPRE_Z*log_aadt": 0.010216580867985867,
+    "lower::MXMEDSH_Z*log_aadt": 0.011132020819334445,
+    "lower::SLOPE_Z*log_aadt": 0.12468692217162787
   },
   "aadt_monotonicity": {
     "trainval": {
-      "aadt_elasticity_min": 0.835772582508068,
-      "aadt_elasticity_p10": 0.8360979585919137,
-      "aadt_elasticity_median": 0.8432562324365188,
-      "aadt_elasticity_p90": 0.8501892459153846,
+      "aadt_elasticity_min": 0.7341943399188192,
+      "aadt_elasticity_p10": 0.7523373086528268,
+      "aadt_elasticity_median": 0.7791916496248448,
+      "aadt_elasticity_p90": 1.0705928700979848,
       "aadt_elasticity_share_positive": 1.0
     },
     "test": {
-      "aadt_elasticity_min": 0.835772582508068,
-      "aadt_elasticity_p10": 0.8360979585919137,
-      "aadt_elasticity_median": 0.8422300463259286,
-      "aadt_elasticity_p90": 0.8506647955763899,
+      "aadt_elasticity_min": 0.7358066531872269,
+      "aadt_elasticity_p10": 0.7521630045157016,
+      "aadt_elasticity_median": 0.7761374926069068,
+      "aadt_elasticity_p90": 1.0762112152407866,
       "aadt_elasticity_share_positive": 1.0
     }
   }

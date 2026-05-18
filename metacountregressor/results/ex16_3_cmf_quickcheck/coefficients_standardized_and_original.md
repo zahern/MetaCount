@@ -1,0 +1,8 @@
+| Parameter | Component | Variable | Scale Type | Estimate (standardized fit scale) | Std. Error | Estimate (original variable scale) |
+| --- | --- | --- | --- | --- | --- | --- |
+| const | core | const | native | -8.071075413944937 | nan | -8.071075413944937 |
+| log_aadt | core | log_aadt | native | 0.9856257320332631 | nan | 0.9856257320332631 |
+| upper::MIMEDSH_Z | upper | MIMEDSH | standardized-continuous | -0.17780116069010415 | nan | -0.11126050065540852 |
+| upper::MXMEDSH_Z | upper | MXMEDSH | standardized-continuous | 0.2224249319745158 | nan | 0.09062704454047793 |
+| upper::WIDTH_Z | upper | WIDTH | standardized-continuous | -0.20085655155083892 | nan | -0.012445438295341131 |
+| lower::FRICTION_Z*log_aadt | lower | FRICTION | standardized-continuous | -0.005546854789800513 | nan | -0.0011979979589484538 |

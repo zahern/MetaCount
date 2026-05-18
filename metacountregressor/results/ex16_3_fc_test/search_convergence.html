@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Search Convergence</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  * { box-sizing:border-box; }
+  html, body {
+    margin:0; padding:0; width:100%; height:100%;
+    background:#0f1923; color:#e8edf2;
+    font-family:'Segoe UI',sans-serif; overflow:hidden;
+  }
+  .hdr { padding:10px 18px 3px; }
+  .hdr h2 { margin:0; font-size:1.0rem; color:#7fdee8; white-space:nowrap; }
+  .hdr p  { margin:2px 0 0; font-size:0.76rem; color:#8fa3b3; }
+  .leg {
+    display:flex; gap:14px; padding:3px 18px 4px;
+    font-size:0.74rem; color:#8fa3b3; flex-wrap:nowrap; align-items:center;
+  }
+  .ld { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:3px; flex-shrink:0; }
+  /* Two charts side by side, each exactly half width */
+  .charts {
+    display:flex; flex-direction:row; width:100%;
+    height:calc(100vh - 72px);
+  }
+  #bc, #rc { flex:1 1 50%; min-width:0; height:100%; }
+</style>
+</head>
+<body>
+<div class="hdr">
+  <h2>Ex-16-3 — Search Convergence</h2>
+  <p>Dotted = proposed path in order &nbsp;·&nbsp; Solid = running best &nbsp;·&nbsp;
+     Green = monotonic AADT &nbsp;·&nbsp; Grey = non-monotonic &nbsp;·&nbsp; Star = global best</p>
+</div>
+<div class="leg">
+  <span><span class="ld" style="background:#2a7f4f"></span>Monotonic</span>
+  <span><span class="ld" style="background:#8c959f"></span>Non-monotonic</span>
+  <span style="color:#ffd700">★ best</span>
+  <span>— running min</span>
+  <span style="color:#8fa3b3">····· proposed path</span>
+</div>
+<div class="charts">
+  <div id="bc"></div>
+  <div id="rc"></div>
+</div>
+<script>
+const D = {"iters": [1, 2, 3, 4, 5, 6, 7, 8], "bic": [1171.92519428276, 1931.7270619759213, 1188.1425021825762, 1180.4044144651755, 1922.3075876893497, 1177.649045986844, 1893.00848232433, 1882.8747710145385], "bic_rmin": [1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276, 1171.92519428276], "rmse": [17.703780292736674, 16.991932972602175, 18.73307858745088, 18.37408716743978, 16.755358209618528, 18.556065096332826, 16.58695028190725, 15.769142839723607], "rmse_rmin": [17.703780292736674, 16.991932972602175, 16.991932972602175, 16.991932972602175, 16.755358209618528, 16.755358209618528, 16.58695028190725, 15.769142839723607], "dev": [652.6977083589481, 659.3047246277007, 699.0184804192302, 690.3697247064637, 659.3110709755875, 737.7298477778802, 627.3114025445491, 589.5134541488061], "upper_vars": ["LANES_Z, WIDTH_Z", "LANES_Z, WIDTH_Z", "AVEPRE_Z, CURVES_Z, MIGRADE_Z, MXGRADE_Z, MXMEDSH_Z", "ACCESS_Z, MIGRADE_Z", "ACCESS_Z, CURVES_Z, FRICTION_Z, TANGENT_Z", "MINRAD_Z, MXGRADE_Z", "FC_1, MIGRADE_Z, SPEED_Z", "ACCESS_Z, FC_1, FRICTION_Z, MEDWIDTH_Z, MXMEDSH_Z, URB"], "lower_vars": ["SPEED_Z", "SPEED_Z", "AVESNOW_Z, HISNOW, LANES_Z, SLOPE_Z", "HISNOW, SLOPE_Z, SPEED_Z", "FRICTION_Z", "AVEPRE_Z, HISNOW, LANES_Z", "CURVES_Z, LANES_Z", "AVEPRE_Z, AVESNOW_Z, CURVES_Z, FRICTION_Z"], "monotonic": ["yes", "yes", "yes", "yes", "yes", "yes", "yes", "yes"], "phases": ["random", "random", "random", "random", "random", "random", "random", "random"], "dot_colors": ["#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8", "#7fdee8"], "best_bic_idx": 0, "best_rmse_idx": 7, "label": "Ex-16-3"};
+
+const BASE = {
+  template:'plotly_dark',
+  paper_bgcolor:'#0f1923',
+  plot_bgcolor:'#172232',
+  font:{color:'#c8d6e0', size:10},
+  margin:{l:60, r:18, t:38, b:44},
+  legend:{orientation:'h', y:-0.15, font:{size:9}, traceorder:'normal'},
+  xaxis:{title:'Search iteration', gridcolor:'#1e3045', zeroline:false},
+};
+
+const cd = D.iters.map((_,i) =>
+  [D.upper_vars[i], D.lower_vars[i], D.monotonic[i]]);
+const dot_hover =
+  'Iter %{x}<br>Value: %{y:.3f}<br>' +
+  'Upper: %{customdata[0]}<br>Lower: %{customdata[1]}<br>' +
+  'Monotonic: %{customdata[2]}<extra></extra>';
+
+function pathT(y, name) {
+  return {
+    x:D.iters, y, type:'scatter', mode:'lines', name,
+    line:{color:'rgba(160,200,240,0.15)', width:1.2, dash:'dot'},
+    showlegend:false, hoverinfo:'skip'
+  };
+}
+function dotsT(y, name) {
+  return {
+    x:D.iters, y, type:'scatter', mode:'markers', name,
+    marker:{color:D.dot_colors, size:6, opacity:0.85},
+    customdata:cd, hovertemplate:dot_hover
+  };
+}
+function envT(y, color, name) {
+  return {
+    x:D.iters, y, type:'scatter', mode:'lines', name,
+    line:{color, width:3, shape:'hv'}
+  };
+}
+function starT(idx, y, name) {
+  return {
+    x:[D.iters[idx]], y:[y[idx]], type:'scatter', mode:'markers', name,
+    marker:{symbol:'star', size:16, color:'#ffd700', line:{color:'#fff',width:1}},
+    hovertemplate:'BEST<br>Iter %{x}<br>%{y:.3f}<extra></extra>'
+  };
+}
+
+Plotly.newPlot('bc',
+  [pathT(D.bic,'proposed'), dotsT(D.bic,'BIC'), envT(D.bic_rmin,'#7fdee8','Running best'), starT(D.best_bic_idx,D.bic,'Best')],
+  {...BASE, title:{text:'BIC over iterations',font:{size:12}},
+    yaxis:{title:'BIC', gridcolor:'#1e3045', zeroline:false}},
+  {responsive:true, displayModeBar:false});
+
+Plotly.newPlot('rc',
+  [pathT(D.rmse,'proposed'), dotsT(D.rmse,'Val RMSE'), envT(D.rmse_rmin,'#f0b060','Running best'), starT(D.best_rmse_idx,D.rmse,'Best')],
+  {...BASE, title:{text:'Validation RMSE over iterations',font:{size:12}},
+    yaxis:{title:'Val RMSE', gridcolor:'#1e3045', zeroline:false}},
+  {responsive:true, displayModeBar:false});
+</script>
+</body>
+</html>

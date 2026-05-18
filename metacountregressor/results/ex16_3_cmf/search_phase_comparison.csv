@@ -1,0 +1,3 @@
+Phase,Phase Label,Iteration,Family,BIC,Val RMSE,Upper Vars,Lower Vars
+sa,Simulated Annealing,2203,nb,1147.8217591051366,16.25762139159641,"FC_1, MIMEDSH_Z",MXMEDSH_Z
+harmony,Harmony Search,1129,nb,1147.8217591051366,16.25762139159641,"FC_1, MIMEDSH_Z",MXMEDSH_Z

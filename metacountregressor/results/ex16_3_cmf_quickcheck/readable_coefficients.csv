@@ -1,0 +1,7 @@
+Component,Variable,Full Name,Coefficient,CMF
+Core,Intercept,Intercept,-8.07108,
+Core,log(AADT),log(AADT) Elasticity,0.98563,
+Upper (AADT-independent),MIMEDSH,Minimum Median Shoulder Width (ft),-0.1778,0.8947
+Upper (AADT-independent),MXMEDSH,Maximum Median Shoulder Width (ft),0.22242,1.0949
+Upper (AADT-independent),WIDTH,Lane Width (ft),-0.20086,0.9876
+Lower (AADT interaction),FRICTION,"Pavement Friction, Skid Number (higher = more grip)",-0.00555,varies with AADT

@@ -9,16 +9,19 @@
 
   CORE PARAMETERS
   --------------------------------------------------------------------
-  Intercept                                        -6.6152
-  log(AADT) elasticity                             +0.8427
+  Intercept                                        -6.7188
+  log(AADT) elasticity                             +0.8517
 
   UPPER-LEVEL TERMS  (direct effect — AADT-independent)
   Variable                                            Coef   Orig scale  CMF (1-unit)
   --------------------------------------------------------------------
-  Double-Unit Trucks, % of AADT                    -0.2002      -0.0434 (per SD)  CMF= 0.9576
-  Median Width (ft)                                +0.0564      +0.0398 (per SD)  CMF= 1.0406
-  Minimum Median Shoulder Width (ft)               -0.1339      -0.0838 (per SD)  CMF= 0.9196
-  Max-Min Grade Difference (%) - range of grades on segment    +0.0808      +0.0406 (per SD)  CMF= 1.0414
+  Number of Horizontal Curves (count)              -0.0766      -0.0254 (per SD)  CMF= 0.9749
+  Grade-Break Rate per Mile                        +0.0446      +0.0260 (per SD)  CMF= 1.0263
+  Median Width (ft)                                +0.0315      +0.0222 (per SD)  CMF= 1.0225
+  Minimum Vertical Grade (%)                       -0.0714      -0.0664 (per SD)  CMF= 0.9357
+  Average Longitudinal Slope (%)                   -1.2186      -1.5022 (per SD)  CMF= 0.2226
+  Posted Speed Limit (mph)                         -0.0851      -0.0152 (per SD)  CMF= 0.9849
+  Lane Width (ft)                                  -0.2784      -0.0172 (per SD)  CMF= 0.9829
 
   LOWER-LEVEL TERMS  (modify AADT elasticity — x × log(AADT) interaction)
 
@@ -28,10 +31,13 @@
 
   Variable                                            Coef  Interpretation
   --------------------------------------------------------------------
-  Average Annual Precipitation (in/yr)             +0.0059  => higher AADT sensitivity
+  Average Annual Precipitation (in/yr)             +0.0102  => higher AADT sensitivity
+  Maximum Median Shoulder Width (ft)               +0.0111  => higher AADT sensitivity
+  Average Longitudinal Slope (%)                   +0.1247  => higher AADT sensitivity
 
-  Base AADT elasticity (log_aadt coeff): +0.8427
-  Local elasticity = base + sum(lower_coeff_i * variable_i_std)
-  Positive elasticity for all segments = AADT monotonicity holds.
+  Base AADT elasticity (log_aadt coeff): +0.8517
+  Local elasticity_i = beta_AADT + sum(gamma_k * x_k_std_i)
+  'Monotonic AADT' constraint: elasticity > 0 for EVERY segment in dataset.
+  Meaning: more traffic always -> more crashes (no segment ever reverses).
 
 ======================================================================
