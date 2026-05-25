@@ -1457,6 +1457,406 @@ class ExperimentBuilder:
 
         return cmf_df[["Parameter", "Type", "Coefficient", "CMF(+1)", "Percent Change", "Interpretation"]]
 
+    # ── validate_before_fit ─────────────────────────────────────────
+
+    def validate_before_fit(
+        self,
+        variables: Optional[List[str]] = None,
+        aadt_col: Optional[str] = None,
+        vif_threshold: float = 10.0,
+        raw_aadt_threshold: float = 500.0,
+    ) -> dict:
+        """
+        Pre-fit data quality checks. Warns on:
+
+          1. AADT / exposure columns that appear un-logged
+             (median > raw_aadt_threshold → likely raw vehicle counts).
+          2. High collinearity: VIF > vif_threshold for any variable pair.
+          3. Near-constant or all-zero columns (zero-variance).
+          4. Outcome variable: variance-to-mean ratio (overdispersion flag).
+
+        Returns a dict with keys 'warnings' (list[str]) and 'vif_table'
+        (pd.DataFrame or None).
+        """
+        cols = variables or self._candidate_vars
+        warnings_out: List[str] = []
+
+        print("\n" + "=" * 70)
+        print("  PRE-FIT VALIDATION")
+        print("=" * 70)
+
+        # ── 1. AADT / exposure log-transform check ──────────────────
+        aadt_candidates = []
+        if aadt_col is not None:
+            aadt_candidates = [aadt_col]
+        else:
+            aadt_candidates = [c for c in cols
+                               if any(kw in c.upper()
+                                      for kw in ("AADT", "ADT", "VOLUME", "EXPO", "FLOW"))]
+
+        for col in aadt_candidates:
+            if col not in self.df.columns:
+                continue
+            med = self.df[col].median()
+            mn  = self.df[col].min()
+            if med > raw_aadt_threshold and mn >= 0:
+                msg = (
+                    f"  [WARN] '{col}': median={med:,.0f}  min={mn:.2f}  "
+                    f"→ looks like RAW traffic volume (not log-transformed). "
+                    f"If this is AADT, apply log({col}) before fitting."
+                )
+                warnings.warn(msg, UserWarning, stacklevel=2)
+                print(msg)
+                warnings_out.append(msg)
+            elif med < 0:
+                print(f"  [OK]   '{col}': median={med:.3f}  (looks log-transformed)")
+            else:
+                print(f"  [OK]   '{col}': median={med:.3f}  "
+                      f"(within reasonable range for a log-transformed or standardised variable)")
+
+        # ── 2. Near-constant / zero-variance ────────────────────────
+        for col in cols:
+            if col not in self.df.columns:
+                continue
+            s = self.df[col]
+            if s.nunique() <= 1:
+                msg = f"  [WARN] '{col}': near-constant (nunique={s.nunique()}) — will be excluded automatically."
+                warnings.warn(msg, UserWarning, stacklevel=2)
+                print(msg)
+                warnings_out.append(msg)
+
+        # ── 3. VIF collinearity check ────────────────────────────────
+        numeric_cols = [c for c in cols
+                        if c in self.df.columns
+                        and pd.api.types.is_numeric_dtype(self.df[c])
+                        and self.df[c].nunique() > 1]
+
+        vif_table = None
+        if len(numeric_cols) >= 2:
+            try:
+                from statsmodels.stats.outliers_influence import variance_inflation_factor
+                X = self.df[numeric_cols].dropna()
+                X = (X - X.mean()) / X.std().replace(0, 1)  # standardise for VIF stability
+                X_np = X.values
+                vif_vals = [
+                    variance_inflation_factor(X_np, i)
+                    for i in range(X_np.shape[1])
+                ]
+                vif_table = pd.DataFrame({"variable": numeric_cols, "VIF": vif_vals})
+                vif_table = vif_table.sort_values("VIF", ascending=False)
+
+                print(f"\n  Variance Inflation Factors  (threshold={vif_threshold}):")
+                print(f"  {'Variable':<25}  {'VIF':>8}")
+                print("  " + "-" * 36)
+                for _, row in vif_table.iterrows():
+                    flag = "  ← HIGH COLLINEARITY" if row["VIF"] > vif_threshold else ""
+                    print(f"  {row['variable']:<25}  {row['VIF']:>8.2f}{flag}")
+                    if row["VIF"] > vif_threshold:
+                        msg = (
+                            f"  [WARN] '{row['variable']}': VIF={row['VIF']:.1f} > {vif_threshold} "
+                            f"— consider dropping or orthogonalising this variable."
+                        )
+                        warnings.warn(msg, UserWarning, stacklevel=2)
+                        warnings_out.append(msg)
+            except ImportError:
+                print("  [INFO] statsmodels not available — skipping VIF check.")
+            except Exception as exc:
+                print(f"  [INFO] VIF check skipped: {exc}")
+
+        # ── 4. Outcome overdispersion ────────────────────────────────
+        y = self.df[self.y_col]
+        vr = y.var() / y.mean() if y.mean() > 0 else 0.0
+        zero_pct = 100.0 * (y == 0).mean()
+        print(f"\n  Outcome '{self.y_col}':  mean={y.mean():.3f}  "
+              f"var/mean={vr:.2f}  zeros={zero_pct:.1f}%")
+        if vr > 1.5:
+            print("  [OK]   Overdispersed → NB2 (dispersion=1) recommended.")
+        elif vr < 0.8:
+            msg = (f"  [WARN] '{self.y_col}': var/mean={vr:.2f} < 1 "
+                   f"— underdispersed; verify this is a count outcome.")
+            warnings.warn(msg, UserWarning, stacklevel=2)
+            print(msg)
+            warnings_out.append(msg)
+        else:
+            print("  [OK]   Near-Poisson dispersion.")
+
+        if len(warnings_out) == 0:
+            print("\n  No issues found.")
+        else:
+            print(f"\n  {len(warnings_out)} warning(s) raised — review before fitting.")
+
+        print("=" * 70 + "\n")
+
+        return {"warnings": warnings_out, "vif_table": vif_table}
+
+    # ── smoke_test ───────────────────────────────────────────────────
+
+    def smoke_test(
+        self,
+        fixed_terms: Optional[List[str]] = None,
+        model: str = "nb",
+        latent_classes: int = 2,
+        R: int = 50,
+    ) -> bool:
+        """
+        Quick end-to-end smoke test of the fitting pipeline.
+
+        Fits a small 2-class NB model on the first 3 fixed_terms (or
+        the first 3 candidate variables) to verify the full chain:
+          data prep → warm start → EM → LBFGS polish → summary
+
+        Returns True on success, False on any exception.
+
+        Usage::
+
+            ok = builder.smoke_test()
+            assert ok, "Fitting pipeline smoke test failed"
+        """
+        print("\n" + "=" * 70)
+        print("  SMOKE TEST  —  fitting pipeline")
+        print("=" * 70)
+
+        terms = fixed_terms or self._candidate_vars[:3]
+        terms = [t for t in terms if t in self.df.columns][:3]
+        if len(terms) < 1:
+            print("  [SKIP] No candidate variables available for smoke test.")
+            return False
+
+        spec = self.make_manual_spec(
+            fixed_terms=terms,
+            dispersion=1 if model == "nb" else 0,
+            latent_classes=latent_classes,
+        )
+
+        print(f"  Spec: model={model}  classes={latent_classes}  "
+              f"fixed_terms={terms}  R={R}")
+
+        try:
+            fit = self.fit_manual_model(manual_spec=spec, model=model, R=R,
+                                        print_report=False)
+            summary = fit.get("summary", {})
+            ll  = summary.get("loglik", float("nan"))
+            bic = summary.get("bic",    float("nan"))
+            k   = summary.get("num_parm", "?")
+            print(f"  Result : LL={ll:.2f}  k={k}  BIC={bic:.2f}")
+            if not np.isfinite(bic):
+                print("  [WARN] Non-finite BIC — optimizer may have diverged.")
+                return False
+            print("  PASS — fitting pipeline is operational.")
+            print("=" * 70 + "\n")
+            return True
+        except Exception as exc:
+            print(f"  FAIL — {exc}")
+            print("=" * 70 + "\n")
+            return False
+
+    # ── fit_split_class_models ──────────────────────────────────────
+
+    def fit_split_class_models(
+        self,
+        split_col: str,
+        fixed_terms: List[str],
+        model: str = "nb",
+        dispersion: int = 1,
+        membership_terms: Optional[List[str]] = None,
+        R: int = 200,
+        hypothesis_label: str = "split-class hypothesis",
+    ) -> dict:
+        """
+        Parallel validation of a latent-class hypothesis via observed splits.
+
+        Fits:
+          (a) A joint LC-2 model on the full dataset  (split_col as membership)
+          (b) A separate NB model on each level of split_col  (stratified fit)
+
+        This answers: "does an observed grouping variable (e.g. urban/rural)
+        explain latent class membership as well as the joint LC model?"
+
+        If the split-class models together achieve lower joint BIC than the
+        LC model (BIC_split_A + BIC_split_B < BIC_lc), the observed split is
+        informationally sufficient and the LC structure may be redundant.
+        Conversely, if the LC model has much lower BIC, the latent structure
+        captures heterogeneity that the observed split misses.
+
+        Parameters
+        ----------
+        split_col : str
+            Binary or low-cardinality column defining the observed groups
+            (e.g. 'URB', 'FC', 'road_class').
+        fixed_terms : list[str]
+            Outcome-equation variables for all models.
+        model : str
+            Model family — 'nb' or 'poisson'.
+        dispersion : int
+            1 for NB2, 0 for Poisson.
+        membership_terms : list[str], optional
+            Additional membership variables for the joint LC model.
+            split_col is always included.
+        R : int
+            Halton draws.
+        hypothesis_label : str
+            Label printed in the report header.
+
+        Returns
+        -------
+        dict with keys:
+            'lc_fit'      — full LC fit result
+            'split_fits'  — {level: fit_result} for each observed class
+            'comparison'  — pd.DataFrame ranked by BIC
+        """
+        self._ensure_columns_exist([split_col], "fit_split_class_models")
+
+        levels = sorted(self.df[split_col].dropna().unique())
+        if len(levels) < 2:
+            raise ValueError(f"split_col '{split_col}' must have at least 2 distinct values.")
+        if len(levels) > 6:
+            raise ValueError(
+                f"split_col '{split_col}' has {len(levels)} levels — "
+                "use a binary or low-cardinality column."
+            )
+
+        print("\n" + "=" * 72)
+        print(f"  SPLIT-CLASS HYPOTHESIS VALIDATION")
+        print(f"  Hypothesis : {hypothesis_label}")
+        print(f"  Split col  : '{split_col}'  levels={levels}")
+        print(f"  Fixed terms: {fixed_terms}")
+        print("=" * 72)
+
+        results = {}
+        comparison_rows = []
+
+        # ── (a) Joint LC model with split_col as membership ──────────
+        mem_terms = list(dict.fromkeys([split_col] + list(membership_terms or [])))
+        print(f"\n  [LC]   Fitting joint {len(levels)}-class model "
+              f"(membership={mem_terms}) ...")
+        try:
+            lc_spec = self.make_manual_spec(
+                fixed_terms=fixed_terms,
+                membership_terms=mem_terms,
+                dispersion=dispersion,
+                latent_classes=len(levels),
+            )
+            lc_fit = self.fit_manual_model(
+                manual_spec=lc_spec, model=model, R=R, print_report=False
+            )
+            lc_summary = lc_fit.get("summary", {})
+            lc_ll  = lc_summary.get("loglik", float("nan"))
+            lc_bic = lc_summary.get("bic",    float("nan"))
+            lc_k   = lc_summary.get("num_parm", "?")
+            print(f"         LL={lc_ll:.2f}  k={lc_k}  BIC={lc_bic:.2f}")
+            results["lc_fit"] = lc_fit
+            comparison_rows.append({
+                "Model": f"LC-{len(levels)} joint  (membership={split_col})",
+                "N": len(self.df),
+                "LL": lc_ll,
+                "k": lc_k,
+                "BIC": lc_bic,
+                "type": "lc",
+            })
+        except Exception as exc:
+            print(f"  [LC]   FAILED: {exc}")
+            results["lc_fit"] = None
+            comparison_rows.append({
+                "Model": f"LC-{len(levels)} joint", "N": len(self.df),
+                "LL": float("nan"), "k": "?", "BIC": float("nan"), "type": "lc",
+            })
+
+        # ── (b) Stratified models per observed class ─────────────────
+        split_fits = {}
+        split_bic_sum = 0.0
+        split_ll_sum  = 0.0
+
+        for level in levels:
+            mask = self.df[split_col] == level
+            df_sub = self.df[mask].reset_index(drop=True)
+            n_sub  = df_sub[self.id_col].nunique()
+            label  = f"{split_col}={level}"
+            print(f"\n  [SPLIT] Fitting {model.upper()} on '{label}' "
+                  f"(n_ids={n_sub}) ...")
+            try:
+                sub_builder = ExperimentBuilder(
+                    df=df_sub,
+                    id_col=self.id_col,
+                    y_col=self.y_col,
+                    offset_col=self.offset_col,
+                )
+                sub_spec = sub_builder.make_manual_spec(
+                    fixed_terms=fixed_terms,
+                    dispersion=dispersion,
+                    latent_classes=1,
+                )
+                sub_fit = sub_builder.fit_manual_model(
+                    manual_spec=sub_spec, model=model, R=R, print_report=False
+                )
+                sub_summary = sub_fit.get("summary", {})
+                sub_ll  = sub_summary.get("loglik", float("nan"))
+                sub_bic = sub_summary.get("bic",    float("nan"))
+                sub_k   = sub_summary.get("num_parm", "?")
+                print(f"         LL={sub_ll:.2f}  k={sub_k}  BIC={sub_bic:.2f}")
+                split_fits[level] = sub_fit
+                split_bic_sum += sub_bic if np.isfinite(sub_bic) else 0.0
+                split_ll_sum  += sub_ll  if np.isfinite(sub_ll)  else 0.0
+                comparison_rows.append({
+                    "Model": f"Single-class {model.upper()} | {label}",
+                    "N": n_sub,
+                    "LL": sub_ll,
+                    "k": sub_k,
+                    "BIC": sub_bic,
+                    "type": "split",
+                })
+            except Exception as exc:
+                print(f"  [SPLIT] '{label}' FAILED: {exc}")
+                split_fits[level] = None
+                comparison_rows.append({
+                    "Model": f"Single-class | {label}", "N": n_sub,
+                    "LL": float("nan"), "k": "?", "BIC": float("nan"), "type": "split",
+                })
+
+        results["split_fits"] = split_fits
+
+        # ── Summary table ────────────────────────────────────────────
+        print("\n\n" + "=" * 72)
+        print(f"  SPLIT-CLASS COMPARISON  —  {hypothesis_label}")
+        print("=" * 72)
+        df_cmp = pd.DataFrame(comparison_rows)
+        df_cmp = df_cmp.sort_values("BIC")
+        results["comparison"] = df_cmp
+
+        best_bic = df_cmp["BIC"].min()
+        hdr = (f"  {'Model':<46}  {'N':>6}  {'LL':>10}  {'k':>4}  "
+               f"{'BIC':>10}  {'dBIC':>8}")
+        print(hdr)
+        print("  " + "-" * (len(hdr) - 2))
+        for _, row in df_cmp.iterrows():
+            dbic = row["BIC"] - best_bic if np.isfinite(row["BIC"]) else float("nan")
+            ll_s  = f"{row['LL']:>10.1f}"  if np.isfinite(row["LL"])  else f"{'—':>10}"
+            bic_s = f"{row['BIC']:>10.1f}" if np.isfinite(row["BIC"]) else f"{'FAILED':>10}"
+            dbi_s = f"{dbic:>+8.1f}"       if np.isfinite(dbic)        else f"{'—':>8}"
+            print(f"  {row['Model']:<46}  {row['N']:>6}  {ll_s}  "
+                  f"{row['k']:>4}  {bic_s}  {dbi_s}")
+
+        # ── Interpretation ────────────────────────────────────────────
+        if np.isfinite(split_bic_sum) and split_bic_sum > 0:
+            lc_bic_val = next(
+                (r["BIC"] for r in comparison_rows if r["type"] == "lc"),
+                float("nan"),
+            )
+            print(f"\n  Summed BIC (stratified splits) : {split_bic_sum:.1f}")
+            if np.isfinite(lc_bic_val):
+                print(f"  Joint LC BIC                   : {lc_bic_val:.1f}")
+                delta = split_bic_sum - lc_bic_val
+                if delta > 0:
+                    print(f"  → LC model preferred by ΔBIC={delta:.1f}: "
+                          "latent structure captures heterogeneity the observed "
+                          "split misses.")
+                else:
+                    print(f"  → Observed split preferred by ΔBIC={-delta:.1f}: "
+                          f"'{split_col}' fully explains the class structure; "
+                          "LC may be redundant.")
+
+        print("=" * 72 + "\n")
+        return results
+
     # ── describe ────────────────────────────────────────────────────
 
     def describe(self):
@@ -1649,10 +2049,11 @@ class ExperimentBuilder:
         )
 
         D   = len(variables)
-        dim = 2 * D + 1
+        _dim = 2 * D + 2 if max_latent_classes > 1 else 2 * D + 1
+        _dim_note = f"2×{D} + 2  (roles+dists+dispersion+LC gene)" if max_latent_classes > 1 else f"2×{D} + 1  (roles+dists+dispersion)"
         print(f"\n  Evaluator ready:")
         print(f"    Variables          : {D}")
-        print(f"    Decision dimension : {dim}  (2×{D} + 1)")
+        print(f"    Decision dimension : {_dim}  ({_dim_note})")
         print(f"    Max latent classes : {max_latent_classes}")
         print(f"    Mode               : {mode}")
         print(f"    Draws (R)          : {R}")
@@ -1915,7 +2316,11 @@ class ExperimentBuilder:
             raise RuntimeError("Call build_evaluator() first.")
 
         D   = len(evaluator.vars)
-        dim = 2 * D + 1
+        # Decision vector: [roles(D) | dists(D) | dispersion_bit | lc_code?]
+        # The LC gene (index 2*D+1) is only present when max_latent_classes > 1.
+        # Without it the SA never generates valid LC solutions (IndexError in build_spec).
+        has_lc = getattr(evaluator, "max_latent_classes", 1) > 1
+        dim    = 2 * D + 2 if has_lc else 2 * D + 1
 
         print(f"\n  Running {algo.upper()} | dim={dim} | max_iter={max_iter} | seed={seed}")
 
@@ -1943,7 +2348,10 @@ class ExperimentBuilder:
 
             # Decode best
             D2  = len(evaluator.vars)
-            lc  = int(best_solution[2*D2+1]) % evaluator.max_latent_classes + 1
+            if has_lc and len(best_solution) > 2 * D2 + 1:
+                lc = int(best_solution[2*D2+1]) % evaluator.max_latent_classes + 1
+            else:
+                lc = 1
             n_mem_7 = sum(
                 1 for i, v in enumerate(evaluator.vars)
                 if int(best_solution[i]) == 7

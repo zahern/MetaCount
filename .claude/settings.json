@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c ':*)"
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from experiment_package import ExperimentBuilder; print\\('import OK'\\)\")",
+      "Bash(PYTHONIOENCODING=utf-8 \".venv/Scripts/python.exe\" experiment_lc_model_comparison.py)"
     ]
   }
 }

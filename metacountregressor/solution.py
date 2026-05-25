@@ -284,6 +284,23 @@ class ObjectiveFunction(object):
         self.pvalue_exceed = 0
         self._maximize = False  # do we maximize or minimize?
 
+        # --- Adaptive coefficient-problem pruning ---
+        # remove_zero_coeff (default True): remove fixed-effect variables whose
+        #   fitted coefficient is zero (within zero_coeff_tol) — these are
+        #   unidentifiable and must be dropped before reporting.
+        # sign_constraints: optional dict {var_name: +1|-1} to also enforce
+        #   expected sign direction.
+        # _coeff_problem_counts / _coeff_visit_counts persist across calls and
+        #   feed the UCB bandit in AdvancedSimulatedAnnealing / NSGA-2.
+        self.remove_zero_coeff = bool(kwargs.get('remove_zero_coeff', True))
+        self.zero_coeff_tol = float(kwargs.get('zero_coeff_tol', 1e-6))
+        self.sign_constraints = kwargs.get('sign_constraints', None)
+        self._coeff_problem_counts: dict = {}
+        self._coeff_visit_counts: dict = {}
+        # backward-compat aliases used by the UCB bandit
+        self._sign_violation_counts = self._coeff_problem_counts
+        self._sign_visit_counts = self._coeff_visit_counts
+
         x_data = sm.add_constant(x_data)
         standardize_the_data = 0
         if standardize_the_data:
@@ -2804,6 +2821,79 @@ class ObjectiveFunction(object):
             else:
                 return 1
 
+    def _check_coeff_problems(self, coeff_, coeff_names, dispersion):
+        """Check fitted fixed-effect coefficients for two problems that indicate
+        identifiability failure, and return block indices for get_block_to_delete.
+
+        1. Zero (or near-zero) coefficients — always checked when
+           ``self.remove_zero_coeff`` is True (the default).  A coefficient
+           of exactly 0 means the solver could not estimate that parameter,
+           which happens with perfect multicollinearity or a redundant variable.
+
+        2. Wrong-sign coefficients — checked when ``self.sign_constraints`` is
+           provided (dict of {var_name: +1|-1}).
+
+        Both types update ``_coeff_problem_counts`` / ``_coeff_visit_counts``
+        which feed the UCB bandit in AdvancedSimulatedAnnealing / NSGA-2 so that
+        repeatedly-problematic variables are progressively less likely to be
+        activated in future perturbations.
+
+        Only the fixed-effect block (first ``Kf`` coefficients) is examined.
+        """
+        if coeff_ is None or coeff_names is None:
+            return []
+
+        Kf = len(self.none_handler(self.fixed_fit))
+        if Kf == 0:
+            return []
+
+        try:
+            coeffs = np.array([float(c) for c in coeff_[:Kf]])
+        except Exception:
+            return []
+
+        names = list(coeff_names[:Kf])
+        violation_indices = []
+
+        _SKIP_NAMES = {'const', 'constant', 'Constant', 'CONSTANT', 'offset', 'EXPOSE'}
+
+        for i, (name, val) in enumerate(zip(names, coeffs)):
+            # Skip intercept/offset terms — their value of 0 is not a problem
+            if name in _SKIP_NAMES or str(name).lower() in ('const', 'constant', 'offset'):
+                continue
+            # Always update visit count
+            self._coeff_visit_counts[name] = self._coeff_visit_counts.get(name, 0) + 1
+            problem = False
+
+            # --- Zero-coefficient check (identifiability) ---
+            if self.remove_zero_coeff and abs(val) <= self.zero_coeff_tol:
+                problem = True
+                print(f'[ZERO COEFF] {name}: coeff={val} is zero/near-zero — removing '
+                      f'(violations={self._coeff_problem_counts.get(name, 0) + 1}, '
+                      f'visits={self._coeff_visit_counts[name]})')
+
+            # --- Wrong-sign check ---
+            if not problem and self.sign_constraints:
+                expected = self.sign_constraints.get(name)
+                if expected is not None:
+                    if (expected == 1 and val < 0) or (expected == -1 and val > 0):
+                        problem = True
+                        print(f'[WRONG SIGN] {name}: coeff={val:.4f} violates expected '
+                              f'sign {expected:+d} (violations='
+                              f'{self._coeff_problem_counts.get(name, 0) + 1}, '
+                              f'visits={self._coeff_visit_counts[name]})')
+
+            if problem:
+                self._coeff_problem_counts[name] = (
+                    self._coeff_problem_counts.get(name, 0) + 1)
+                violation_indices.append(i)
+
+        return violation_indices
+
+    # Keep old name as alias so existing callers are not broken
+    def _check_sign_violations(self, coeff_, coeff_names, dispersion):
+        return self._check_coeff_problems(coeff_, coeff_names, dispersion)
+
     def get_pvalue_info_alt(self, pvalues, names, sig_value=0.05, dispersion=0, is_halton=1, delete=0,
                             return_violated_terms=0):
 
@@ -3263,6 +3353,25 @@ class ObjectiveFunction(object):
         if self.pvalues is None:
             self.reset_sln()
             return obj_1
+
+        # --- Coefficient-problem pruning (zero coefficients + sign constraints) ---
+        # Remove any fixed-effect variable whose fitted coefficient is zero/near-zero
+        # (identifiability failure) or violates a sign_constraints entry, then refit
+        # once.  Mirrors the p-value removal loop below.
+        prob_idx = self._check_coeff_problems(self.coeff_, self.coeff_names, dispersion)
+        if prob_idx:
+            try:
+                self.get_block_to_delete(prob_idx, dispersion)
+                model_nature = self.get_distinct_model_parts(vector)
+                self.define_selfs_fixed_rdm_cor(model_nature)
+                layout = vector.copy()
+                obj_1, model_mod = self.makeRegression(model_nature, layout=layout, **a)
+                self.update_gbl_best(obj_1)
+                if self.pvalues is None:
+                    self.reset_sln()
+                    return obj_1
+            except Exception as e:
+                print(f'[COEFF PRUNE] refit failed: {e}')
 
         sub_slns.append([obj_1.copy()])
 

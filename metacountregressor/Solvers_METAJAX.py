@@ -218,9 +218,29 @@ class AdvancedSimulatedAnnealing:
             return allowed[0]
 
         allowed = np.array(allowed)
-        probs = ROLE_PROBS[allowed]
-        probs = probs / probs.sum()
+        probs = ROLE_PROBS[allowed].copy()
 
+        # --- UCB bandit: suppress variables with high sign-violation rates ---
+        # When the evaluator has accumulated sign-violation statistics from
+        # _check_sign_violations(), use a UCB-1 style score to downweight
+        # activation (role != 0) of variables that consistently produce
+        # wrong-sign coefficients.
+        if (not force_active
+                and 0 in allowed
+                and hasattr(self.evaluator, '_sign_violation_counts')
+                and hasattr(self.evaluator, '_sign_visit_counts')):
+            n_visits = self.evaluator._sign_visit_counts.get(var_name, 0)
+            n_viol = self.evaluator._sign_violation_counts.get(var_name, 0)
+            if n_visits >= 3:
+                # Violation rate in [0, 1]; apply a soft exclusion boost
+                viol_rate = n_viol / n_visits
+                if viol_rate >= 0.5:
+                    # Boost the probability mass on role=0 proportional to rate
+                    excl_boost = viol_rate  # 0.5 → ×1.5×, 1.0 → ×2.0×
+                    excl_idx = np.where(allowed == 0)[0]
+                    probs[excl_idx] *= (1.0 + excl_boost)
+
+        probs = probs / probs.sum()
         return np.random.choice(allowed, p=probs)
     
     
@@ -1249,9 +1269,22 @@ class NSGA2Engine:
             return allowed[0]
 
         allowed = np.array(allowed)
-        probs = ROLE_PROBS[allowed]
-        probs = probs / probs.sum()
+        probs = ROLE_PROBS[allowed].copy()
 
+        # UCB bandit adaptive sign-violation suppression (see AdvancedSimulatedAnnealing)
+        if (not force_active
+                and 0 in allowed
+                and hasattr(self.evaluator, '_sign_violation_counts')
+                and hasattr(self.evaluator, '_sign_visit_counts')):
+            n_visits = self.evaluator._sign_visit_counts.get(var_name, 0)
+            n_viol = self.evaluator._sign_violation_counts.get(var_name, 0)
+            if n_visits >= 3:
+                viol_rate = n_viol / n_visits
+                if viol_rate >= 0.5:
+                    excl_idx = np.where(allowed == 0)[0]
+                    probs[excl_idx] *= (1.0 + viol_rate)
+
+        probs = probs / probs.sum()
         return np.random.choice(allowed, p=probs)
     def _initialise_start_pop(self):
         D = self.dim_core   # ✅ define it here

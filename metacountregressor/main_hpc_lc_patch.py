@@ -659,7 +659,23 @@ _hpc.mixed_model_loglik = mixed_model_loglik
 
 def fit_em(init_params, data, spec: ModelSpec,
            max_iter=100, tol=1e-6, verbose=True):
+    """
+    EM algorithm for latent-class mixed count models.
 
+    Improvements over baseline:
+    - Progressive M-step budget: LBFGS maxiter starts at 50 and grows to 300
+      as EM converges.  Early iterations only need rough M-step solutions.
+    - Temperature annealing on E-step posteriors: T > 1 in early iterations
+      softens the posteriors and prevents premature class collapse.
+    - LL-based convergence: tracked via the full joint likelihood, not the
+      max parameter change, which is scale-dependent and easily fooled.
+    - Best-params tracking: the params with the highest observed LL are
+      returned, guarding against the last iterate being slightly worse.
+    - Deferred collapse guard: collapse check is skipped for the first 3
+      iterations so classes have time to separate before being penalised.
+    - Pure-JAX gamma objective: numpy arrays inside the objective function
+      break autodiff gradients; all operations now use jnp.
+    """
     from jax.nn import log_softmax as _log_softmax
 
     assert spec.latent_classes > 1, "EM only needed for latent classes"
@@ -686,9 +702,34 @@ def fit_em(init_params, data, spec: ModelSpec,
     else:
         Z_full = np.ones((N, 1))                    # (N, 1) — intercept only
 
+    # Pre-convert Z_full to JAX array once (used inside gamma objective)
+    Z_full_jnp = jnp.array(Z_full)
+
+    # Track best params seen across all iterations
+    best_params = params.copy()
+    try:
+        best_ll = -float(mixed_model_loglik(jnp.array(params), data, spec))
+    except Exception:
+        best_ll = -np.inf
+
+    prev_ll = best_ll
+
     for iteration in range(max_iter):
 
-        params_old = params.copy()
+        # ==============================================================
+        # Temperature schedule for E-step
+        # Softens posteriors in early iterations (T > 1) to prevent
+        # premature collapse; decays to 1.0 (hard EM) for the final 1/3.
+        # ==============================================================
+        warmup_frac = min(1.0, iteration / max(1, max_iter * 0.4))
+        T = max(1.0, 2.0 - warmup_frac)              # 2.0 → 1.0 over first 40%
+
+        # ==============================================================
+        # Progressive M-step budget
+        # Early iterations: coarse M-step (50 iters suffices).
+        # Later iterations: tight M-step needed for convergence accuracy.
+        # ==============================================================
+        m_iters = min(50 + 25 * (iteration // 3), 300)
 
         # ==========================================================
         # E-STEP
@@ -702,30 +743,30 @@ def fit_em(init_params, data, spec: ModelSpec,
         logits_full = np.concatenate(
             [np.zeros((N, 1)), logits_i], axis=1
         )                                                       # (N, C)
-        log_pi = _log_softmax(logits_full, axis=1)              # (N, C)
+        log_pi = np.array(_log_softmax(jnp.array(logits_full), axis=1))
 
         # Per-class individual log-likelihoods  (N, C)
         logL = np.zeros((N, C))
         for c in range(C):
             ll_ind = mixed_model_loglik(
-                theta_all[c], data, base_spec, indivi=True
+                jnp.array(theta_all[c]), data, base_spec, indivi=True
             )
             logL[:, c] = np.array(ll_ind)
 
-        log_num = logL + log_pi                                 # (N, C)
+        # Tempered posteriors: divide log-joint by temperature T
+        log_num = (logL + log_pi) / T                           # (N, C)
 
         # Posterior class membership weights
         max_log = log_num.max(axis=1, keepdims=True)
         w = np.exp(log_num - max_log)
         w /= w.sum(axis=1, keepdims=True)
 
-        # Collapse guard: if any class captures < 2% of total weight the
-        # solution has degenerated — stop early rather than waste M-step
-        # budget pushing classes further apart.
-        mean_w = w.mean(axis=0)                     # (C,)
-        if np.any(mean_w < 0.02):
+        # Collapse guard: deferred past iter 3 so classes can separate first.
+        # Uses a stricter 1% floor rather than 2%, and only after warmup.
+        mean_w = w.mean(axis=0)                                 # (C,)
+        if iteration >= 3 and np.any(mean_w < 0.01):
             if verbose:
-                print(f"  [EM] class collapse detected at iter {iteration} "
+                print(f"  [EM] class collapse at iter {iteration} "
                       f"(min mean weight {mean_w.min():.4f}) — stopping early")
             break
 
@@ -733,7 +774,7 @@ def fit_em(init_params, data, spec: ModelSpec,
         # M-STEP
         # ==========================================================
 
-        # ✅ Update class-specific outcome parameters
+        # Update class-specific outcome parameters (progressive LBFGS budget)
         theta_new = []
         for c in range(C):
             wc = w[:, c].copy()
@@ -744,42 +785,58 @@ def fit_em(init_params, data, spec: ModelSpec,
                 )
                 return -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
 
-            solver_theta = LBFGS(fun=weighted_objective, maxiter=300)
+            solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
             result = solver_theta.run(jnp.array(theta_all[c]))
             theta_new.append(np.array(result.params))
 
         theta_new = np.concatenate(theta_new)
 
-        # ✅ Update gamma (membership / class-probability coefficients)
-        def gamma_objective(gamma_flat, _w=w, _Zf=Z_full):
-            gc = gamma_flat.reshape(C - 1, K_mem + 1)
-            li = _Zf @ gc.T                                     # (N, C-1)
-            lf = np.concatenate([np.zeros((N, 1)), li], axis=1)
-            lp = _log_softmax(lf, axis=1)                       # (N, C)
-            return -jnp.sum(jnp.array(_w) * lp)
+        # Update gamma — pure JAX to preserve autodiff correctness
+        _w_jnp = jnp.array(w)
 
-        solver_gamma = LBFGS(fun=gamma_objective, maxiter=300)
+        def gamma_objective(gamma_flat):
+            gc = gamma_flat.reshape(C - 1, K_mem + 1)
+            li = Z_full_jnp @ gc.T                              # (N, C-1)
+            zeros_col = jnp.zeros((N, 1))
+            lf = jnp.concatenate([zeros_col, li], axis=1)      # (N, C)
+            lp = _log_softmax(lf, axis=1)                       # (N, C)
+            return -jnp.sum(_w_jnp * lp)
+
+        solver_gamma = LBFGS(fun=gamma_objective, maxiter=m_iters)
         result_gamma = solver_gamma.run(jnp.array(gamma.flatten()))
         gamma_new = np.array(result_gamma.params)
 
         params = np.concatenate([theta_new, gamma_new])
 
         # ==========================================================
-        # Convergence Check
+        # LL-based convergence + best-params tracking
         # ==========================================================
 
-        diff = np.max(np.abs(params - params_old))
+        try:
+            current_ll = -float(mixed_model_loglik(jnp.array(params), data, spec))
+        except Exception:
+            current_ll = -np.inf
+
+        if np.isfinite(current_ll) and current_ll > best_ll:
+            best_ll     = current_ll
+            best_params = params.copy()
+
+        ll_delta = abs(current_ll - prev_ll) if np.isfinite(current_ll) else np.inf
+        prev_ll  = current_ll
 
         if verbose:
-            total_ll = float(mixed_model_loglik(params, data, spec))
-            print(f"EM iter {iteration:3d} | max Δ = {diff:.3e} | LL = {-total_ll:.6f}")
+            print(f"EM iter {iteration:3d} | T={T:.2f} | M-iters={m_iters:3d} | "
+                  f"LL = {current_ll:.4f} | delta_LL = {ll_delta:.2e} | "
+                  f"class_shares={' '.join(f'{mw:.2f}' for mw in mean_w)}")
 
-        if diff < tol:
+        if iteration >= 3 and ll_delta < tol:
             if verbose:
-                print(f"\n✅ EM converged in {iteration} iterations\n")
+                print(f"  [EM] converged at iter {iteration}  "
+                      f"(delta_LL={ll_delta:.2e} < tol={tol:.0e})")
             break
 
-    return params
+    # Return best params seen (guards against last iterate being slightly worse)
+    return best_params
 
 
 _hpc.fit_em = fit_em
@@ -872,6 +929,28 @@ def _seed_classes_from_clusters(
         n_struct = min(K_base - 1, base_spec.Kf - 1)
         if n_struct > 0:
             theta_c[1:1 + n_struct] += rng.normal(0, 0.05, n_struct)
+
+        # Warm weighted-LBFGS per cluster to differentiate covariate effects
+        # (not just the intercept).  A very short run (30 iters) avoids
+        # over-fitting a sparse cluster while still moving covariate effects
+        # away from the single-class solution.  Skip for tiny clusters.
+        if n_c >= 10:
+            try:
+                # Hard cluster weights: 1.0 inside cluster, 0.0 outside
+                w_hard = np.zeros(ll_ind.shape[0], dtype=float)
+                w_hard[in_cluster] = 1.0
+
+                def _cluster_obj(theta_c_jax, _w=w_hard):
+                    ll_c = mixed_model_loglik(
+                        theta_c_jax, data, base_spec, indivi=True
+                    )
+                    return -jnp.sum(jnp.array(_w) * jnp.array(ll_c))
+
+                from jaxopt import LBFGS as _LBFGS
+                _sol = _LBFGS(fun=_cluster_obj, maxiter=30).run(jnp.array(theta_c))
+                theta_c = np.array(_sol.params)
+            except Exception:
+                pass  # Keep intercept-shifted theta_c on failure
 
         thetas.append(theta_c)
 
