@@ -50,7 +50,7 @@ def process_package_argumemnts():
 
 
 def main(args, **kwargs):
-    '''METACOUNT REGRESSOR TESTING ENVIRONMENT'''
+    '''METACOUNTREGRESSOR TESTING ENVIRONMENT'''
 
     '''
     TESTING_ENV = False

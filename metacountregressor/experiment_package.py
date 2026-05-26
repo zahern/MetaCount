@@ -225,6 +225,9 @@ class StructureEvaluatorLC(StructureEvaluator):
     def __init__(self, *args, max_latent_classes: int = 3, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_latent_classes = max(1, int(max_latent_classes))
+        # Populated after every fitness() call; read by BanditGuidedSA
+        # to avoid a second fit call for identifiability diagnostics.
+        self._last_fit_cache: Optional[dict] = None
 
     # ── build_spec ──────────────────────────────────────────────────
 
@@ -242,7 +245,12 @@ class StructureEvaluatorLC(StructureEvaluator):
         roles          = decision[:D]
         dists          = decision[D : 2*D]
         dispersion_bit = int(decision[2*D])
-        lc_code        = int(decision[2*D + 1])
+        # LC gene only present when max_latent_classes > 1 (dim = 2*D+2).
+        # When dim = 2*D+1 (single-class evaluator), default lc_code to 0.
+        if self.max_latent_classes > 1 and len(decision) > 2*D + 1:
+            lc_code = int(decision[2*D + 1])
+        else:
+            lc_code = 0
 
         use_nb          = dispersion_bit % 2 == 1
         latent_classes  = lc_code % self.max_latent_classes + 1
@@ -410,6 +418,14 @@ class StructureEvaluatorLC(StructureEvaluator):
           2. Perturb θ₁ to seed each class.
           3. Run EM (≤30 steps) then MLE polish.
 
+        Adaptive identifiability guard
+        --------------------------------
+        After every successful single-class fit the raw parameter vector is
+        screened for near-zero coefficients (|estimate| < _id_zero_tol).
+        Any active variable (role != 0) whose coefficient is essentially zero
+        is recorded as a failure in the role memory so that sample_allowed_role()
+        progressively avoids proposing that (variable, role) pair again.
+
         For membership variables specifically, the gamma params in the
         warm start are initialised to zero (constant class probs), which
         is the natural neutral starting point.
@@ -444,8 +460,23 @@ class StructureEvaluatorLC(StructureEvaluator):
             # ── Single-class path ──────────────────────────────────
             if C == 1:
                 model = CountModel(spec, data_train)
-                model.fit()
+                result_1 = model.fit()
                 bic = model.bic()
+
+                    # ── Adaptive identifiability guard + cache ─────────
+                # Store the fit so BanditGuidedSA can read t-stats
+                # without a second fit call.
+                self._last_fit_cache = {
+                    "params": np.asarray(result_1.params),
+                    "spec":   spec,
+                    "data":   data_train,
+                    "bic":    float(bic),
+                }
+                self._update_role_memory_from_fit(
+                    params   = self._last_fit_cache["params"],
+                    spec     = spec,
+                    decision = decision,
+                )
 
             # ── Multi-class path with warm start ───────────────────
             else:
@@ -501,6 +532,20 @@ class StructureEvaluatorLC(StructureEvaluator):
                 k   = len(params_c)
                 bic = k * np.log(n) - 2.0 * ll
 
+                # ── Store fit cache so BanditGuidedSA can read t-stats ──
+                self._last_fit_cache = {
+                    "params": params_c,
+                    "spec":   spec_c,
+                    "data":   data_train,
+                    "bic":    float(bic),
+                }
+                # Adaptive guard on the LC params (per-class fixed effects)
+                self._update_role_memory_from_fit(
+                    params   = params_c,
+                    spec     = spec_c,
+                    decision = decision,
+                )
+
                 class _Model:
                     params = params_c
                 model = _Model()
@@ -528,6 +573,64 @@ class StructureEvaluatorLC(StructureEvaluator):
         except Exception as e:
             print(f"  [fitness error] {e}")
             return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+
+    # ── Adaptive identifiability helper ─────────────────────────────
+
+    _id_zero_tol: float = 1e-3   # |coef| below this → treat as zero-effect
+
+    def _update_role_memory_from_fit(
+        self,
+        params:   np.ndarray,
+        spec,
+        decision: np.ndarray,
+    ) -> None:
+        """
+        Inspect fixed-effect coefficients and update the sign_violation counters
+        that sample_allowed_role() reads to down-weight bad (variable, role) pairs.
+
+        A variable is flagged as 'bad' when its fixed-effect estimate is
+        effectively zero (|β| < _id_zero_tol) AND it has a non-zero role —
+        meaning it is wasting a degree of freedom without contributing to fit.
+        This populates the _sign_visit_counts / _sign_violation_counts dicts
+        that already exist in the Solvers_METAJAX bandit hook.
+        """
+        if not (hasattr(self, "_sign_violation_counts")
+                and hasattr(self, "_sign_visit_counts")):
+            # Initialise lazily so vanilla SA still works without the memory
+            self._sign_violation_counts: Dict[str, int] = {}
+            self._sign_visit_counts:     Dict[str, int] = {}
+
+        try:
+            fixed_names = list(getattr(spec, "fixed_names", []))
+            n_vars = len(self.vars)
+            D = min(n_vars, len(decision))
+
+            # Map fixed_name → param index (skip __INTERCEPT__)
+            name_to_param_idx = {
+                nm: i for i, nm in enumerate(fixed_names)
+                if nm != "__INTERCEPT__"
+            }
+
+            for var_idx in range(D):
+                role = int(decision[var_idx])
+                if role == 0:
+                    continue
+                var_name = self.vars[var_idx]
+                pidx = name_to_param_idx.get(var_name)
+                if pidx is None or pidx >= len(params):
+                    continue
+
+                coef = float(params[pidx])
+                self._sign_visit_counts[var_name] = (
+                    self._sign_visit_counts.get(var_name, 0) + 1
+                )
+                if abs(coef) < self._id_zero_tol:
+                    # Record as a violation so the bandit down-weights this role
+                    self._sign_violation_counts[var_name] = (
+                        self._sign_violation_counts.get(var_name, 0) + 1
+                    )
+        except Exception:
+            pass  # Never let this crash a fitness evaluation
 
 
 class ForcedModelStructureEvaluatorLC(StructureEvaluatorLC):

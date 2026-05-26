@@ -15,7 +15,7 @@ def save_plot(fig, filename, folder="results"):
     path = os.path.join(folder, filename)
     fig.savefig(path, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    print(f"✅ Saved plot: {path}")
+    print(f"[OK] Saved plot: {path}")
 
 
 def format_time(seconds):
@@ -310,7 +310,7 @@ class AdvancedSimulatedAnnealing:
                     changed = True
 
             # ---------------------------------
-            # ✅ Enforce minimum active constraint
+            # [OK] Enforce minimum active constraint
             # ---------------------------------
             D = self.dim_core
             active_count = np.sum(neighbor[:D] != 0)
@@ -635,21 +635,29 @@ class AdvancedSimulatedAnnealing:
     # =========================================================
     # Safe Initialization
     # =========================================================
-    def initialize_valid_solution(self, max_attempts=200, min_active=5):
+    def initialize_valid_solution(self, max_attempts=200, min_active=2):
+        """
+        Find an initial solution with at least min_active variables.
 
-        print(f"🔎 Searching for valid solution with ≥ {min_active} active variables")
+        Iterates from min_active up to dim_core (inclusive).
+        min_active defaults to 2 — a minimum viable model needs at least
+        2 active predictors.  The old default of 5 caused an empty
+        range(5, 5) = [] when dim_core == 5, raising immediately.
+        """
+        print(f"[SA init] searching for valid solution "
+              f"(min_active={min_active}, dim_core={self.dim_core})")
 
-        # Start from minimum allowed complexity (2 instead of 1)
-        for complexity in range(min_active, self.dim_core):
+        # range is inclusive of dim_core so we always try the full model
+        for complexity in range(min_active, self.dim_core + 1):
 
             for _ in range(max_attempts):
 
                 solution = np.zeros(self.dim, dtype=int)
 
-                # Activate exactly `complexity` positions
+                # Activate exactly `complexity` role genes
                 idx = np.random.choice(
                     self.dim_core,
-                    size=complexity,
+                    size=min(complexity, self.dim_core),
                     replace=False
                 )
 
@@ -657,19 +665,24 @@ class AdvancedSimulatedAnnealing:
 
                 for j in idx:
                     if j < D:
-                        # weighted role sampling (exclude 0 since we force active)
-                   
                         solution[j] = self.sample_allowed_role(j, force_active=True)
                     else:
                         solution[j] = np.random.randint(0, 7)
+
                 solution = self.repair(solution)
-                score = self.evaluator.fitness(solution)
+                score    = self.evaluator.fitness(solution)
 
                 if self.is_valid_fitness(score):
-                    print(f"✅ Found valid model with {complexity} active variables")
+                    print(f"[SA init] valid model found  "
+                          f"active={complexity}  score={score:.1f}")
                     return solution, score
 
-        raise ValueError("❌ Could not find valid initial solution.")
+        raise ValueError(
+            f"Could not find a valid initial solution after trying "
+            f"complexities {min_active}..{self.dim_core} x {max_attempts} attempts. "
+            f"Check that the fitness function returns finite values for at least "
+            f"one variable combination."
+        )
     
     
     
@@ -779,14 +792,14 @@ class AdvancedSimulatedAnnealing:
                         f"{row['archive_size']:10d}\n"
                     )
 
-        print(f"✅ SA search stats saved to {filepath}")
+        print(f"[OK] SA search stats saved to {filepath}")
     
     
     # =========================================================
     # Optimize
     # =========================================================
     def optimize(self):
-        start_time = time.time()   # ✅
+        start_time = time.time()   # [OK]
         last_best = None
         current, current_score = self.initialize_valid_solution()
 
@@ -819,7 +832,7 @@ class AdvancedSimulatedAnnealing:
             T = self.temperature(gen)
 
             if self.max_time is not None and elapsed >= self.max_time:
-                print(f"⏹ Stopping early: reached max_time={self.max_time:.1f}s")
+                print(f"[STOP] Stopping early: reached max_time={self.max_time:.1f}s")
                 break
 
             neighbor = self.generate_neighbor(current, T)
@@ -844,7 +857,7 @@ class AdvancedSimulatedAnnealing:
                 last_best = best
 
                 if no_improve > self.patience:
-                    print("⏹ Early stop: no improvement")
+                    print("[STOP] Early stop: no improvement")
                     break
                 #####################################
                 delta = self.energy_difference(current_score, neighbor_score)
@@ -879,11 +892,11 @@ class AdvancedSimulatedAnnealing:
             else:
                 no_improve += 1
 
-            # ✅ Adaptive cooling
+            # [OK] Adaptive cooling
             if self.adaptive and no_improve > 50:
                 self.alpha *= 0.99
 
-            # ✅ Restart
+            # [OK] Restart
             if no_improve > self.restart_threshold:
                 D = self.dim_core
 
@@ -897,7 +910,7 @@ class AdvancedSimulatedAnnealing:
                 current_score = self.evaluator.fitness(current)
                 no_improve = 0
 
-            # ✅ Hypervolume tracking
+            # [OK] Hypervolume tracking
             if self.is_multiobjective(current_score):
                 hv = self.compute_hypervolume()
                 self.hypervolume_history.append(hv)
@@ -928,18 +941,18 @@ class AdvancedSimulatedAnnealing:
                         max(recent_hv) - min(recent_hv) < self.tol and
                         max(recent_size) == min(recent_size)
                     ):
-                        print("⏹ Early stop: multiobjective stagnation")
+                        print("[STOP] Early stop: multiobjective stagnation")
                         break
                 '''
                 if max(recent) - min(recent) < self.tol:
-                    print("⏹ Early stop: hypervolume stagnated")
+                    print("[STOP] Early stop: hypervolume stagnated")
                     break
                 if len(archive_sizes) > 50:
 
                     recent_sizes = archive_sizes[-30:]
 
                     if max(recent_sizes) == min(recent_sizes):
-                        print("⏹ Early stop: archive not growing")
+                        print("[STOP] Early stop: archive not growing")
                         break
                 '''
             else:
@@ -1287,7 +1300,7 @@ class NSGA2Engine:
         probs = probs / probs.sum()
         return np.random.choice(allowed, p=probs)
     def _initialise_start_pop(self):
-        D = self.dim_core   # ✅ define it here
+        D = self.dim_core   # [OK] define it here
         pop = []
         while len(pop) < self.pop_size:
 
@@ -1308,7 +1321,7 @@ class NSGA2Engine:
 
     # =========================================================
     def optimize(self):
-        start_time = time.time()  # ✅ start timer
+        start_time = time.time()  # [OK] start timer
 
         D = self.dim_core
         pop  = self._initialise_start_pop()
@@ -1320,7 +1333,7 @@ class NSGA2Engine:
         single = not self.is_multiobjective(scores)
         
         # -------------------------------------------------
-        # ✅ Auto-estimate SA initial temperature
+        # [OK] Auto-estimate SA initial temperature
         # -------------------------------------------------
         
 
@@ -1367,7 +1380,7 @@ class NSGA2Engine:
 
                 front = self.fast_non_dominated_sort(scores)[0]
                 front_scores = scores[front]
-                # ✅ Remove NaNs
+                # [OK] Remove NaNs
                 front_scores = front_scores[~np.isnan(front_scores).any(axis=1)]
 
                 if len(front_scores) == 0:
@@ -1500,7 +1513,7 @@ class NSGA2Engine:
                         f"{row['std']:10.6f}\n"
                     )
 
-        print(f"✅ Search stats saved to {filepath}")
+        print(f"[OK] Search stats saved to {filepath}")
     
     def constraint_violation(self, solution):
 
