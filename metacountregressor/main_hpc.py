@@ -24,7 +24,7 @@ import json
 from datetime import datetime
 import sys
 from contextlib import redirect_stdout
-from scipy.optimize import minimize
+from scipy.optimize import minimize, differential_evolution as scipy_differential_evolution
 import traceback
 
 DIST_MAP = {
@@ -3127,9 +3127,79 @@ class CountModel:
         self.data = data
         self.param_index = build_param_index(spec)
         self.params = None
+        self.last_de_report = None
 
     def objective(self, params):
         return mixed_model_loglik(params, self.data, self.spec)
+
+    def _continuous_de_warm_start(
+        self,
+        init,
+        *,
+        maxiter=12,
+        popsize=8,
+        rel_span=1.5,
+        abs_span=1.0,
+        seed=0,
+    ):
+        center = np.asarray(init, dtype=float).reshape(-1)
+        if center.size == 0:
+            return jnp.array(center), {
+                "ran": False,
+                "accepted": False,
+                "reason": "empty_init",
+            }
+
+        center = np.where(np.isfinite(center), center, 0.0)
+        span = np.maximum(abs_span, np.abs(center) * rel_span)
+        bounds = [(c - s, c + s) for c, s in zip(center, span)]
+
+        def _obj_np(x):
+            try:
+                value = float(self.objective(jnp.array(x)))
+            except Exception:
+                return 1e20
+            if not np.isfinite(value):
+                return 1e20
+            return value
+
+        incumbent = center
+        incumbent_obj = _obj_np(incumbent)
+        report = {
+            "ran": True,
+            "accepted": False,
+            "seed": int(seed),
+            "maxiter": int(maxiter),
+            "popsize": int(popsize),
+            "start_obj": float(incumbent_obj),
+            "de_obj": None,
+            "delta_obj": None,
+            "reason": "not_improved",
+        }
+
+        try:
+            de_result = scipy_differential_evolution(
+                _obj_np,
+                bounds=bounds,
+                maxiter=int(maxiter),
+                popsize=int(popsize),
+                seed=int(seed),
+                polish=False,
+                updating="deferred",
+                workers=1,
+            )
+            candidate = np.asarray(de_result.x, dtype=float)
+            candidate_obj = float(de_result.fun)
+            report["de_obj"] = candidate_obj
+            report["delta_obj"] = float(incumbent_obj - candidate_obj) if np.isfinite(candidate_obj) else None
+            if np.isfinite(candidate_obj) and candidate_obj < incumbent_obj:
+                report["accepted"] = True
+                report["reason"] = "improved"
+                return jnp.array(candidate), report
+        except Exception as exc:
+            report["reason"] = f"exception: {exc}"
+
+        return jnp.array(incumbent), report
 
     '''
     def fit(self):
@@ -3147,7 +3217,16 @@ class CountModel:
         self.params = result.params
         return result
     '''
-    def fit(self, use_prefit=False):
+    def fit(
+        self,
+        use_prefit=False,
+        use_continuous_de=False,
+        de_maxiter=12,
+        de_popsize=8,
+        de_rel_span=1.5,
+        de_abs_span=1.0,
+        de_seed=0,
+    ):
 
         n_params = self.param_index["total_params"]
 
@@ -3206,11 +3285,43 @@ class CountModel:
             key = jax.random.PRNGKey(0)
             init = 0.001 * jax.random.normal(key, (n_params,))
 
+        # Track objective at the optimiser start point for diagnostics.
+        try:
+            start_obj = float(self.objective(init))
+        except Exception:
+            start_obj = None
+
+        self.last_de_report = {
+            "ran": False,
+            "accepted": False,
+            "reason": "disabled",
+            "start_obj": start_obj,
+            "de_obj": None,
+            "delta_obj": None,
+            "final_obj": None,
+        }
+        if use_continuous_de:
+            init, self.last_de_report = self._continuous_de_warm_start(
+                init,
+                maxiter=de_maxiter,
+                popsize=de_popsize,
+                rel_span=de_rel_span,
+                abs_span=de_abs_span,
+                seed=de_seed,
+            )
+            # Preserve the raw optimiser start objective for before/after comparisons.
+            self.last_de_report["start_obj"] = start_obj
+
         # --------------------------------------------------
         # 2️⃣ OPTIMIZE
         # --------------------------------------------------
         solver = LBFGS(fun=self.objective)
         result = solver.run(init)
+
+        try:
+            self.last_de_report["final_obj"] = float(self.objective(result.params))
+        except Exception:
+            self.last_de_report["final_obj"] = None
 
         self.params = result.params
         return result

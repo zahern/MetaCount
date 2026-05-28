@@ -57,6 +57,7 @@ except ImportError as exc:
 
 import numpy as np
 import pandas as pd
+import jax
 import jax.numpy as jnp
 import math
 from dataclasses import replace
@@ -65,6 +66,10 @@ import io
 import warnings
 from contextlib import redirect_stdout
 from jaxopt import LBFGS
+from scipy.optimize import (
+    differential_evolution as scipy_differential_evolution,
+    minimize as scipy_minimize,
+)
 from typing import Optional, Dict, List, Union, Any
 from pathlib import Path
 
@@ -846,6 +851,198 @@ class ExperimentBuilder:
         raise ValueError(f"Unexpected arguments for {context}: {unused}")
 
     @staticmethod
+    def _continuous_de_warm_start(
+        objective,
+        init_params: np.ndarray,
+        *,
+        enabled: bool,
+        maxiter: int,
+        popsize: int,
+        rel_span: float,
+        abs_span: float,
+        seed: int,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Refine an initial parameter vector with bounded continuous DE."""
+        init = np.asarray(init_params, dtype=float).reshape(-1)
+        if (not enabled) or init.size == 0:
+            return init, {
+                "ran": False,
+                "accepted": False,
+                "reason": "disabled_or_empty",
+            }
+
+        safe_init = np.where(np.isfinite(init), init, 0.0)
+        span = np.maximum(abs_span, np.abs(safe_init) * rel_span)
+        bounds = [(c - s, c + s) for c, s in zip(safe_init, span)]
+
+        def _obj_np(x):
+            try:
+                value = float(objective(jnp.array(x)))
+            except Exception:
+                return 1e20
+            if not np.isfinite(value):
+                return 1e20
+            return value
+
+        incumbent = safe_init
+        incumbent_obj = _obj_np(incumbent)
+        report: dict[str, Any] = {
+            "ran": True,
+            "accepted": False,
+            "seed": int(seed),
+            "maxiter": int(maxiter),
+            "popsize": int(popsize),
+            "start_obj": float(incumbent_obj),
+            "de_obj": None,
+            "delta_obj": None,
+            "reason": "not_improved",
+        }
+
+        try:
+            de_result = scipy_differential_evolution(
+                _obj_np,
+                bounds=bounds,
+                maxiter=int(maxiter),
+                popsize=int(popsize),
+                seed=int(seed),
+                polish=False,
+                updating="deferred",
+                workers=1,
+            )
+            candidate = np.asarray(de_result.x, dtype=float)
+            candidate_obj = float(de_result.fun)
+            report["de_obj"] = candidate_obj
+            report["delta_obj"] = float(incumbent_obj - candidate_obj) if np.isfinite(candidate_obj) else None
+            if np.isfinite(candidate_obj) and candidate_obj < incumbent_obj:
+                report["accepted"] = True
+                report["reason"] = "improved"
+                return candidate, report
+        except Exception as exc:
+            warnings.warn(
+                f"Continuous DE warm-start skipped due to: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            report["reason"] = f"exception: {exc}"
+
+        return incumbent, report
+
+    @staticmethod
+    def _is_cmf_local_name(name: str) -> bool:
+        return str(name).startswith("__cmf_local__")
+
+    def _build_cmf_local_bounds(
+        self,
+        spec,
+        lower_level_param_bounds,
+    ) -> tuple[list[tuple[Optional[float], Optional[float]]], int]:
+        lo, hi = float(lower_level_param_bounds[0]), float(lower_level_param_bounds[1])
+        if lo >= hi:
+            raise ValueError("lower_level_param_bounds must be (lower, upper) with lower < upper.")
+
+        full_index = build_param_index(spec)
+        total_params = int(full_index["total_params"])
+        bounds: list[tuple[Optional[float], Optional[float]]] = [(None, None)] * total_params
+
+        base_spec = replace(spec, latent_classes=1)
+        base_index = build_base_index(base_spec)
+
+        base_target_idx: list[int] = []
+
+        fixed_rng = base_index.get("fixed")
+        if fixed_rng is not None:
+            fs, _ = fixed_rng
+            for i, name in enumerate(getattr(base_spec, "fixed_names", ())):
+                if self._is_cmf_local_name(name):
+                    base_target_idx.append(fs + i)
+
+        cor_rng = base_index.get("cor_mean")
+        if cor_rng is not None:
+            cs, _ = cor_rng
+            for i, name in enumerate(getattr(base_spec, "random_cor_names", ())):
+                if self._is_cmf_local_name(name):
+                    base_target_idx.append(cs + i)
+
+        ind_rng = base_index.get("ind_mean")
+        if ind_rng is not None:
+            is_, _ = ind_rng
+            for i, name in enumerate(getattr(base_spec, "random_ind_names", ())):
+                if self._is_cmf_local_name(name):
+                    base_target_idx.append(is_ + i)
+
+        grp_rng = base_index.get("group_mean")
+        if grp_rng is not None:
+            gs, _ = grp_rng
+            for i, name in enumerate(getattr(base_spec, "grouped_names", ())):
+                if self._is_cmf_local_name(name):
+                    base_target_idx.append(gs + i)
+
+        base_target_idx = sorted(set(base_target_idx))
+        if not base_target_idx:
+            return bounds, 0
+
+        if int(getattr(spec, "latent_classes", 1)) > 1:
+            k_base = int(base_index["total_params"])
+            C = int(spec.latent_classes)
+            for c in range(C):
+                offset = c * k_base
+                for idx in base_target_idx:
+                    bounds[offset + idx] = (lo, hi)
+            return bounds, len(base_target_idx) * C
+
+        for idx in base_target_idx:
+            bounds[idx] = (lo, hi)
+        return bounds, len(base_target_idx)
+
+    @staticmethod
+    def _bounded_refit(objective, start_params, bounds, maxiter: int = 500) -> np.ndarray:
+        x0 = np.asarray(start_params, dtype=float).reshape(-1)
+        if x0.size == 0:
+            return x0
+
+        def _obj_np(x):
+            try:
+                value = float(objective(jnp.array(x)))
+            except Exception:
+                return 1e20
+            if not np.isfinite(value):
+                return 1e20
+            return value
+
+        def _grad_np(x):
+            try:
+                grad = jax.grad(objective)(jnp.array(x))
+                grad_np = np.asarray(grad, dtype=float)
+            except Exception:
+                grad_np = np.zeros_like(x0)
+            grad_np = np.where(np.isfinite(grad_np), grad_np, 0.0)
+            return grad_np
+
+        start_val = _obj_np(x0)
+
+        try:
+            result = scipy_minimize(
+                _obj_np,
+                x0,
+                method="L-BFGS-B",
+                jac=_grad_np,
+                bounds=bounds,
+                options={"maxiter": int(maxiter)},
+            )
+            cand = np.asarray(result.x, dtype=float)
+            cand_val = _obj_np(cand)
+            if np.isfinite(cand_val) and cand_val <= start_val:
+                return cand
+        except Exception as exc:
+            warnings.warn(
+                f"Bounded lower-level refit skipped due to: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        return x0
+
+    @staticmethod
     def get_search_argument_guide() -> Dict[str, Dict[str, str]]:
         return {
             "shared": {
@@ -963,8 +1160,25 @@ class ExperimentBuilder:
         df: Optional[pd.DataFrame] = None,
         R: int = 200,
         print_report: bool = False,
+        use_prefit_start: bool = True,
+        continuous_de_warm_start: bool = True,
+        de_maxiter: int = 12,
+        de_popsize: int = 8,
+        de_rel_span: float = 1.5,
+        de_abs_span: float = 1.0,
+        de_seed: int = 0,
+        latent_fast_mode: bool = False,
+        latent_random_start: bool = False,
+        lower_level_param_bounds: Optional[tuple[float, float]] = None,
         _lc_fallback_applied: bool = False,
     ) -> Dict[str, Any]:
+        de_report: dict[str, Any] = {
+            "enabled": bool(continuous_de_warm_start),
+            "single_class": None,
+            "latent_class_seed": None,
+            "latent_class_attempts": [],
+        }
+
         df_fit = self.df if df is None else df
         data, spec = build_model_from_manual_spec(
             df=df_fit,
@@ -981,6 +1195,7 @@ class ExperimentBuilder:
             C = int(spec.latent_classes)
             K_mem = int(spec.K_membership)
             spec_1 = replace(spec, latent_classes=1)
+            K_base = build_param_index(spec_1)["total_params"]
 
             has_random_structure = any([
                 bool(manual_spec.get("rdm_terms")),
@@ -989,46 +1204,86 @@ class ExperimentBuilder:
                 bool(manual_spec.get("hetro_in_means")),
             ])
 
-            model_1 = CountModel(spec_1, data)
-            try:
-                if model == "tobit":
-                    # Bypass Poisson-style prefit: use OLS starting values
-                    # and a direct LBFGS on the single-class Tobit likelihood.
-                    from dataclasses import replace as _replace
-                    _K1 = build_base_index(spec_1)["total_params"]
-                    _p0 = jnp.array(_tobit_ols_init(data, _K1))
-                    _sol = LBFGS(
-                        fun=lambda p: mixed_model_loglik(p, data, spec_1),
-                        maxiter=1000,
-                    ).run(_p0)
-                    result_1 = _sol
-                else:
-                    result_1 = model_1.fit(use_prefit=True)
-            except Exception as exc:
-                if (not _lc_fallback_applied) and has_random_structure:
-                    fallback_spec = dict(manual_spec)
-                    fallback_spec["rdm_terms"] = []
-                    fallback_spec["rdm_cor_terms"] = []
-                    fallback_spec["grouped_terms"] = []
-                    fallback_spec["hetro_in_means"] = []
-                    warnings.warn(
-                        "Latent-class warm-start failed on random-effect structure; "
-                        "retrying with fixed-only latent-class fallback.",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
-                    return self.fit_manual_model(
-                        manual_spec=fallback_spec,
-                        model=model,
-                        df=df,
-                        R=R,
-                        print_report=print_report,
-                        _lc_fallback_applied=True,
-                    )
-                raise
+            if latent_random_start:
+                rng0 = np.random.default_rng(int(de_seed))
+                theta_1 = rng0.normal(0.0, 0.1, int(K_base))
+                de_report["single_class"] = {
+                    "ran": False,
+                    "accepted": False,
+                    "reason": "latent_random_start",
+                    "start_obj": None,
+                    "de_obj": None,
+                    "delta_obj": None,
+                    "final_obj": None,
+                }
+            else:
+                model_1 = CountModel(spec_1, data)
+                try:
+                    if model == "tobit":
+                        # Bypass Poisson-style prefit: use OLS starting values
+                        # and a direct LBFGS on the single-class Tobit likelihood.
+                        _K1 = build_base_index(spec_1)["total_params"]
+                        _p0, de_report_single = self._continuous_de_warm_start(
+                            objective=lambda p: mixed_model_loglik(p, data, spec_1),
+                            init_params=_tobit_ols_init(data, _K1),
+                            enabled=continuous_de_warm_start,
+                            maxiter=de_maxiter,
+                            popsize=de_popsize,
+                            rel_span=de_rel_span,
+                            abs_span=de_abs_span,
+                            seed=de_seed,
+                        )
+                        de_report["single_class"] = de_report_single
+                        _sol = LBFGS(
+                            fun=lambda p: mixed_model_loglik(p, data, spec_1),
+                            maxiter=1000,
+                        ).run(jnp.array(_p0))
+                        result_1 = _sol
+                    else:
+                        result_1 = model_1.fit(
+                            use_prefit=use_prefit_start,
+                            use_continuous_de=continuous_de_warm_start,
+                            de_maxiter=de_maxiter,
+                            de_popsize=de_popsize,
+                            de_rel_span=de_rel_span,
+                            de_abs_span=de_abs_span,
+                            de_seed=de_seed,
+                        )
+                        de_report["single_class"] = getattr(model_1, "last_de_report", None)
+                except Exception as exc:
+                    if (not _lc_fallback_applied) and has_random_structure:
+                        fallback_spec = dict(manual_spec)
+                        fallback_spec["rdm_terms"] = []
+                        fallback_spec["rdm_cor_terms"] = []
+                        fallback_spec["grouped_terms"] = []
+                        fallback_spec["hetro_in_means"] = []
+                        warnings.warn(
+                            "Latent-class warm-start failed on random-effect structure; "
+                            "retrying with fixed-only latent-class fallback.",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                        return self.fit_manual_model(
+                            manual_spec=fallback_spec,
+                            model=model,
+                            df=df,
+                            R=R,
+                            print_report=print_report,
+                            use_prefit_start=use_prefit_start,
+                            continuous_de_warm_start=continuous_de_warm_start,
+                            de_maxiter=de_maxiter,
+                            de_popsize=de_popsize,
+                            de_rel_span=de_rel_span,
+                            de_abs_span=de_abs_span,
+                            de_seed=de_seed,
+                            latent_fast_mode=latent_fast_mode,
+                            latent_random_start=latent_random_start,
+                            lower_level_param_bounds=lower_level_param_bounds,
+                            _lc_fallback_applied=True,
+                        )
+                    raise
 
-            theta_1 = np.asarray(result_1.params)
-            K_base = build_param_index(spec_1)["total_params"]
+                theta_1 = np.asarray(result_1.params)
 
             spec_c = replace(spec, latent_classes=C)
 
@@ -1040,18 +1295,30 @@ class ExperimentBuilder:
             # back to decreasing noise perturbations of the single-class fit.
 
             # Always guarantee at least some noise for all but the last fallback
-            retry_configs = [
-                ("cluster", 0),
-                (0.05, 1),
-                (0.02, 2),
-                (0.01, 3),  # never zero noise except as a last fallback
-                ("force_min_noise", 4),  # last fallback: forcibly add small noise if all else fails
-            ]
+            if latent_fast_mode:
+                retry_configs = [("random", 0)] if latent_random_start else [(0.02, 0)]
+                em_max_iter = 10
+                polish_maxiter = 200
+            else:
+                retry_configs = [
+                    ("cluster", 0),
+                    (0.05, 1),
+                    (0.02, 2),
+                    (0.01, 3),  # never zero noise except as a last fallback
+                    ("force_min_noise", 4),  # last fallback: forcibly add small noise if all else fails
+                ]
+                em_max_iter = 40
+                polish_maxiter = 800
 
             for noise_scale, seed in retry_configs:
                 try:
                     rng = np.random.default_rng(seed)
-                    if noise_scale == "cluster":
+                    if noise_scale == "random":
+                        theta_init = np.concatenate([
+                            rng.normal(0.0, 0.1, K_base) + 1e-3 * (i + 1)
+                            for i in range(C)
+                        ])
+                    elif noise_scale == "cluster":
                         try:
                             per_class = _seed_classes_from_clusters(
                                 theta_1, data, spec_1, C, K_base, rng
@@ -1087,25 +1354,50 @@ class ExperimentBuilder:
                     init_params = np.concatenate([theta_init, gamma_init])
 
                     try:
+                        init_obj = float(mixed_model_loglik(jnp.array(init_params), data, spec_c))
+                    except Exception:
+                        init_obj = None
+
+                    try:
                         params_em = fit_em(
                             init_params=init_params,
                             data=data,
                             spec=spec_c,
-                            max_iter=40,
+                            max_iter=em_max_iter,
                             tol=1e-4,
                             verbose=False,
                         )
                     except Exception:
                         params_em = init_params
 
+                    polish_seed, de_report_lc = self._continuous_de_warm_start(
+                        objective=lambda p: mixed_model_loglik(p, data, spec_c),
+                        init_params=np.asarray(params_em),
+                        enabled=continuous_de_warm_start,
+                        maxiter=de_maxiter,
+                        popsize=de_popsize,
+                        rel_span=de_rel_span,
+                        abs_span=de_abs_span,
+                        seed=de_seed + int(seed),
+                    )
+                    de_report_lc["attempt"] = int(seed)
+                    de_report_lc["noise_scale"] = str(noise_scale)
+                    de_report_lc["init_obj"] = init_obj
+                    try:
+                        de_report_lc["seed_obj"] = float(mixed_model_loglik(jnp.array(polish_seed), data, spec_c))
+                    except Exception:
+                        de_report_lc["seed_obj"] = None
+                    de_report["latent_class_attempts"].append(de_report_lc)
+
                     polish = LBFGS(
                         fun=lambda p: mixed_model_loglik(p, data, spec_c),
-                        maxiter=800,
+                        maxiter=polish_maxiter,
                     )
-                    candidate = polish.run(jnp.array(params_em))
+                    candidate = polish.run(jnp.array(polish_seed))
 
                     params_np = np.asarray(candidate.params)
                     value = float(mixed_model_loglik(jnp.array(params_np), data, spec_c))
+                    de_report_lc["final_obj"] = value
 
                     if not np.all(np.isfinite(params_np)):
                         continue
@@ -1115,6 +1407,7 @@ class ExperimentBuilder:
                     if value < best_value:
                         best_value = value
                         best_result = candidate
+                        de_report["latent_class_seed"] = de_report_lc
 
                 except Exception as exc:
                     last_error = exc
@@ -1139,6 +1432,14 @@ class ExperimentBuilder:
                             df=df,
                             R=R,
                             print_report=print_report,
+                            use_prefit_start=use_prefit_start,
+                            continuous_de_warm_start=continuous_de_warm_start,
+                            de_maxiter=de_maxiter,
+                            de_popsize=de_popsize,
+                            de_rel_span=de_rel_span,
+                            de_abs_span=de_abs_span,
+                            de_seed=de_seed,
+                            lower_level_param_bounds=lower_level_param_bounds,
                             _lc_fallback_applied=True,
                         )
 
@@ -1160,15 +1461,56 @@ class ExperimentBuilder:
             if model == "tobit":
                 # OLS warm-start + direct LBFGS — bypasses Poisson-style prefit.
                 _K = build_base_index(spec)["total_params"]
-                _p0 = jnp.array(_tobit_ols_init(data, _K))
+                _p0, de_report_single = self._continuous_de_warm_start(
+                    objective=lambda p: mixed_model_loglik(p, data, spec),
+                    init_params=_tobit_ols_init(data, _K),
+                    enabled=continuous_de_warm_start,
+                    maxiter=de_maxiter,
+                    popsize=de_popsize,
+                    rel_span=de_rel_span,
+                    abs_span=de_abs_span,
+                    seed=de_seed,
+                )
+                de_report["single_class"] = de_report_single
                 _sol = LBFGS(
                     fun=lambda p: mixed_model_loglik(p, data, spec),
                     maxiter=1500,
-                ).run(_p0)
+                ).run(jnp.array(_p0))
                 result = _sol
                 fitted.params = np.asarray(_sol.params)
             else:
-                result = fitted.fit(use_prefit=True)
+                result = fitted.fit(
+                    use_prefit=use_prefit_start,
+                    use_continuous_de=continuous_de_warm_start,
+                    de_maxiter=de_maxiter,
+                    de_popsize=de_popsize,
+                    de_rel_span=de_rel_span,
+                    de_abs_span=de_abs_span,
+                    de_seed=de_seed,
+                )
+                de_report["single_class"] = getattr(fitted, "last_de_report", None)
+
+        if lower_level_param_bounds is not None:
+            cmf_bounds, constrained = self._build_cmf_local_bounds(spec, lower_level_param_bounds)
+            if constrained > 0:
+                current_params = np.asarray(
+                    result.params if hasattr(result, "params") else fitted.params,
+                    dtype=float,
+                )
+                bounded_params = self._bounded_refit(
+                    objective=lambda p: mixed_model_loglik(p, data, spec),
+                    start_params=current_params,
+                    bounds=cmf_bounds,
+                    maxiter=600,
+                )
+                fitted.params = np.asarray(bounded_params)
+
+                class _BoundedResult:
+                    pass
+
+                bounded_result = _BoundedResult()
+                bounded_result.params = np.asarray(bounded_params)
+                result = bounded_result
 
         objective = partial(mixed_model_loglik, data=data, spec=spec)
         param_index = build_param_index(spec)
@@ -1199,6 +1541,7 @@ class ExperimentBuilder:
             "summary": summary,
             "param_index": param_index,
             "predictions": np.asarray(fitted.predict()).squeeze(),
+            "de_warm_start_report": de_report,
         }
 
     def compute_latent_class_probabilities(

@@ -545,6 +545,7 @@ class CMFExperimentBuilder:
         group_id_col: Optional[str] = None,
         model: str = "poisson",
         R: int = 200,
+        lower_level_param_bounds: tuple[float, float] = (-1.0, 1.0),
     ) -> dict[str, Any]:
         try:
             from .experiment_package import ExperimentBuilder
@@ -568,4 +569,9 @@ class CMFExperimentBuilder:
             offset_col=offset_col,
             group_id_col=group_id_col,
         )
-        return manual_builder.fit_manual_model(manual_spec=manual_spec, model=model, R=R)
+        return manual_builder.fit_manual_model(
+            manual_spec=manual_spec,
+            model=model,
+            R=R,
+            lower_level_param_bounds=lower_level_param_bounds,
+        )
