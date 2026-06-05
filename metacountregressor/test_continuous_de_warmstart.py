@@ -108,6 +108,39 @@ def _print_three_stage_ll(no_de_fit: dict, de_fit: dict):
     print(f"    3) DE + Optimize (final fit): {de_final_ll}")
 
 
+def _print_model_variables(builder, label: str, fit_result: dict):
+    spec = fit_result["spec"]
+    fixed_terms = list(getattr(spec, "fixed_names", []))
+
+    # CMF-style naming convention: local/lower-level interaction terms are prefixed.
+    lower_local_terms = [t for t in fixed_terms if str(t).startswith("__cmf_local__")]
+    upper_terms = [t for t in fixed_terms if t not in lower_local_terms]
+
+    print(f"\n{label} Variables:")
+    print(f"  fixed_terms      : {fixed_terms}")
+    print(f"  upper_terms      : {upper_terms}")
+    print(f"  lower_local_terms: {lower_local_terms}")
+    print(f"  random_ind_terms : {list(getattr(spec, 'random_ind_names', []))}")
+    print(f"  random_cor_terms : {list(getattr(spec, 'random_cor_names', []))}")
+    print(f"  grouped_terms    : {list(getattr(spec, 'grouped_names', []))}")
+    print(f"  membership_terms : {list(getattr(spec, 'membership_names', []))}")
+    print(f"  latent_classes   : {getattr(spec, 'latent_classes', None)}")
+    print(f"  model            : {getattr(spec, 'model', None)}")
+    print(f"  total_params     : {len(np.asarray(fit_result['result'].params))}")
+
+    print(f"\n{label} Coefficients:")
+    coef_df = builder.print_coefficients(fit_result)
+
+    disp_rows = coef_df[coef_df["Parameter"].astype(str).str.startswith("Dispersion")]
+    if len(disp_rows) > 0:
+        print(f"{label} Dispersion (interpretable scale):")
+        print("  alpha = exp(raw_dispersion)")
+        for _, row in disp_rows.iterrows():
+            raw_val = float(row["Estimate"])
+            alpha_val = float(np.exp(raw_val))
+            print(f"  {row['Parameter']}: raw={raw_val:+.6f}, alpha={alpha_val:.6f}")
+
+
 def make_synthetic_count_df(n_sites=120, t_per_site=3, seed=13):
     rng = np.random.default_rng(seed)
     rows = []
@@ -213,6 +246,8 @@ def run_hierarchical_cmf(df):
     _print_three_stage_ll(no_de, yes_de)
     _print_de_report("No-DE", no_de)
     _print_de_report("DE-WS", yes_de)
+    _print_model_variables(eb, "Hierarchical No-DE", no_de)
+    _print_model_variables(eb, "Hierarchical DE-WS", yes_de)
 
 
 def run_latent_class(df):
@@ -256,6 +291,8 @@ def run_latent_class(df):
     _print_three_stage_ll(no_de, yes_de)
     _print_de_report("No-DE", no_de)
     _print_de_report("DE-WS", yes_de)
+    _print_model_variables(eb, "Latent-Class No-DE", no_de)
+    _print_model_variables(eb, "Latent-Class DE-WS", yes_de)
 
 
 def run_random_parameter_count(df):

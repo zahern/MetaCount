@@ -24,7 +24,7 @@ import json
 from datetime import datetime
 import sys
 from contextlib import redirect_stdout
-from scipy.optimize import minimize, differential_evolution as scipy_differential_evolution
+from scipy.optimize import minimize
 import traceback
 
 DIST_MAP = {
@@ -3142,29 +3142,44 @@ class CountModel:
         abs_span=1.0,
         seed=0,
     ):
-        center = np.asarray(init, dtype=float).reshape(-1)
-        if center.size == 0:
-            return jnp.array(center), {
+        center_np = np.asarray(init, dtype=float).reshape(-1)
+        if center_np.size == 0:
+            return jnp.array(center_np), {
                 "ran": False,
                 "accepted": False,
                 "reason": "empty_init",
             }
 
-        center = np.where(np.isfinite(center), center, 0.0)
-        span = np.maximum(abs_span, np.abs(center) * rel_span)
-        bounds = [(c - s, c + s) for c, s in zip(center, span)]
+        center_np = np.where(np.isfinite(center_np), center_np, 0.0)
+        center = jnp.array(center_np)
+        span = jnp.maximum(float(abs_span), jnp.abs(center) * float(rel_span))
+        lower = center - span
+        upper = center + span
 
-        def _obj_np(x):
+        n_params = int(center.shape[0])
+        n_pop = max(8, int(popsize) * 2)
+        n_elite = max(2, n_pop // 4)
+        large_val = 1e20
+
+        def _safe_obj(x):
             try:
-                value = float(self.objective(jnp.array(x)))
+                value = float(self.objective(x))
             except Exception:
-                return 1e20
+                return large_val
             if not np.isfinite(value):
-                return 1e20
+                return large_val
             return value
 
-        incumbent = center
-        incumbent_obj = _obj_np(incumbent)
+        def _eval_pop(pop):
+            try:
+                vals = jax.vmap(self.objective)(pop)
+                vals = jnp.where(jnp.isfinite(vals), vals, large_val)
+                return np.asarray(vals, dtype=float)
+            except Exception:
+                # Fallback if vectorized evaluation fails for any reason.
+                return np.array([_safe_obj(row) for row in np.asarray(pop)], dtype=float)
+
+        incumbent_obj = _safe_obj(center)
         report = {
             "ran": True,
             "accepted": False,
@@ -3175,31 +3190,59 @@ class CountModel:
             "de_obj": None,
             "delta_obj": None,
             "reason": "not_improved",
+            "method": "jax_population_warm_start",
         }
 
         try:
-            de_result = scipy_differential_evolution(
-                _obj_np,
-                bounds=bounds,
-                maxiter=int(maxiter),
-                popsize=int(popsize),
-                seed=int(seed),
-                polish=False,
-                updating="deferred",
-                workers=1,
-            )
-            candidate = np.asarray(de_result.x, dtype=float)
-            candidate_obj = float(de_result.fun)
-            report["de_obj"] = candidate_obj
-            report["delta_obj"] = float(incumbent_obj - candidate_obj) if np.isfinite(candidate_obj) else None
-            if np.isfinite(candidate_obj) and candidate_obj < incumbent_obj:
+            key = jax.random.PRNGKey(int(seed))
+            key, sub = jax.random.split(key)
+            pop = center + jax.random.normal(sub, (n_pop, n_params)) * span
+            pop = jnp.clip(pop, lower, upper)
+            pop = pop.at[0].set(center)
+
+            best_x = center
+            best_obj = incumbent_obj
+
+            for it in range(int(maxiter)):
+                vals = _eval_pop(pop)
+                order = np.argsort(vals)
+
+                if vals[order[0]] < best_obj:
+                    best_obj = float(vals[order[0]])
+                    best_x = pop[order[0]]
+
+                elite_idx = order[:n_elite]
+                elite = pop[elite_idx]
+
+                elite_mean = jnp.mean(elite, axis=0)
+                elite_std = jnp.std(elite, axis=0)
+                anneal = max(0.15, 0.92 ** (it + 1))
+                step = jnp.maximum(elite_std, span * 0.05) * anneal
+
+                key, sub = jax.random.split(key)
+                noise = jax.random.normal(sub, (n_pop, n_params))
+                offspring = elite_mean + noise * step
+                offspring = jnp.clip(offspring, lower, upper)
+                offspring = offspring.at[0].set(best_x)
+
+                if n_elite > 0:
+                    keep = min(n_elite, n_pop - 1)
+                    offspring = offspring.at[1:1 + keep].set(elite[:keep])
+
+                pop = offspring
+
+            report["de_obj"] = float(best_obj)
+            report["delta_obj"] = float(incumbent_obj - best_obj)
+
+            if np.isfinite(best_obj) and best_obj < incumbent_obj:
                 report["accepted"] = True
                 report["reason"] = "improved"
-                return jnp.array(candidate), report
+                return best_x, report
+
         except Exception as exc:
             report["reason"] = f"exception: {exc}"
 
-        return jnp.array(incumbent), report
+        return center, report
 
     '''
     def fit(self):
