@@ -28,6 +28,7 @@ import os
 import time
 import argparse
 import numpy as np
+import pandas as pd
 import jax
 import jax.numpy as jnp
 from dataclasses import replace
@@ -499,7 +500,7 @@ if __name__ == "__main__":
     # ── Build evaluator ──────────────────────────────────────────
     allowed_roles = populate_allowed_roles(
         all_vars,
-        {"EXPOSE": [1]},
+        {"EXPOSE": [1], "FC": [0, 1, 2, 3, 5]},  # FC excluded from membership roles
         default_roles=[0, 1, 2, 3, 5, 7, 8],  # includes membership roles
     )
     allowed_dists = populate_allowed_distributions(all_vars, None)

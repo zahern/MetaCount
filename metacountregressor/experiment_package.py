@@ -745,8 +745,8 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
             neighbor[idx] = np.random.choice(possible)
 
     if self.is_same(solution, neighbor):
-        return self._generate_neighbor_patched(solution, T,
-                                               min_active=min_active + 1)
+        return self.generate_neighbor(solution, T,
+                                      min_active=min_active + 1)
     return neighbor
 
 
