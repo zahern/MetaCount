@@ -11,7 +11,12 @@
       "Read(//c/Temp/**)",
       "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; cd \"c:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\"; & \".\\\\metacountregressor\\\\.venv\\\\Scripts\\\\python.exe\" metacountregressor/test_bandit_sa.py --iters 40 > C:\\\\Temp\\\\bandit_out.txt 2> C:\\\\Temp\\\\bandit_err.txt; $code = $LASTEXITCODE; Write-Host \"Exit: $code\")",
       "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; cd \"c:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\"; & \".\\\\metacountregressor\\\\.venv\\\\Scripts\\\\python.exe\" metacountregressor/test_bandit_sa.py --iters 10 --no-sa > C:\\\\Temp\\\\bandit_quick.txt 2> C:\\\\Temp\\\\bandit_quick_err.txt; $code = $LASTEXITCODE; Write-Host \"Exit: $code\")",
-      "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; cd \"c:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\"; & \".\\\\metacountregressor\\\\.venv\\\\Scripts\\\\python.exe\" metacountregressor/test_bandit_sa.py --iters 15 --no-sa > C:\\\\Temp\\\\audit_out.txt 2> C:\\\\Temp\\\\audit_err.txt; $code = $LASTEXITCODE; Write-Host \"Exit: $code\")"
+      "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; cd \"c:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\"; & \".\\\\metacountregressor\\\\.venv\\\\Scripts\\\\python.exe\" metacountregressor/test_bandit_sa.py --iters 15 --no-sa > C:\\\\Temp\\\\audit_out.txt 2> C:\\\\Temp\\\\audit_err.txt; $code = $LASTEXITCODE; Write-Host \"Exit: $code\")",
+      "Read(//z/latent_class_metacount/**)"
+    ],
+    "additionalDirectories": [
+      "Z:\\latent_class_metacount\\metacountregressor",
+      "Z:\\latent_class_metacount"
     ]
   }
 }
