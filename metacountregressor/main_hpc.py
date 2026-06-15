@@ -4,6 +4,7 @@ import jax.scipy as jsp
 import numpy as np
 import pandas as pd
 import os
+import gc
 import itertools
 from functools import partial
 from typing import NamedTuple as TypingNamedTuple
@@ -1261,8 +1262,9 @@ def build_jax_data(
     return data, spec
 
 
-def build_base_index(spec):
+def build_base_index(spec, model=None):
     
+    _model = model if model is not None else getattr(spec, 'model', 'poisson')
 
     idx = 0
     index = {}
@@ -1310,15 +1312,16 @@ def build_base_index(spec):
         index["hetro"] = (idx, idx + Khet)
         idx += Khet
 
-    if spec.model == "nb":
+    if _model == "nb":
         index["dispersion"] = idx
         idx += 1
 
-    if spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
+    if _model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
         index["sigma"] = idx
         idx += 1
 
     index["total_params"] = idx
+    index["_model"] = _model
 
     return index
 
@@ -3120,6 +3123,68 @@ def generate_master_halton(N, K, R, seed=42,  burn=50):
     
     return jnp.array(z)
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# GPU out-of-memory recovery
+# ─────────────────────────────────────────────────────────────────────────
+# Long-running searches JIT-compile many distinct XLA programs (one per
+# unique model spec / array shape). Each compiled executable holds on to
+# device buffers, and XLA's kernel autotuner needs extra scratch memory to
+# benchmark candidate kernel configs. Over hundreds of generations this can
+# fill the GPU until even a small new fit can't be compiled, raising
+# jax.errors.JaxRuntimeError("... RESOURCE_EXHAUSTED ... CUDA_ERROR_OUT_OF_MEMORY
+# ... Failed to pick best config: All configs failed during profiling.").
+#
+# This helper recognises that failure mode, frees what JAX can free
+# (clear_caches + gc), retries on GPU once, and finally falls back to CPU so
+# that a GPU memory crunch degrades a fit instead of crashing the whole run.
+_OOM_MARKERS = (
+    "RESOURCE_EXHAUSTED",
+    "CUDA_ERROR_OUT_OF_MEMORY",
+    "out of memory",
+    "Failed to pick best config",
+)
+
+
+def _is_oom_error(exc: BaseException) -> bool:
+    msg = str(exc)
+    return any(marker in msg for marker in _OOM_MARKERS)
+
+
+def run_with_oom_recovery(fn, *args, label="operation", **kwargs):
+    """Run fn(*args, **kwargs); recover from GPU OOM instead of crashing.
+
+    On a GPU out-of-memory / autotuning failure, clears JAX's compilation
+    caches and retries on the current device, then falls back to the CPU
+    backend if the GPU is still exhausted. Non-OOM exceptions propagate
+    unchanged.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - re-raised below if not OOM
+        if not _is_oom_error(exc):
+            raise
+
+        print(f"  [warn] {label}: GPU out-of-memory ({type(exc).__name__}); "
+              f"clearing JAX caches and retrying...")
+        jax.clear_caches()
+        gc.collect()
+
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc2:  # noqa: BLE001
+            if not _is_oom_error(exc2):
+                raise
+
+            print(f"  [warn] {label}: still out of memory on GPU; "
+                  f"retrying on CPU (this will be slower).")
+            jax.clear_caches()
+            gc.collect()
+            cpu = jax.devices("cpu")[0]
+            with jax.default_device(cpu):
+                return fn(*args, **kwargs)
+
+
 class CountModel:
 
     def __init__(self, spec, data):
@@ -3985,7 +4050,9 @@ def generate_draws(dist_name, shape):
     else:
         raise ValueError("Unknown distribution")
 
-def unpack_params(params, spec: ModelSpec):
+def unpack_params(params, spec: ModelSpec, model=None):
+
+        _model = model if model is not None else getattr(spec, 'model', 'poisson')
 
         idx = 0
         out = {}
@@ -4048,10 +4115,10 @@ def unpack_params(params, spec: ModelSpec):
             out["gamma"] = None
 
         # NB DISPERSION / SCALE
-        if spec.model == "nb":
+        if _model == "nb":
             out["alpha"] = params[idx]
             idx += 1
-        elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
+        elif _model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
             out["sigma"] = params[idx]
             idx += 1
         else:

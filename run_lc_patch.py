@@ -53,12 +53,15 @@ from metacountregressor.main_hpc import (  # noqa: E402
     populate_allowed_roles,
     populate_allowed_distributions,
     CountModel,
+    run_with_oom_recovery,
 )
 from metacountregressor.main_hpc_lc_patch import (  # noqa: E402
     build_param_index,
     mixed_model_loglik,
     fit_em,
     _seed_classes_from_clusters,
+    unpack_lc_params,
+    compute_lc_posteriors,
 )
 from metacountregressor.experiment_package import StructureEvaluatorLC  # noqa: E402
 
@@ -204,6 +207,7 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._fit_count = 0
+        self._fit_trace = []  # (fit_number, BIC, LL, n_params, n_obs)
 
     def _coefs_valid(self, params: np.ndarray) -> bool:
         """Check no coefficient is absurdly large and dispersion > 0."""
@@ -243,7 +247,7 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
 
             K_mem = spec.K_membership
             spec_1 = replace(spec, latent_classes=1)
-            K_base = build_param_index(spec_1)["total_params"]
+            K_base_0 = build_param_index(spec_1)["total_params"]
 
             # Step 1 — fit single-class warm-start
             model_1 = CountModel(spec_1, data_train)
@@ -257,22 +261,28 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
                       f"(max |coef| = {np.max(np.abs(theta_1)):.1f})")
                 return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
+            spec_c = replace(spec, latent_classes=C)
+            pindex_c = build_param_index(spec_c)
+            _class_K_base = list(pindex_c.get("class_K_base", [K_base_0] * C))
+
             # Step 2 — cluster-based seeding
             rng = np.random.default_rng(abs(hash(sig)) % (2**31))
             try:
                 per_class_thetas = _seed_classes_from_clusters(
-                    theta_1, data_train, spec_1, C, K_base, rng
+                    theta_1, data_train, spec_1, C, K_base_0, rng,
+                    class_K_base=_class_K_base,
                 )
                 theta_init = np.concatenate(per_class_thetas)
             except Exception:
                 theta_init = np.concatenate([
-                    theta_1 + rng.normal(0, 0.05, K_base)
-                    for _ in range(C)
+                    theta_1[:k] + rng.normal(0, 0.05, k)
+                    if len(theta_1) >= k
+                    else np.pad(theta_1, (0, k - len(theta_1))) + rng.normal(0, 0.05, k)
+                    for k in _class_K_base
                 ])
 
             gamma_init = np.zeros((C - 1) * (K_mem + 1))
             init_params = np.concatenate([theta_init, gamma_init])
-            spec_c = replace(spec, latent_classes=C)
 
             # Step 3 — DE warm-up
             seed_de = abs(hash(sig) * 3 + 1) % (2**31)
@@ -364,38 +374,11 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
                 print(f"{'=' * 65}\n")
 
                 # ── Posterior class assignments vs FC ───────────
+                import pandas as pd
                 try:
-                    theta_all = params_c[:C * K_base].reshape(C, K_base)
-                    gamma = params_c[C * K_base:].reshape(C - 1, K_mem + 1)
-
-                    # Prior log-probs
-                    Xmem = np.array(data_train["Xmem"])
-                    Z = np.mean(Xmem, axis=1)
-                    Z_full = np.concatenate(
-                        [np.ones((n, 1)), Z], axis=1
+                    posterior, log_pi, logL = compute_lc_posteriors(
+                        params_c, data_train, spec_c
                     )
-                    logits_i = Z_full @ gamma.T
-                    logits_full = np.concatenate(
-                        [np.zeros((n, 1)), logits_i], axis=1
-                    )
-                    log_pi = np.array(
-                        jax.nn.log_softmax(jnp.array(logits_full), axis=1)
-                    )
-
-                    # Per-class individual LL
-                    logL = np.zeros((n, C))
-                    for c in range(C):
-                        ll_ind = mixed_model_loglik(
-                            jnp.array(theta_all[c]), data_train,
-                            replace(spec_c, latent_classes=1), indivi=True
-                        )
-                        logL[:, c] = np.array(ll_ind)
-
-                    # Full posterior
-                    log_joint = logL + log_pi
-                    log_joint -= log_joint.max(axis=1, keepdims=True)
-                    posterior = np.exp(log_joint)
-                    posterior /= posterior.sum(axis=1, keepdims=True)
                     hard_class = np.argmax(posterior, axis=1) + 1
 
                     # Align with original df
@@ -440,12 +423,44 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
                     )[profile_cols].mean()
                     print(class_means.to_string())
                     print()
+
+                    # ── FC classification RMSE ─────────────────
+                    # FC 0,1 → class 1  |  FC 2,3,5 → class 2
+                    fc_target = np.where(
+                        df_join["FC"].isin([0, 1]), 1, 2
+                    )
+                    # Align: try both mappings, pick lower RMSE
+                    err_direct = (hard_class - fc_target) ** 2
+                    err_swapped = (hard_class - (3 - fc_target)) ** 2
+                    fc_rmse_direct = np.sqrt(np.mean(err_direct))
+                    fc_rmse_swapped = np.sqrt(np.mean(err_swapped))
+                    if fc_rmse_direct <= fc_rmse_swapped:
+                        fc_rmse = fc_rmse_direct
+                        fc_acc = np.mean(hard_class == fc_target)
+                    else:
+                        fc_rmse = fc_rmse_swapped
+                        fc_acc = np.mean(hard_class == (3 - fc_target))
+                    print(f"  FC-LC RECOVERY  RMSE={fc_rmse:.4f}  "
+                          f"Accuracy={fc_acc:.1%}")
+                    print()
                 except Exception as exc:
                     print(f"  [posterior computation error] {exc}\n")
             else:
                 print()
 
             # ── Return ──────────────────────────────────────────
+            # Record trace for convergence plot
+            self._fit_trace.append({
+                "fit": self._fit_count,
+                "bic": float(bic),
+                "ll": float(ll),
+                "n_params": int(k),
+                "n_obs": int(n),
+                "fixed": spec_dict.get("fixed_terms", []),
+                "membership": spec_dict.get("membership_terms", []),
+                "dispersion": spec_dict.get("dispersion", 0),
+            })
+
             if self.mode == "single":
                 value = float(bic)
                 self.cache[key] = value
@@ -500,7 +515,7 @@ if __name__ == "__main__":
     # ── Build evaluator ──────────────────────────────────────────
     allowed_roles = populate_allowed_roles(
         all_vars,
-        {"EXPOSE": [1], "FC": [0, 1, 2, 3, 5]},  # FC excluded from membership roles
+        {"EXPOSE": [1], "FC": [0], "URB": [0]},  # FC & URB fully excluded — recover via latent classes
         default_roles=[0, 1, 2, 3, 5, 7, 8],  # includes membership roles
     )
     allowed_dists = populate_allowed_distributions(all_vars, None)
@@ -514,7 +529,7 @@ if __name__ == "__main__":
         allowed_roles=allowed_roles,
         allowed_distributions=allowed_dists,
         group_id_col="FC",
-        mode="single",
+        mode="multi",
         R=200,
         max_latent_classes=2,
     )
@@ -587,11 +602,80 @@ if __name__ == "__main__":
 
     best_sol = solutions[best_idx]
     best_score = float(scores[best_idx]) if scores.ndim == 1 else float(scores[best_idx, 0])
+    best_rmse = None if scores.ndim == 1 else float(scores[best_idx, 1])
     print(f"\nBest BIC: {best_score:.2f}")
+    if best_rmse is not None:
+        print(f"Best RMSE (test): {best_rmse:.4f}")
+
+    # ── Save & plot SA fit trace ─────────────────────────────────
+    if evaluator._fit_trace:
+        import csv as _csv
+        import json as _json
+        trace_csv = os.path.join(REPO_ROOT, "results", "lc_search_trace.csv")
+        os.makedirs(os.path.dirname(trace_csv), exist_ok=True)
+        with open(trace_csv, "w", newline="") as f:
+            writer = _csv.DictWriter(f, fieldnames=evaluator._fit_trace[0].keys())
+            writer.writeheader()
+            for row in evaluator._fit_trace:
+                writer.writerow({
+                    k: _json.dumps(v) if isinstance(v, list) else v
+                    for k, v in row.items()
+                })
+        print(f"Search trace saved to:  {trace_csv}")
+
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as _plt
+
+            bics = [r["bic"] for r in evaluator._fit_trace]
+            fits = [r["fit"] for r in evaluator._fit_trace]
+            best_so_far = np.minimum.accumulate(bics)
+
+            fig, (ax1, ax2) = _plt.subplots(1, 2, figsize=(14, 5))
+
+            ax1.scatter(fits, bics, s=10, alpha=0.6, color="steelblue")
+            ax1.plot(fits, best_so_far, "r-", linewidth=1.5, label="Best so far")
+            ax1.set_xlabel("Fit evaluation #")
+            ax1.set_ylabel("BIC (lower = better)")
+            ax1.set_title(f"SA Structure Search: BIC per Evaluation\n"
+                          f"(2-class LC-NB2, DE warm-up, best={best_score:.1f})")
+            ax1.legend(fontsize=8)
+            ax1.grid(True, alpha=0.3)
+
+            # Distribution of BIC values
+            finite_bics = [b for b in bics if b < 1e11]
+            ax2.hist(finite_bics, bins=min(30, len(finite_bics)),
+                     color="steelblue", edgecolor="white", alpha=0.8)
+            ax2.axvline(best_score, color="red", linestyle="--",
+                        linewidth=1.5, label=f"Best = {best_score:.1f}")
+            ax2.set_xlabel("BIC")
+            ax2.set_ylabel("Frequency")
+            ax2.set_title("Distribution of BIC Values")
+            ax2.legend(fontsize=8)
+            ax2.grid(True, alpha=0.3)
+
+            fig.suptitle("SA Structure Search Convergence\n"
+                         "(2-class LC-NB2, FC held out)",
+                         fontsize=11, fontweight="bold")
+            _plt.tight_layout()
+            trace_png = os.path.join(REPO_ROOT, "results", "lc_search_trace.png")
+            _plt.savefig(trace_png, dpi=150, bbox_inches="tight")
+            _plt.close()
+            print(f"Search trace plot saved to:  {trace_png}")
+        except Exception as exc:
+            print(f"  [warn] Search trace plot failed: {exc}")
 
     spec_dict = evaluator.build_spec(best_sol)
     if spec_dict:
         spec_dict["latent_classes"] = 2
+        # ── Save best spec for Phase 2 ─────────────────────────────
+        import json as _json
+        spec_path = os.path.join(REPO_ROOT, "results", "best_model_spec.json")
+        os.makedirs(os.path.dirname(spec_path), exist_ok=True)
+        with open(spec_path, "w") as fp:
+            _json.dump(spec_dict, fp, indent=2, default=str)
+        print(f"Best model spec saved to:  {spec_path}")
         print(f"  dispersion:      {'NB2' if spec_dict.get('dispersion') else 'Poisson'}")
         print(f"  fixed_terms:     {spec_dict.get('fixed_terms', [])}")
         print(f"  rdm_terms:       {spec_dict.get('rdm_terms', [])}")
@@ -619,37 +703,49 @@ if __name__ == "__main__":
         C = 2
         K_mem = spec_best.K_membership
         base_spec = replace(spec_best, latent_classes=1)
-        K_base = build_param_index(base_spec)["total_params"]
+        pindex = build_param_index(spec_best)
+        class_K_base = list(pindex.get("class_K_base", [build_base_index(base_spec)["total_params"]] * C))
+        K_base_0 = class_K_base[0]
 
         # -- warm-start single-class --
         model_1 = CountModel(base_spec, data_best)
-        res_1 = model_1.fit()
+        res_1 = run_with_oom_recovery(
+            model_1.fit, label="REFIT single-class warm-start fit"
+        )
         theta_1 = np.array(res_1.params)
 
         rng = np.random.default_rng(42)
         try:
             per_class = _seed_classes_from_clusters(
-                theta_1, data_best, base_spec, C, K_base, rng
+                theta_1, data_best, base_spec, C, K_base_0, rng,
+                class_K_base=class_K_base,
             )
             theta_init = np.concatenate(per_class)
         except Exception:
             theta_init = np.concatenate([
-                theta_1 + rng.normal(0, 0.05, K_base) for _ in range(C)
+                theta_1[:class_K_base[c]]
+                if len(theta_1) >= class_K_base[c]
+                else np.pad(theta_1, (0, class_K_base[c] - len(theta_1)))
+                + rng.normal(0, 0.05, class_K_base[c])
+                for c in range(C)
             ])
 
         gamma_init = np.zeros((C - 1) * (K_mem + 1))
         init_p = np.concatenate([theta_init, gamma_init])
 
         # -- DE warm-up --
-        init_p = _de_warmup_lc(
-            init_p, data=data_best, spec=spec_best,
+        init_p = run_with_oom_recovery(
+            _de_warmup_lc, init_p, data=data_best, spec=spec_best,
             maxiter=12, popsize=8, seed=42,
+            label="REFIT DE warm-up",
         )
 
         # -- EM --
-        params_em = fit_em(
+        params_em = run_with_oom_recovery(
+            fit_em,
             init_params=init_p, data=data_best, spec=spec_best,
             max_iter=100, tol=1e-6, verbose=True,
+            label="REFIT EM",
         )
 
         # -- Polish --
@@ -657,10 +753,51 @@ if __name__ == "__main__":
             fun=lambda p: mixed_model_loglik(p, data_best, spec_best),
             maxiter=800,
         )
-        result = polish.run(jnp.array(params_em))
+        result = run_with_oom_recovery(
+            polish.run, jnp.array(params_em), label="REFIT LBFGS polish"
+        )
 
         objective = partial(mixed_model_loglik, data=data_best, spec=spec_best)
         param_index = build_param_index(spec_best)
         print_summary(result, objective, data_best, spec_best, param_index)
+
+        # ── Test-set validation ────────────────────────────────
+        if evaluator.df_test is not None:
+            data_test_v, spec_test = build_model_from_manual_spec(
+                df=evaluator.df_test,
+                manual_spec=spec_dict,
+                id_col="ID", y_col="Y", offset_col="OFFSET",
+                R=200,
+            )
+            model_test = CountModel(spec_test, data_test_v)
+            model_test.params = np.array(result.params)
+            preds = model_test.predict()
+            y_true = np.array(data_test_v["y"]).squeeze()
+            rmse_v = np.sqrt(np.mean((preds - y_true) ** 2))
+            mae_v = np.mean(np.abs(preds - y_true))
+            print(f"\nTEST-SET VALIDATION  RMSE={rmse_v:.4f}  MAE={mae_v:.4f}")
+
+            # ── FC classification RMSE on test set ──────────
+            params_all = np.array(result.params)
+            spec_c_test = replace(spec_test, latent_classes=C)
+            posterior_test, _, _ = compute_lc_posteriors(
+                params_all, data_test_v, spec_c_test
+            )
+            hard_test = np.argmax(posterior_test, axis=1) + 1
+
+            test_ids = np.array(data_test_v.get(
+                "ids", evaluator.df_test[["ID"]]
+                .drop_duplicates()["ID"].to_numpy()
+            )).ravel()
+            fc_test = evaluator.df_test.set_index("ID").loc[
+                test_ids, "FC"
+            ].values
+            fc_target_test = np.where(
+                np.isin(fc_test, [0, 1]), 1, 2
+            )
+            err_d = (hard_test - fc_target_test) ** 2
+            err_s = (hard_test - (3 - fc_target_test)) ** 2
+            fc_rmse_v = float(np.sqrt(min(np.mean(err_d), np.mean(err_s))))
+            print(f"  FC-LC RECOVERY (test)  RMSE={fc_rmse_v:.4f}")
 
     print("\nDone.")

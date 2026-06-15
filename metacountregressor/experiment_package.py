@@ -59,6 +59,7 @@ import numpy as np
 import pandas as pd
 import jax
 import jax.numpy as jnp
+import gc
 import math
 from dataclasses import replace
 from functools import partial
@@ -99,6 +100,7 @@ try:
         refit_and_print,
         save_run_summary_to_txt,
         check_identification,
+        _is_oom_error,
     )
     from .main_hpc_lc_patch import (
         ModelSpec,
@@ -135,6 +137,7 @@ except ImportError:
         refit_and_print,
         save_run_summary_to_txt,
         check_identification,
+        _is_oom_error,
     )
     from main_hpc_lc_patch import (
         ModelSpec,
@@ -494,23 +497,30 @@ class StructureEvaluatorLC(StructureEvaluator):
                 theta_1   = np.array(result_1.params)
                 K_base    = build_param_index(spec_1)["total_params"]
 
+                # Pre-build spec_c and pindex for per-class sizes
+                spec_c = replace(spec, latent_classes=C)
+                pindex_c = build_param_index(spec_c)
+                _class_K_base = list(pindex_c.get("class_K_base", [K_base] * C))
+
                 # Step 2 — cluster-based seeding for well-separated class starts
                 rng = np.random.default_rng(abs(hash(sig)) % (2**31))
                 try:
                     per_class_thetas = _seed_classes_from_clusters(
-                        theta_1, data_train, spec_1, C, K_base, rng
+                        theta_1, data_train, spec_1, C, K_base, rng,
+                        class_K_base=_class_K_base,
                     )
                     theta_init = np.concatenate(per_class_thetas)
                 except Exception:
                     theta_init = np.concatenate([
-                        theta_1 + rng.normal(0, 0.05, K_base) for _ in range(C)
+                        theta_1[:k] + rng.normal(0, 0.05, k)
+                        if len(theta_1) >= k
+                        else np.pad(theta_1, (0, k - len(theta_1))) + rng.normal(0, 0.05, k)
+                        for k in _class_K_base
                     ])
 
                 # gamma init: zeros → equal class probs, membership coeffs=0
                 gamma_init = np.zeros((C - 1) * (K_mem + 1))
                 init_params = np.concatenate([theta_init, gamma_init])
-
-                spec_c = replace(spec, latent_classes=C)
 
                 # Step 3 — EM
                 try:
@@ -577,6 +587,16 @@ class StructureEvaluatorLC(StructureEvaluator):
 
         except Exception as e:
             print(f"  [fitness error] {e}")
+            if _is_oom_error(e):
+                # A GPU OOM here means the device is at/near capacity. Free
+                # whatever JAX can free immediately so the *next* candidate
+                # in the search isn't doomed by the same exhaustion (left
+                # unhandled, this previously caused every remaining
+                # generation in a 500-gen SA run to fail identically).
+                print("  [fitness error] GPU out-of-memory; "
+                      "clearing JAX caches before continuing search.")
+                jax.clear_caches()
+                gc.collect()
             return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
     # ── Adaptive identifiability helper ─────────────────────────────
@@ -1196,6 +1216,9 @@ class ExperimentBuilder:
             K_mem = int(spec.K_membership)
             spec_1 = replace(spec, latent_classes=1)
             K_base = build_param_index(spec_1)["total_params"]
+            spec_c = replace(spec, latent_classes=C)
+            pindex_c = build_param_index(spec_c)
+            _class_K_base_fit = list(pindex_c.get("class_K_base", [K_base] * C))
 
             has_random_structure = any([
                 bool(manual_spec.get("rdm_terms")),
@@ -1206,7 +1229,7 @@ class ExperimentBuilder:
 
             if latent_random_start:
                 rng0 = np.random.default_rng(int(de_seed))
-                theta_1 = rng0.normal(0.0, 0.1, int(K_base))
+                theta_1 = rng0.normal(0.0, 0.1, int(K_base))  # single-class warm-start size
                 de_report["single_class"] = {
                     "ran": False,
                     "accepted": False,
@@ -1285,8 +1308,6 @@ class ExperimentBuilder:
 
                 theta_1 = np.asarray(result_1.params)
 
-            spec_c = replace(spec, latent_classes=C)
-
             best_result = None
             best_value = np.inf
             last_error: Optional[Exception] = None
@@ -1315,40 +1336,47 @@ class ExperimentBuilder:
                     rng = np.random.default_rng(seed)
                     if noise_scale == "random":
                         theta_init = np.concatenate([
-                            rng.normal(0.0, 0.1, K_base) + 1e-3 * (i + 1)
-                            for i in range(C)
+                            rng.normal(0.0, 0.1, k) + 1e-3 * (i + 1)
+                            for i, k in enumerate(_class_K_base_fit)
                         ])
                     elif noise_scale == "cluster":
                         try:
                             per_class = _seed_classes_from_clusters(
-                                theta_1, data, spec_1, C, K_base, rng
+                                theta_1, data, spec_1, C, K_base, rng,
+                                class_K_base=_class_K_base_fit,
                             )
                             theta_init = np.concatenate(per_class)
                         except Exception:
                             # fallback: add moderate noise
                             theta_init = np.concatenate([
-                                theta_1 + rng.normal(0.0, 0.05, K_base)
-                                for _ in range(C)
+                                theta_1[:k] + rng.normal(0.0, 0.05, k)
+                                if len(theta_1) >= k
+                                else np.pad(theta_1, (0, k - len(theta_1))) + rng.normal(0.0, 0.05, k)
+                                for k in _class_K_base_fit
                             ])
                     elif noise_scale == "force_min_noise":
                         # forcibly guarantee different initializations
                         theta_init = np.concatenate([
-                            theta_1 + rng.normal(0.0, 0.01, K_base) + 0.01 * (i+1)
-                            for i in range(C)
+                            (theta_1[:k] if len(theta_1) >= k else np.pad(theta_1, (0, k - len(theta_1))))
+                            + rng.normal(0.0, 0.01, k) + 0.01 * (i+1)
+                            for i, k in enumerate(_class_K_base_fit)
                         ])
                     else:
                         # always add noise, never allow all classes to be identical
                         theta_init = np.concatenate([
-                            theta_1 + rng.normal(0.0, noise_scale, K_base) + 1e-4 * (i+1)
-                            for i in range(C)
+                            (theta_1[:k] if len(theta_1) >= k else np.pad(theta_1, (0, k - len(theta_1))))
+                            + rng.normal(0.0, noise_scale, k) + 1e-4 * (i+1)
+                            for i, k in enumerate(_class_K_base_fit)
                         ])
 
                     # Check: if all classes are still identical, forcibly add small offset
-                    theta_blocks = np.split(theta_init, C)
-                    if all(np.allclose(theta_blocks[0], tb) for tb in theta_blocks[1:]):
-                        for i in range(1, C):
-                            theta_blocks[i] = theta_blocks[i] + 1e-3 * i
-                        theta_init = np.concatenate(theta_blocks)
+                    # (only works when all classes have same K_base)
+                    if len(set(_class_K_base_fit)) == 1:
+                        theta_blocks = np.split(theta_init, C)
+                        if all(np.allclose(theta_blocks[0], tb) for tb in theta_blocks[1:]):
+                            for i in range(1, C):
+                                theta_blocks[i] = theta_blocks[i] + 1e-3 * i
+                            theta_init = np.concatenate(theta_blocks)
 
                     gamma_init = np.zeros((C - 1) * (K_mem + 1), dtype=float)
                     init_params = np.concatenate([theta_init, gamma_init])
@@ -1558,9 +1586,12 @@ class ExperimentBuilder:
         C = spec.latent_classes
         K_mem = spec.K_membership
         base_spec = replace(spec, latent_classes=1)
-        K_base = build_param_index(base_spec)["total_params"]
+        pindex = build_param_index(spec)
+        class_offsets = list(pindex.get("class_offsets", [i * build_param_index(base_spec)["total_params"] for i in range(C)]))
+        class_K_base  = list(pindex.get("class_K_base", [build_param_index(base_spec)["total_params"]] * C))
+        total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
         gamma_size = (C - 1) * (K_mem + 1)
-        gamma = params[C * K_base : C * K_base + gamma_size].reshape(C - 1, K_mem + 1)
+        gamma = params[total_theta : total_theta + gamma_size].reshape(C - 1, K_mem + 1)
 
         n = data["y"].shape[0]
         if K_mem > 0:
@@ -1698,13 +1729,16 @@ class ExperimentBuilder:
 
         if spec.latent_classes > 1 and "class_params" in param_index:
             base_spec = replace(spec, latent_classes=1)
-            base_index = build_base_index(base_spec)
-            K_base = param_index.get("K_base", base_index.get("total_params"))
             C = int(spec.latent_classes)
+            _class_offsets = param_index.get("class_offsets", tuple(i * param_index.get("K_base", param_index["total_params"] // C) for i in range(C)))
+            _class_K_base  = param_index.get("class_K_base", (param_index.get("K_base", param_index["total_params"] // C),) * C)
 
             for c in range(C):
-                class_slice = params[c * K_base:(c + 1) * K_base]
-                _add_rows(base_index, class_slice, class_label=f"Class {c + 1}")
+                oc = _class_offsets[c]
+                kc = _class_K_base[c]
+                class_slice = params[oc:oc + kc]
+                _base_idx_c = build_base_index(base_spec, model=param_index.get("class_models", (base_spec.model,) * C)[c])
+                _add_rows(_base_idx_c, class_slice, class_label=f"Class {c + 1}")
 
             class_params_end = param_index["class_params"][1]
             logits_tail = params[class_params_end:]
@@ -1865,13 +1899,16 @@ class ExperimentBuilder:
 
         if spec.latent_classes > 1 and "class_params" in param_index:
             base_spec = replace(spec, latent_classes=1)
-            base_index = build_base_index(base_spec)
-            K_base = param_index.get("K_base", base_index.get("total_params"))
             C = int(spec.latent_classes)
+            _class_offsets = param_index.get("class_offsets", tuple(i * param_index.get("K_base", param_index["total_params"] // C) for i in range(C)))
+            _class_K_base  = param_index.get("class_K_base", (param_index.get("K_base", param_index["total_params"] // C),) * C)
 
             for c in range(C):
-                class_slice = params[c * K_base:(c + 1) * K_base]
-                _extract_fixed_coefs(base_index, class_slice, class_label=f"Class {c + 1}")
+                oc = _class_offsets[c]
+                kc = _class_K_base[c]
+                class_slice = params[oc:oc + kc]
+                _base_idx_c = build_base_index(base_spec, model=param_index.get("class_models", (base_spec.model,) * C)[c])
+                _extract_fixed_coefs(_base_idx_c, class_slice, class_label=f"Class {c + 1}")
         else:
             _extract_fixed_coefs(param_index, params)
 

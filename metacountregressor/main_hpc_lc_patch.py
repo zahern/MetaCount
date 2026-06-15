@@ -212,10 +212,20 @@ class ModelSpec:
     # ── NEW ──────────────────────────────────────────────────────────
     membership_names:    tuple = ()   # variables in class-prob equation
     K_membership:        int   = 0    # len(membership_names)
+    class_models:        tuple = ()   # per-class model strings (eg ("poisson","nb"))
 
     @property
     def K_random_total(self):
         return self.Kr_cor + self.Kr_ind
+
+    @property
+    def models(self) -> tuple:
+        """Per-class model strings.  Broadcasts `model` when class_models is empty."""
+        if self.class_models and self.latent_classes > 1:
+            return tuple(self.class_models) + tuple(
+                self.model for _ in range(self.latent_classes - len(self.class_models))
+            )
+        return tuple(self.model for _ in range(max(1, self.latent_classes)))
 
 
 # Monkey-patch so the rest of main_hpc sees the new class
@@ -232,26 +242,40 @@ def build_param_index(spec: ModelSpec) -> dict:
     if spec.latent_classes == 1:
         return build_base_index(spec)
 
-    base_spec  = replace(spec, latent_classes=1)
-    base_index = build_base_index(base_spec)
-    K_base     = base_index["total_params"]
-    C          = spec.latent_classes
-    K_mem      = spec.K_membership           # NEW
+    C     = spec.latent_classes
+    K_mem = spec.K_membership
+    models = spec.models  # per-class model strings
+
+    # Compute per-class K_base (may differ by model type)
+    base_spec_no_lc = replace(spec, latent_classes=1)
+    class_offsets = []   # start index of each class's theta in flat param vector
+    class_K_base  = []   # number of parameters per class
+    offset = 0
+    for c in range(C):
+        _model_c = models[c]
+        _base_idx_c = build_base_index(base_spec_no_lc, model=_model_c)
+        _Kc = _base_idx_c["total_params"]
+        class_offsets.append(offset)
+        class_K_base.append(_Kc)
+        offset += _Kc
+
+    total_theta = offset
 
     index = {}
-    idx   = 0
-
-    index["class_params"]  = (0, C * K_base)
-    idx = C * K_base
+    index["class_params"]   = (0, total_theta)
+    index["class_offsets"]  = tuple(class_offsets)
+    index["class_K_base"]   = tuple(class_K_base)
+    index["class_models"]   = tuple(models)
 
     # (C-1) rows × (K_mem+1) cols  [intercept + membership vars]
     gamma_size = (C - 1) * (K_mem + 1)
-    index["class_gamma"]   = (idx, idx + gamma_size)    # NEW name
+    idx = total_theta
+    index["class_gamma"]    = (idx, idx + gamma_size)
     idx += gamma_size
 
-    index["K_base"]        = K_base
-    index["K_mem"]         = K_mem                      # NEW
-    index["total_params"]  = idx
+    index["K_base"]         = class_K_base[0] if class_K_base else 0  # legacy compat
+    index["K_mem"]          = K_mem
+    index["total_params"]   = idx
 
     return index
 
@@ -399,6 +423,7 @@ def build_jax_data(
         grouped_dists=tuple(grouped_dists),
         membership_names=tuple(membership_cols),    # NEW
         K_membership=Xmem.shape[2],                # NEW
+        class_models=(),                           # set by caller via replace()
     )
 
     return data, spec
@@ -479,7 +504,9 @@ def build_model_from_manual_spec(
 
     model_type = "nb" if manual_spec.get("dispersion", 0) else "poisson"
     lc         = int(manual_spec.get("latent_classes", 1))
-    spec       = replace(spec, model=model_type, latent_classes=lc)
+    class_models = tuple(manual_spec.get("class_models", ()))
+    spec       = replace(spec, model=model_type, latent_classes=lc,
+                         class_models=class_models)
 
     return data, spec
 
@@ -512,16 +539,30 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
 
         C         = spec.latent_classes
         K_mem     = spec.K_membership
-        base_spec = replace(spec, latent_classes=1)
-        base_idx  = build_base_index(base_spec)
-        K_base    = base_idx["total_params"]
+        models    = spec.models  # tuple of per-class model strings
+        base_spec_nolc = replace(spec, latent_classes=1)
 
-        # Class-specific outcome parameters
-        theta_all  = params[:C * K_base].reshape(C, K_base)
+        # Compute per-class param sizes
+        class_K_base = []
+        class_offsets = []
+        offset = 0
+        for c in range(C):
+            _kc = build_base_index(base_spec_nolc, model=models[c])["total_params"]
+            class_K_base.append(_kc)
+            class_offsets.append(offset)
+            offset += _kc
+        total_theta = offset
+
+        # Class-specific outcome parameters (jagged — NOT rectangular)
+        theta_all = []  # list of jnp arrays with different lengths
+        for c in range(C):
+            kc = class_K_base[c]
+            oc = class_offsets[c]
+            theta_all.append(params[oc:oc + kc])
 
         # Membership gamma: (C-1) × (K_mem+1)
         gamma_size = (C - 1) * (K_mem + 1)
-        gamma      = params[C * K_base : C * K_base + gamma_size
+        gamma      = params[total_theta : total_theta + gamma_size
                             ].reshape(C - 1, K_mem + 1)
 
         # Build Z_full (N, K_mem+1)
@@ -543,11 +584,12 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
         )                                                   # (N, C)
         log_pi      = jax.nn.log_softmax(logits_full, axis=1)  # (N, C)
 
-        # Per-class individual log-likelihoods
+        # Per-class individual log-likelihoods (each with its own model)
         ll_classes = []
         for c in range(C):
+            base_spec_c = replace(base_spec_nolc, model=models[c])
             ll_c = mixed_model_loglik(
-                theta_all[c], data, base_spec, indivi=True
+                theta_all[c], data, base_spec_c, indivi=True
             )                                               # (N,) log-likelihoods (negative)
             ll_classes.append(ll_c + log_pi[:, c])
 
@@ -658,7 +700,7 @@ _hpc.mixed_model_loglik = mixed_model_loglik
 # ═══════════════════════════════════════════════════════════════════════
 
 def fit_em(init_params, data, spec: ModelSpec,
-           max_iter=100, tol=1e-6, verbose=True):
+           max_iter=100, tol=1e-6, verbose=True, return_trace=False):
     """
     EM algorithm for latent-class mixed count models.
 
@@ -675,6 +717,8 @@ def fit_em(init_params, data, spec: ModelSpec,
       iterations so classes have time to separate before being penalised.
     - Pure-JAX gamma objective: numpy arrays inside the objective function
       break autodiff gradients; all operations now use jnp.
+    - Per-class model support: each class can have its own distributional
+      form (poisson, nb, etc.) via spec.class_models.
     """
     from jax.nn import log_softmax as _log_softmax
 
@@ -682,14 +726,29 @@ def fit_em(init_params, data, spec: ModelSpec,
 
     C          = spec.latent_classes
     K_mem      = spec.K_membership
-    base_spec  = replace(spec, latent_classes=1)
-    base_index = build_base_index(base_spec)
-    K_base     = base_index["total_params"]
+    models     = spec.models  # per-class model strings
+    base_spec_nolc = replace(spec, latent_classes=1)
     gamma_size = (C - 1) * (K_mem + 1)
+
+    # Compute per-class param sizes
+    class_K_base = []
+    class_offsets = []
+    offset = 0
+    for c in range(C):
+        _kc = build_base_index(base_spec_nolc, model=models[c])["total_params"]
+        class_K_base.append(_kc)
+        class_offsets.append(offset)
+        offset += _kc
+    total_theta = offset
+
+    # Per-class base specs (with correct model)
+    class_base_specs = [
+        replace(base_spec_nolc, model=models[c]) for c in range(C)
+    ]
 
     params = np.array(init_params)
     N = int(np.array(
-        mixed_model_loglik(params[:K_base], data, base_spec, indivi=True)
+        mixed_model_loglik(params[:class_K_base[0]], data, class_base_specs[0], indivi=True)
     ).shape[0])
 
     # Build membership design matrix Z_full (N, K_mem+1) — fixed for all iters
@@ -713,30 +772,32 @@ def fit_em(init_params, data, spec: ModelSpec,
         best_ll = -np.inf
 
     prev_ll = best_ll
+    trace = []  # (iteration, T, m_iters, LL, delta_LL, class_shares)
 
     for iteration in range(max_iter):
 
         # ==============================================================
         # Temperature schedule for E-step
-        # Softens posteriors in early iterations (T > 1) to prevent
-        # premature collapse; decays to 1.0 (hard EM) for the final 1/3.
         # ==============================================================
         warmup_frac = min(1.0, iteration / max(1, max_iter * 0.4))
         T = max(1.0, 2.0 - warmup_frac)              # 2.0 → 1.0 over first 40%
 
         # ==============================================================
         # Progressive M-step budget
-        # Early iterations: coarse M-step (50 iters suffices).
-        # Later iterations: tight M-step needed for convergence accuracy.
         # ==============================================================
         m_iters = min(50 + 25 * (iteration // 3), 300)
 
         # ==========================================================
         # E-STEP
         # ==========================================================
+        # Extract per-class thetas (jagged)
+        theta_all = []
+        for c in range(C):
+            oc = class_offsets[c]
+            kc = class_K_base[c]
+            theta_all.append(params[oc:oc + kc])
 
-        theta_all = params[:C * K_base].reshape(C, K_base)
-        gamma     = params[C * K_base:].reshape(C - 1, K_mem + 1)
+        gamma = params[total_theta:].reshape(C - 1, K_mem + 1)
 
         # Individual-specific log class probabilities  (N, C)
         logits_i    = Z_full @ gamma.T                          # (N, C-1)
@@ -749,7 +810,7 @@ def fit_em(init_params, data, spec: ModelSpec,
         logL = np.zeros((N, C))
         for c in range(C):
             ll_ind = mixed_model_loglik(
-                jnp.array(theta_all[c]), data, base_spec, indivi=True
+                jnp.array(theta_all[c]), data, class_base_specs[c], indivi=True
             )
             logL[:, c] = np.array(ll_ind)
 
@@ -762,7 +823,6 @@ def fit_em(init_params, data, spec: ModelSpec,
         w /= w.sum(axis=1, keepdims=True)
 
         # Collapse guard: deferred past iter 3 so classes can separate first.
-        # Uses a stricter 1% floor rather than 2%, and only after warmup.
         mean_w = w.mean(axis=0)                                 # (C,)
         if iteration >= 3 and np.any(mean_w < 0.01):
             if verbose:
@@ -778,10 +838,11 @@ def fit_em(init_params, data, spec: ModelSpec,
         theta_new = []
         for c in range(C):
             wc = w[:, c].copy()
+            _base_c = class_base_specs[c]
 
-            def weighted_objective(theta_c, _wc=wc):
+            def weighted_objective(theta_c, _wc=wc, _spec=_base_c):
                 ll_ind = mixed_model_loglik(
-                    theta_c, data, base_spec, indivi=True
+                    theta_c, data, _spec, indivi=True
                 )
                 return -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
 
@@ -789,7 +850,7 @@ def fit_em(init_params, data, spec: ModelSpec,
             result = solver_theta.run(jnp.array(theta_all[c]))
             theta_new.append(np.array(result.params))
 
-        theta_new = np.concatenate(theta_new)
+        theta_new_flat = np.concatenate(theta_new)
 
         # Update gamma — pure JAX to preserve autodiff correctness
         _w_jnp = jnp.array(w)
@@ -806,7 +867,7 @@ def fit_em(init_params, data, spec: ModelSpec,
         result_gamma = solver_gamma.run(jnp.array(gamma.flatten()))
         gamma_new = np.array(result_gamma.params)
 
-        params = np.concatenate([theta_new, gamma_new])
+        params = np.concatenate([theta_new_flat, gamma_new])
 
         # ==========================================================
         # LL-based convergence + best-params tracking
@@ -824,6 +885,11 @@ def fit_em(init_params, data, spec: ModelSpec,
         ll_delta = abs(current_ll - prev_ll) if np.isfinite(current_ll) else np.inf
         prev_ll  = current_ll
 
+        class_shares_tuple = tuple(float(mw) for mw in mean_w)
+        if trace is not None:
+            trace.append((iteration, float(T), m_iters, current_ll,
+                          ll_delta, class_shares_tuple))
+
         if verbose:
             print(f"EM iter {iteration:3d} | T={T:.2f} | M-iters={m_iters:3d} | "
                   f"LL = {current_ll:.4f} | delta_LL = {ll_delta:.2e} | "
@@ -836,6 +902,8 @@ def fit_em(init_params, data, spec: ModelSpec,
             break
 
     # Return best params seen (guards against last iterate being slightly worse)
+    if return_trace:
+        return best_params, trace
     return best_params
 
 
@@ -856,11 +924,12 @@ def _seed_classes_from_clusters(
     data: dict,
     base_spec: ModelSpec,
     C: int,
-    K_base: int,
+    K_base: int,      # default K_base (for the first class); may differ per class
     rng: np.random.Generator,
+    class_K_base: list = None,   # per-class K_base (optional; if provided, overrides K_base per class)
 ) -> list:
     """
-    Returns a list of C numpy arrays (each shape (K_base,)) to use as
+    Returns a list of C numpy arrays (each with its own shape) to use as
     per-class starting parameters.
 
     Strategy
@@ -909,32 +978,39 @@ def _seed_classes_from_clusters(
         y_all = y_all.mean(axis=1)
     y_global_mean = float(np.maximum(y_all.mean(), 1e-3))
 
+    # Normalise class_K_base if not provided
+    if class_K_base is None:
+        class_K_base = [K_base] * C
+
     thetas = []
     for c in range(C):
         in_cluster = labels == c
         n_c = int(in_cluster.sum())
+        kc = class_K_base[c]
 
-        theta_c = theta_1.copy()
+        # Start from theta_1, truncate or pad to match this class's K_base
+        if len(theta_1) >= kc:
+            theta_c = theta_1[:kc].copy()
+        else:
+            theta_c = np.zeros(kc)
+            theta_c[:len(theta_1)] = theta_1
 
         if n_c >= 3:
             y_c_mean = float(np.maximum(y_all[in_cluster].mean(), 1e-3))
             # Shift intercept so the class predicts y_c_mean at the
             # global covariate average — prevents EM collapse.
             delta_intercept = np.log(y_c_mean) - np.log(y_global_mean)
-            theta_c[0] = theta_1[0] + delta_intercept
+            theta_c[0] = theta_c[0] + delta_intercept
         else:
-            theta_c[0] = theta_1[0] + rng.normal(0, 0.3)
+            theta_c[0] = theta_c[0] + rng.normal(0, 0.3)
 
         # Small noise on all other structural parameters (not dispersion)
-        n_struct = min(K_base - 1, base_spec.Kf - 1)
+        n_struct = min(kc - 1, base_spec.Kf - 1)
         if n_struct > 0:
             theta_c[1:1 + n_struct] += rng.normal(0, 0.05, n_struct)
 
-        # Warm weighted-LBFGS per cluster to differentiate covariate effects
-        # (not just the intercept).  A very short run (30 iters) avoids
-        # over-fitting a sparse cluster while still moving covariate effects
-        # away from the single-class solution.  Skip for tiny clusters.
-        if n_c >= 10:
+        # Warm weighted-LBFGS per cluster (only if same model and sufficient data)
+        if n_c >= 10 and len(theta_1) == kc:
             try:
                 # Hard cluster weights: 1.0 inside cluster, 0.0 outside
                 w_hard = np.zeros(ll_ind.shape[0], dtype=float)
@@ -973,9 +1049,13 @@ def print_summary(result, objective, data, spec: ModelSpec,
     if spec.latent_classes > 1:
         C         = spec.latent_classes
         K_mem     = spec.K_membership
-        base_spec = replace(spec, latent_classes=1)
-        base_idx  = build_base_index(base_spec)
-        K_base    = base_idx["total_params"]
+        models    = spec.models  # per-class model strings
+        base_spec_nolc = replace(spec, latent_classes=1)
+
+        # Compute per-class param sizes
+        class_K_base = list(param_index.get("class_K_base", [build_base_index(base_spec_nolc)["total_params"]] * C))
+        class_offsets = list(param_index.get("class_offsets", [i * class_K_base[0] for i in range(C)]))
+        class_models = list(param_index.get("class_models", models))
 
         params_np = np.asarray(result.params if hasattr(result, "params")
                                else result.x)
@@ -985,11 +1065,18 @@ def print_summary(result, objective, data, spec: ModelSpec,
         else:
             se_np = np.asarray(se)
 
-        theta_all = params_np[:C * K_base].reshape(C, K_base)
-        se_all    = se_np[:C * K_base].reshape(C, K_base)
+        # Extract per-class thetas (jagged)
+        theta_all = []
+        se_all = []
+        for c in range(C):
+            oc = class_offsets[c]
+            kc = class_K_base[c]
+            theta_all.append(params_np[oc:oc + kc])
+            se_all.append(se_np[oc:oc + kc])
 
-        gamma_flat = params_np[C * K_base:]
-        se_gamma   = se_np[C * K_base:]
+        total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
+        gamma_flat = params_np[total_theta:]
+        se_gamma   = se_np[total_theta:]
         gamma      = gamma_flat.reshape(C - 1, K_mem + 1)
         se_g       = se_gamma.reshape(C - 1, K_mem + 1)
 
@@ -1000,6 +1087,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
         print("   LATENT CLASS MIXED MODEL SUMMARY")
         if K_mem > 0:
             print(f"   Membership covariates: {list(spec.membership_names)}")
+        print(f"   Per-class distributions: {list(models)}")
         print("=" * 65)
 
         # ── Per-class outcome params ──────────────────────────────
@@ -1007,19 +1095,24 @@ def print_summary(result, objective, data, spec: ModelSpec,
             pass
 
         for c in range(C):
-            print(f"\n{'#' * 20}  CLASS {c+1}  (pi = {pi[c]:.4f})  {'#' * 20}\n")
+            _model_c = models[c]
+            base_spec_c = replace(base_spec_nolc, model=_model_c, latent_classes=1)
+            _base_idx_c = build_base_index(base_spec_c, model=_model_c)
+
+            print(f"\n{'#' * 20}  CLASS {c+1}  (pi = {pi[c]:.4f})  "
+                  f"[{_model_c.upper()}]  {'#' * 20}\n")
             dummy       = DummyRes()
             dummy.params = theta_all[c]
             dummy.x      = theta_all[c]
 
             obj_c = partial(
                 mixed_model_loglik, data=data,
-                spec=replace(base_spec, latent_classes=1)
+                spec=base_spec_c
             )
             print_summary(
                 result=dummy, objective=obj_c, data=data,
-                spec=replace(base_spec, latent_classes=1),
-                param_index=base_idx, se=se_all[c]
+                spec=base_spec_c,
+                param_index=_base_idx_c, se=se_all[c]
             )
 
         # ── Membership gamma ─────────────────────────────────────
@@ -1136,6 +1229,87 @@ _hpc.print_summary       = print_summary
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# 9.  unpack_lc_params — helper for extracting per-class thetas + gamma
+# ═══════════════════════════════════════════════════════════════════════
+
+def unpack_lc_params(params, spec: ModelSpec):
+    """
+    Extract per-class theta arrays and gamma matrix from flat LC params.
+
+    Returns
+    -------
+    theta_list : list of np.ndarray   (one per class, lengths may differ)
+    gamma      : np.ndarray           shape (C-1, K_mem+1)
+    pindex     : dict                 param index with class_offsets/class_K_base
+    """
+    import numpy as _np
+    C     = spec.latent_classes
+    K_mem = spec.K_membership
+    pindex = build_param_index(spec)
+    class_offsets = list(pindex["class_offsets"])
+    class_K_base  = list(pindex["class_K_base"])
+    params_np = _np.asarray(params)
+
+    theta_list = []
+    for c in range(C):
+        oc = class_offsets[c]
+        kc = class_K_base[c]
+        theta_list.append(params_np[oc:oc + kc])
+
+    total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
+    gamma = params_np[total_theta:].reshape(C - 1, K_mem + 1)
+
+    return theta_list, gamma, pindex
+
+
+def compute_lc_posteriors(params, data, spec: ModelSpec):
+    """
+    Compute posterior class probabilities for an LC model.
+
+    Returns
+    -------
+    posterior  : np.ndarray  (N, C)  softmax(log_joint)
+    log_pi     : np.ndarray  (N, C)  prior log class probabilities
+    logL       : np.ndarray  (N, C)  per-class log-likelihoods
+    """
+    import numpy as _np
+
+    C     = spec.latent_classes
+    K_mem = spec.K_membership
+    models  = spec.models
+    base_spec_nolc = replace(spec, latent_classes=1)
+
+    theta_list, gamma, pindex = unpack_lc_params(params, spec)
+
+    N = int(data["y"].shape[0])
+
+    # Prior log-probabilities  pi_c(n) = softmax( Z_full @ gamma.T )
+    Xmem = _np.array(data["Xmem"])
+    Z = _np.mean(Xmem, axis=1) if Xmem.shape[2] > 0 else _np.zeros((N, 0))
+    Z_full = _np.concatenate([_np.ones((N, 1)), Z], axis=1)
+    logits_i = Z_full @ gamma.T
+    logits_full = _np.concatenate([_np.zeros((N, 1)), logits_i], axis=1)
+    log_pi = _np.array(jax.nn.log_softmax(jnp.array(logits_full), axis=1))
+
+    # Per-class individual log-likelihoods
+    logL = _np.zeros((N, C))
+    for c in range(C):
+        base_spec_c = replace(base_spec_nolc, model=models[c])
+        ll_ind = mixed_model_loglik(
+            jnp.array(theta_list[c]), data, base_spec_c, indivi=True
+        )
+        logL[:, c] = _np.array(ll_ind)
+
+    # Full posterior
+    log_joint = logL + log_pi
+    log_joint -= log_joint.max(axis=1, keepdims=True)
+    posterior = _np.exp(log_joint)
+    posterior /= posterior.sum(axis=1, keepdims=True)
+
+    return posterior, log_pi, logL
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Public re-exports for experiment_package.py
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1148,4 +1322,6 @@ __all__ = [
     "mixed_model_loglik",
     "fit_em",
     "print_summary",
+    "unpack_lc_params",
+    "compute_lc_posteriors",
 ]
