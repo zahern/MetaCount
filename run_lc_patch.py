@@ -66,17 +66,18 @@ from metacountregressor.main_hpc_lc_patch import (  # noqa: E402
 from metacountregressor.experiment_package import StructureEvaluatorLC  # noqa: E402
 
 # ── Boost membership role probabilities so the search explores roles 7 & 8 ──
+#    Membership covariates are crucial for class separation; weight them heavily.
 import metacountregressor.Solvers_METAJAX as _solvers  # noqa: E402
 _solvers.ROLE_PROBS = np.array([
-    0.28,  # 0 - Excluded
-    0.12,  # 1 - Fixed
-    0.14,  # 2 - Random Independent
-    0.14,  # 3 - Random Correlated
+    0.15,  # 0 - Excluded
+    0.08,  # 1 - Fixed
+    0.08,  # 2 - Random Independent
+    0.08,  # 3 - Random Correlated
     0.00,  # 4 - Grouped
     0.00,  # 5 - Heterogeneity in means
     0.02,  # 6 - Zero Inflation
-    0.15,  # 7 - Membership only        <-- boosted
-    0.15,  # 8 - Membership + fixed     <-- boosted
+    0.24,  # 7 - Membership only        <-- strongly boosted
+    0.35,  # 8 - Membership + fixed     <-- strongly boosted
 ], dtype=float)
 _solvers.ROLE_PROBS /= _solvers.ROLE_PROBS.sum()
 
@@ -203,6 +204,7 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
     DE_ABS_SPAN: float = 1.0
     MAX_ABS_COEF: float = 30.0       # reject fits with |coef| above this
     MIN_DISPERSION: float = 0.01     # dispersion must be positive
+    MIN_CLASS_PROP: float = 0.20     # minimum posterior-mean proportion per class
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -261,7 +263,8 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
                       f"(max |coef| = {np.max(np.abs(theta_1)):.1f})")
                 return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
-            spec_c = replace(spec, latent_classes=C)
+            spec_c = replace(spec, latent_classes=C,
+                             min_class_proportion=self.MIN_CLASS_PROP)
             pindex_c = build_param_index(spec_c)
             _class_K_base = list(pindex_c.get("class_K_base", [K_base_0] * C))
 
@@ -331,6 +334,20 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
                       f"(max |coef| = {np.max(np.abs(params_c)):.1f})")
                 return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
+            # ── Class balance check: penalise extreme imbalance ──
+            try:
+                posterior, _, _ = compute_lc_posteriors(params_c, data_train, spec_c)
+                class_props = posterior.mean(axis=0)  # (C,) mean posterior weight
+                min_prop = float(class_props.min())
+                # Severe imbalance penalty: if any class < MIN_CLASS_PROP,
+                # add a penalty to BIC proportional to the shortfall.
+                below = max(0.0, self.MIN_CLASS_PROP - min_prop)
+                bic_penalty = below * n * 10.0  # ~10 BIC points per 1% below 20%
+                bic += bic_penalty
+            except Exception:
+                min_prop = 0.0
+                bic_penalty = 0.0
+
             self._last_fit_cache = {
                 "params": params_c,
                 "spec":   spec_c,
@@ -349,12 +366,15 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
 
             # ── Print full model summary ──────────────────────────
             self._fit_count += 1
+            class_prop_str = " / ".join(f"{p:.2f}" for p in class_props) if min_prop > 0 else "?"
             print(f"\n{'=' * 65}")
             print(f"FIT #{self._fit_count}   *GLOBAL* LC-2 BIC={bic:.1f}   "
                   f"LL={ll:.1f}   k={k}   n={n}")
             print(f"fixed={spec_dict.get('fixed_terms', [])}")
             print(f"membership={spec_dict.get('membership_terms', [])}")
             print(f"dispersion={'NB2' if spec_dict.get('dispersion') else 'Poisson'}")
+            print(f"class props={{{class_prop_str}}}  "
+                  f"min={min_prop:.3f}  balance_penalty={bic_penalty:+.1f}")
             print(f"{'=' * 65}")
             _objective = partial(mixed_model_loglik, data=data_train, spec=spec_c)
             _pindex = build_param_index(spec_c)
@@ -701,6 +721,7 @@ if __name__ == "__main__":
             R=200,
         )
         C = 2
+        spec_best = replace(spec_best, min_class_proportion=0.20)
         K_mem = spec_best.K_membership
         base_spec = replace(spec_best, latent_classes=1)
         pindex = build_param_index(spec_best)

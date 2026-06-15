@@ -39,6 +39,16 @@ __all__ = [
     "extract_summary",
     "extract_search_best",
     "compare_models",
+    # Plotting & figures
+    "generate_all_lc_figures",
+    "plot_search_convergence",
+    "plot_objective_trace",
+    "plot_class_profiles",
+    # CMF plotting & figures
+    "generate_all_cmf_figures",
+    "plot_cmf_search_convergence",
+    "plot_cmf_obs_vs_pred",
+    "plot_cmf_model_comparison",
 ]
 
 _EXPORTS = {
@@ -70,6 +80,16 @@ _EXPORTS = {
     "extract_summary": ("experiment_package", "extract_summary"),
     "extract_search_best": ("experiment_package", "extract_search_best"),
     "compare_models": ("experiment_package", "compare_models"),
+    # Plotting
+    "generate_all_lc_figures": ("lc_plotting", "generate_all_lc_figures"),
+    "plot_search_convergence": ("lc_plotting", "plot_search_convergence"),
+    "plot_objective_trace": ("lc_plotting", "plot_objective_trace"),
+    "plot_class_profiles": ("lc_plotting", "plot_class_profiles"),
+    # CMF
+    "generate_all_cmf_figures": ("cmf_plotting", "generate_all_cmf_figures"),
+    "plot_cmf_search_convergence": ("cmf_plotting", "plot_cmf_search_convergence"),
+    "plot_cmf_obs_vs_pred": ("cmf_plotting", "plot_cmf_obs_vs_pred"),
+    "plot_cmf_model_comparison": ("cmf_plotting", "plot_cmf_model_comparison"),
 }
 
 _LEGACY_EXPORTS = {

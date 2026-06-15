@@ -213,6 +213,7 @@ class ModelSpec:
     membership_names:    tuple = ()   # variables in class-prob equation
     K_membership:        int   = 0    # len(membership_names)
     class_models:        tuple = ()   # per-class model strings (eg ("poisson","nb"))
+    min_class_proportion: float = 0.20  # minimum posterior-mean proportion per class
 
     @property
     def K_random_total(self):
@@ -505,8 +506,10 @@ def build_model_from_manual_spec(
     model_type = "nb" if manual_spec.get("dispersion", 0) else "poisson"
     lc         = int(manual_spec.get("latent_classes", 1))
     class_models = tuple(manual_spec.get("class_models", ()))
+    min_class_prop = float(manual_spec.get("min_class_proportion", 0.15))
     spec       = replace(spec, model=model_type, latent_classes=lc,
-                         class_models=class_models)
+                         class_models=class_models,
+                         min_class_proportion=min_class_prop)
 
     return data, spec
 
@@ -824,6 +827,15 @@ def fit_em(init_params, data, spec: ModelSpec,
 
         # Collapse guard: deferred past iter 3 so classes can separate first.
         mean_w = w.mean(axis=0)                                 # (C,)
+        min_prop = getattr(spec, 'min_class_proportion', 0.15)
+
+        # Class balance Dirichlet-prior penalty: adds pseudocounts to
+        # prevent extreme class imbalance (e.g. 85%/15% split).
+        # When mean_w[c] < min_prop, the penalty ramps up.
+        # prior_weight = 0 when balanced; grows as classes shrink below threshold.
+        below_thresh = np.maximum(0.0, min_prop - mean_w)
+        prior_weight = float(np.sum(below_thresh) * 5.0)  # scale factor
+
         if iteration >= 3 and np.any(mean_w < 0.01):
             if verbose:
                 print(f"  [EM] class collapse at iter {iteration} "
@@ -852,8 +864,9 @@ def fit_em(init_params, data, spec: ModelSpec,
 
         theta_new_flat = np.concatenate(theta_new)
 
-        # Update gamma — pure JAX to preserve autodiff correctness
+        # Update gamma — pure JAX with Dirichlet balance prior
         _w_jnp = jnp.array(w)
+        _pw = prior_weight  # capture for closure
 
         def gamma_objective(gamma_flat):
             gc = gamma_flat.reshape(C - 1, K_mem + 1)
@@ -861,7 +874,15 @@ def fit_em(init_params, data, spec: ModelSpec,
             zeros_col = jnp.zeros((N, 1))
             lf = jnp.concatenate([zeros_col, li], axis=1)      # (N, C)
             lp = _log_softmax(lf, axis=1)                       # (N, C)
-            return -jnp.sum(_w_jnp * lp)
+            # Weighted cross-entropy for class assignments
+            ce = -jnp.sum(_w_jnp * lp)
+            # Dirichlet balance prior: pushes marginal class probs toward uniformity
+            # pi_marg = mean over observations of softmax(logits)
+            log_pi_marg = jax.nn.log_softmax(
+                jnp.mean(lf, axis=0, keepdims=True), axis=1
+            )  # (1, C)
+            balance_penalty = -_pw * jnp.sum(log_pi_marg)  # entropy bonus
+            return ce + balance_penalty
 
         solver_gamma = LBFGS(fun=gamma_objective, maxiter=m_iters)
         result_gamma = solver_gamma.run(jnp.array(gamma.flatten()))
