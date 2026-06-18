@@ -42,13 +42,15 @@ import pickle
 
 import numpy as np
 ROLE_PROBS = np.array([
-    0.40,  # Excluded
-    0.15,  # Fixed
-    0.20,  # Random Independent
-    0.2,  # Random Correlated
-    0.0,  # Grouped
-    0.0,  # Heterogeneity
-    0.05   # Zero Inflation
+    0.40,  # 0 – Excluded
+    0.15,  # 1 – Fixed
+    0.20,  # 2 – Random Independent
+    0.10,  # 3 – Random Correlated
+    0.00,  # 4 – Grouped
+    0.00,  # 5 – Heterogeneity in means
+    0.05,  # 6 – Zero Inflation
+    0.05,  # 7 – Membership only
+    0.05,  # 8 – Membership + fixed outcome
 ])
 
 ROLE_PROBS = ROLE_PROBS / ROLE_PROBS.sum()
@@ -301,11 +303,18 @@ class AdvancedSimulatedAnnealing:
 
                     if idx < D:
                         # role mutation → weighted
-                        #neighbor[idx] = np.random.choice(np.arange(7), p=ROLE_PROBS)
                         neighbor[idx] = self.sample_allowed_role(idx)
-                    elif idx < 2*self.dim_core:
-                        # distribution or dispersion
+                    elif idx < 2*D:
+                        # distribution code mutation
                         neighbor[idx] = np.random.randint(0, 6)
+                    elif idx == 2*D:
+                        # dispersion bit: toggle 0<->1 (Poisson <-> NB2)
+                        neighbor[idx] = 1 - neighbor[idx]
+                    else:
+                        # lc_code gene (only present when max_latent_classes > 1)
+                        max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
+                        if max_lc > 1:
+                            neighbor[idx] = np.random.randint(0, max_lc)
 
                     changed = True
 
@@ -905,8 +914,11 @@ class AdvancedSimulatedAnnealing:
                     roles[j] = self.sample_allowed_role(j)
                 dists = np.random.randint(0, 6, size=D)
                 disp = np.random.randint(0, 2, size=1)
+                # lc_code gene (0 when single-class, [0,max_lc) otherwise)
+                max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
+                lc_code = np.random.randint(0, max(max_lc, 1), size=1) if max_lc > 1 else np.zeros(1, dtype=int)
 
-                current = np.concatenate([roles, dists, disp])
+                current = np.concatenate([roles, dists, disp, lc_code])
                 current_score = self.evaluator.fitness(current)
                 no_improve = 0
 
@@ -1311,8 +1323,11 @@ class NSGA2Engine:
 
             dists = np.random.randint(0, 6, size=D)
             disp = np.random.randint(0, 2, size=1)
+            # lc_code gene (0 when single-class, [0,max_lc) otherwise)
+            max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
+            lc_code = np.random.randint(0, max(max_lc, 1), size=1) if max_lc > 1 else np.zeros(1, dtype=int)
 
-            candidate = np.hstack((roles, dists, disp))
+            candidate = np.hstack((roles, dists, disp, lc_code))
             candidate = self.repair(candidate)
 
             pop.append(candidate)
