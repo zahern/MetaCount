@@ -28,6 +28,11 @@ from contextlib import redirect_stdout
 from scipy.optimize import minimize
 import traceback
 
+try:
+    from importlib.resources import files as _resource_files
+except ImportError:
+    from importlib_resources import files as _resource_files
+
 DIST_MAP = {
     "normal": 0,
     "lognormal": 1,
@@ -324,8 +329,18 @@ def generate_halton_normal(N, K, R, seed=42):
     u = sampler.random(N*R)          # (R, K)
     z = norm.ppf(u)                # (R, K)
 
-    #z = z.T                        # (K, R)
-   # z = np.tile(z[None, :, :], (N, 1, 1))  # (N, K, R)
+   # z = z.T                        # (K, R)
+  # z = np.tile(z[None, :, :], (N, 1, 1))  # (N, K, R)
+    z = z.reshape(N, R, K).swapaxes(1, 2)
+    return z
+
+
+def generate_sobol_normal(N, K, R, seed=42):
+    sampler = qmc.Sobol(d=K, scramble=True, seed=seed)
+    u = sampler.random(N * R)
+    # Clip to avoid ppf extremes
+    u = np.clip(u, 1e-12, 1 - 1e-12)
+    z = norm.ppf(u)
     z = z.reshape(N, R, K).swapaxes(1, 2)
     return z
 
@@ -3112,16 +3127,27 @@ def evaluate_metrics(params, data, spec, name="DATA"):
 def generate_master_halton(N, K, R, seed=42,  burn=50):
     sampler = qmc.Halton(d=K, scramble=False, seed=seed)
     sampler.fast_forward(burn)
-    u = sampler.random(R)
-    z = norm.ppf(u)
-    z = z.T
-    z = np.tile(z[None, :, :], (N, 1, 1))
     u = sampler.random(N * R)
     z = norm.ppf(u)
     z = z.reshape(N, R, K).swapaxes(1, 2)
-    
-    
     return jnp.array(z)
+
+
+def generate_master_sobol(N, K, R, seed=42):
+    sampler = qmc.Sobol(d=K, scramble=True, seed=seed)
+    u = sampler.random(N * R)
+    u = np.clip(u, 1e-12, 1 - 1e-12)
+    z = norm.ppf(u)
+    z = z.reshape(N, R, K).swapaxes(1, 2)
+    return jnp.array(z)
+
+
+def generate_master_draws(N, K, R, seed=42, draw_method='sobol', burn=50):
+    """Unified draw generator: 'halton' or 'sobol'. Returns jnp.array (N, K, R)."""
+    if draw_method == 'sobol':
+        return generate_master_sobol(N, K, R, seed)
+    else:
+        return generate_master_halton(N, K, R, seed, burn)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -3745,7 +3771,8 @@ class StructureEvaluator:
         mode="single",
         group_id_col=None,
         offset_col=None,
-        R=200
+        R=200,
+        draw_method='sobol',  # 'halton' or 'sobol' — Sobol is faster & more stable
     ):
 
         self.id_col = id_col
@@ -3757,6 +3784,7 @@ class StructureEvaluator:
         self.mode = mode
         self.group_id_col = group_id_col
         self.R = R
+        self.draw_method = draw_method
         self.structure_cache = set()
 
         if mode == "multi":
@@ -3765,21 +3793,24 @@ class StructureEvaluator:
             self.df_train = df
             self.df_test = None
 
-        # ✅ MASTER HALTON (max N)
+        # ✅ MASTER DRAWS (Halton or Sobol)
         self.N_train = self.df_train[id_col].nunique()
-        self.master_halton_train = generate_master_halton(
+        self.master_halton_train = generate_master_draws(
             self.N_train,
             len(all_variables),
-            R
+            R,
+            seed=42,
+            draw_method=draw_method,
         )
 
         if mode == "multi":
             self.N_test = self.df_test[id_col].nunique()
-            self.master_halton_test = generate_master_halton(
+            self.master_halton_test = generate_master_draws(
                 self.N_test,
                 len(all_variables),
                 R,
-                seed=123
+                seed=123,
+                draw_method=draw_method,
             )
 
         # ✅ Pre-compute unidentifiable variables once so build_spec can
@@ -4651,7 +4682,8 @@ def get_best_index(scores):
 
 
 def experiment_washington():
-    df = pd.read_csv('./data/Ex-16-3.csv')
+    _data_path = _resource_files('metacountregressor') / 'data' / 'Ex-16-3.csv'
+    df = pd.read_csv(str(_data_path))
     print("Unique IDs:", df["ID"].nunique())
     print("Total rows:", len(df))
     df['EXPOSE'] = df['LENGTH']*df['AADT']*365/100000000

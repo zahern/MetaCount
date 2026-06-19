@@ -87,6 +87,7 @@ try:
         balance_panel_dataframe,
         extract_offset,
         generate_halton_normal,
+        generate_sobol_normal,
         build_base_index,
         CountModel,
         compute_standard_errors,
@@ -110,6 +111,7 @@ except ImportError:
         balance_panel_dataframe,
         extract_offset,
         generate_halton_normal,
+        generate_sobol_normal,
         build_base_index,
         CountModel,
         compute_standard_errors,
@@ -209,11 +211,15 @@ class ModelSpec:
     random_cor_dists:    tuple
     grouped_dists:       tuple
     latent_classes:      int   = 1
-    # ── NEW ──────────────────────────────────────────────────────────
+    # ── MEMBERSHIP ────────────────────────────────────────────────────
     membership_names:    tuple = ()   # variables in class-prob equation
     K_membership:        int   = 0    # len(membership_names)
     class_models:        tuple = ()   # per-class model strings (eg ("poisson","nb"))
     min_class_proportion: float = 0.20  # minimum posterior-mean proportion per class
+    # ── PER-CLASS COVARIATE SELECTION ─────────────────────────────────
+    class_fixed_idx:     tuple = ()   # per-class column indices into Xf (tuple of tuples)
+    class_rdm_ind_idx:   tuple = ()   # per-class column indices into Xr_ind
+    class_rdm_cor_idx:   tuple = ()   # per-class column indices into Xr_cor
 
     @property
     def K_random_total(self):
@@ -247,14 +253,22 @@ def build_param_index(spec: ModelSpec) -> dict:
     K_mem = spec.K_membership
     models = spec.models  # per-class model strings
 
-    # Compute per-class K_base (may differ by model type)
+    # Compute per-class K_base (may differ by model type AND per-class variables)
     base_spec_no_lc = replace(spec, latent_classes=1)
     class_offsets = []   # start index of each class's theta in flat param vector
     class_K_base  = []   # number of parameters per class
     offset = 0
     for c in range(C):
         _model_c = models[c]
-        _base_idx_c = build_base_index(base_spec_no_lc, model=_model_c)
+        # Build per-class spec with correct Kf and Kr* from class_fixed_idx
+        _spec_c = base_spec_no_lc
+        if spec.class_fixed_idx and c < len(spec.class_fixed_idx):
+            cfix = spec.class_fixed_idx[c]
+            if len(cfix) < spec.Kf:
+                _spec_c = replace(_spec_c, Kf=len(cfix))
+                # Zero out random-param counts that aren't per-class yet
+                # (per-class random indices TBD in future work)
+        _base_idx_c = build_base_index(_spec_c, model=_model_c)
         _Kc = _base_idx_c["total_params"]
         class_offsets.append(offset)
         class_K_base.append(_Kc)
@@ -307,7 +321,11 @@ def build_jax_data(
     random_cor_dists=None,
     grouped_dists=None,
     zi_cols=None,
-    membership_cols=None,   # ← NEW
+    membership_cols=None,
+    class_fixed_cols=None,     # per-class fixed variable lists (list of lists)
+    class_rdm_ind_cols=None,   # per-class random indep lists
+    class_rdm_cor_cols=None,   # per-class random corr lists
+    draw_method='sobol',      # 'halton' or 'sobol' (Sobol faster, more stable)
     R=200,
 ):
     fixed_cols        = fixed_cols        or []
@@ -368,6 +386,20 @@ def build_jax_data(
     Xzi    = extract(zi_cols)
     Xmem   = extract(membership_cols)    # NEW  shape (N, P, K_mem)
 
+    # ── Per-class column indices (for class-specific variable sets) ────
+    _fixed_names = [intercept_name] + fixed_cols
+    _fixed_map = {name: i for i, name in enumerate(_fixed_names)}
+    _class_fixed_idx = []
+    if class_fixed_cols and len(class_fixed_cols) > 0:
+        for cfix in class_fixed_cols:
+            cfix_with_int = [intercept_name] + list(cfix)
+            _class_fixed_idx.append(tuple(
+                _fixed_map[n] for n in cfix_with_int if n in _fixed_map
+            ))
+    else:
+        _class_fixed_idx = ()
+    class_fixed_idx = tuple(_class_fixed_idx)
+
     N, P = y.shape[0], y.shape[1]
 
     if offset_col:
@@ -375,14 +407,14 @@ def build_jax_data(
     else:
         offset = np.zeros((N, P, 1))
 
-    # Auto-generate Halton draws when not provided but random cols are present.
-    # Without this, draws stay zeros((N, 0, R)) and cause Kr_ind mismatch errors.
+    # Auto-generate draws when not provided but random cols are present.
+    _draw_fn = generate_sobol_normal if draw_method == 'sobol' else generate_halton_normal
     if draws_ind is None and random_ind_cols:
-        draws_ind = generate_halton_normal(N, len(random_ind_cols), R, seed=42)
+        draws_ind = _draw_fn(N, len(random_ind_cols), R, seed=42)
     if draws_cor is None and random_cor_cols:
-        draws_cor = generate_halton_normal(N, len(random_cor_cols), R, seed=43)
+        draws_cor = _draw_fn(N, len(random_cor_cols), R, seed=43)
     if draws_g is None and grouped_cols:
-        draws_g   = generate_halton_normal(N, len(grouped_cols),    R, seed=44)
+        draws_g   = _draw_fn(N, len(grouped_cols),    R, seed=44)
 
     data = {
         "Xf":       jnp.array(Xf),
@@ -425,6 +457,7 @@ def build_jax_data(
         membership_names=tuple(membership_cols),    # NEW
         K_membership=Xmem.shape[2],                # NEW
         class_models=(),                           # set by caller via replace()
+        class_fixed_idx=class_fixed_idx,           # per-class Xf column indices
     )
 
     return data, spec
@@ -445,7 +478,10 @@ def parse_manual_spec(manual_spec: dict):
     grouped_terms     = manual_spec.get("grouped_terms", [])
     hetro_terms       = manual_spec.get("hetro_in_means", [])
     zi_cols           = manual_spec.get("zi_terms", [])
-    membership_cols   = manual_spec.get("membership_terms", [])   # NEW
+    membership_cols   = manual_spec.get("membership_terms", [])
+    class_fixed       = manual_spec.get("class_fixed", None)   # per-class fixed lists
+    class_rdm_ind     = manual_spec.get("class_rdm_ind", None)
+    class_rdm_cor     = manual_spec.get("class_rdm_cor", None)
 
     random_ind       = [t.split(":")[0] for t in rdm_terms]
     random_cor       = [t.split(":")[0] for t in rdm_cor_terms]
@@ -459,7 +495,8 @@ def parse_manual_spec(manual_spec: dict):
     return (
         fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols,
         random_ind_dists, random_cor_dists, grouped_dists,
-        zi_cols, membership_cols,           # NEW: membership_cols returned
+        zi_cols, membership_cols,
+        class_fixed, class_rdm_ind, class_rdm_cor,
     )
 
 
@@ -473,12 +510,14 @@ _hpc.parse_manual_spec = parse_manual_spec
 
 def build_model_from_manual_spec(
     df, manual_spec, id_col, y_col,
-    offset_col=None, draws_ind=None, draws_cor=None, draws_g=None, R=200
+    offset_col=None, draws_ind=None, draws_cor=None, draws_g=None,
+    draw_method='sobol', R=200
 ):
     (
         fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols,
         random_ind_dists, random_cor_dists, grouped_dists,
         zi_cols, membership_cols,
+        class_fixed, class_rdm_ind, class_rdm_cor,
     ) = parse_manual_spec(manual_spec)
 
     data, spec = build_jax_data(
@@ -492,7 +531,8 @@ def build_model_from_manual_spec(
         grouped_cols=grouped_cols,
         hetro_cols=hetro_cols,
         zi_cols=zi_cols,
-        membership_cols=membership_cols,    # NEW
+        membership_cols=membership_cols,
+        class_fixed_cols=class_fixed,
         offset_col=offset_col,
         draws_ind=draws_ind,
         draws_cor=draws_cor,
@@ -500,6 +540,7 @@ def build_model_from_manual_spec(
         random_ind_dists=random_ind_dists,
         random_cor_dists=random_cor_dists,
         grouped_dists=grouped_dists,
+        draw_method=draw_method,
         R=R,
     )
 
@@ -545,12 +586,17 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
         models    = spec.models  # tuple of per-class model strings
         base_spec_nolc = replace(spec, latent_classes=1)
 
-        # Compute per-class param sizes
+        # Compute per-class param sizes (account for per-class variable sets)
         class_K_base = []
         class_offsets = []
         offset = 0
         for c in range(C):
-            _kc = build_base_index(base_spec_nolc, model=models[c])["total_params"]
+            _spec_c = base_spec_nolc
+            if spec.class_fixed_idx and c < len(spec.class_fixed_idx):
+                cfix = spec.class_fixed_idx[c]
+                if len(cfix) < spec.Kf:
+                    _spec_c = replace(_spec_c, Kf=len(cfix))
+            _kc = build_base_index(_spec_c, model=models[c])["total_params"]
             class_K_base.append(_kc)
             class_offsets.append(offset)
             offset += _kc
@@ -591,8 +637,22 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
         ll_classes = []
         for c in range(C):
             base_spec_c = replace(base_spec_nolc, model=models[c])
+            # ── Per-class data slicing ─────────────────────────────────
+            _data_c = data
+            _spec_c = base_spec_c
+            cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
+            if cfix is not None and len(cfix) < data["Xf"].shape[2]:
+                # Slice Xf to only this class's columns
+                Xf_c = data["Xf"][:, :, list(cfix)]
+                _data_c = dict(data)
+                _data_c["Xf"] = Xf_c
+                _spec_c = replace(base_spec_c, Kf=len(cfix),
+                                  fixed_names=tuple(
+                                      data.get("_fixed_names_all", ())[i]
+                                      for i in cfix if hasattr(data, '_fixed_names_all')
+                                  ) or tuple(f"f{i}" for i in range(len(cfix))))
             ll_c = mixed_model_loglik(
-                theta_all[c], data, base_spec_c, indivi=True
+                theta_all[c], _data_c, _spec_c, indivi=True
             )                                               # (N,) log-likelihoods (negative)
             ll_classes.append(ll_c + log_pi[:, c])
 
@@ -733,21 +793,23 @@ def fit_em(init_params, data, spec: ModelSpec,
     base_spec_nolc = replace(spec, latent_classes=1)
     gamma_size = (C - 1) * (K_mem + 1)
 
-    # Compute per-class param sizes
+    # Compute per-class param sizes and specs (account for per-class vars)
     class_K_base = []
     class_offsets = []
+    class_base_specs = []
     offset = 0
     for c in range(C):
-        _kc = build_base_index(base_spec_nolc, model=models[c])["total_params"]
+        _spec_c = base_spec_nolc
+        if spec.class_fixed_idx and c < len(spec.class_fixed_idx):
+            cfix = spec.class_fixed_idx[c]
+            if len(cfix) < spec.Kf:
+                _spec_c = replace(_spec_c, Kf=len(cfix))
+        _kc = build_base_index(_spec_c, model=models[c])["total_params"]
         class_K_base.append(_kc)
         class_offsets.append(offset)
+        class_base_specs.append(replace(_spec_c, model=models[c]))
         offset += _kc
     total_theta = offset
-
-    # Per-class base specs (with correct model)
-    class_base_specs = [
-        replace(base_spec_nolc, model=models[c]) for c in range(C)
-    ]
 
     params = np.array(init_params)
     N = int(np.array(
@@ -851,10 +913,16 @@ def fit_em(init_params, data, spec: ModelSpec,
         for c in range(C):
             wc = w[:, c].copy()
             _base_c = class_base_specs[c]
+            # ── Per-class data: slice Xf when class has fewer fixed effects ─
+            _data_c = data
+            cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
+            if cfix is not None and len(cfix) < data["Xf"].shape[2]:
+                _data_c = dict(data)
+                _data_c["Xf"] = data["Xf"][:, :, list(cfix)]
 
-            def weighted_objective(theta_c, _wc=wc, _spec=_base_c):
+            def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
                 ll_ind = mixed_model_loglik(
-                    theta_c, data, _spec, indivi=True
+                    theta_c, _data, _spec, indivi=True
                 )
                 return -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
 

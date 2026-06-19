@@ -83,7 +83,7 @@ class AdvancedSimulatedAnnealing:
         self.step_size = step_size
         self.evaluator = evaluator
         self.dim = dimension
-        self.dim_core = (dimension-1)//2
+        self.dim_core = len(evaluator.vars)  # D = number of variables
         self.max_iter = max_iter
 
         self.T0 = T0
@@ -310,11 +310,17 @@ class AdvancedSimulatedAnnealing:
                     elif idx == 2*D:
                         # dispersion bit: toggle 0<->1 (Poisson <-> NB2)
                         neighbor[idx] = 1 - neighbor[idx]
-                    else:
+                    elif idx == 2*D + 1:
                         # lc_code gene (only present when max_latent_classes > 1)
                         max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
                         if max_lc > 1:
                             neighbor[idx] = np.random.randint(0, max_lc)
+                    else:
+                        # class_mask genes (per-class variable assignments)
+                        # 0=both, 1=class1 only, 2=class2 only
+                        max_lc2 = getattr(self.evaluator, 'max_latent_classes', 1)
+                        if max_lc2 > 1:
+                            neighbor[idx] = np.random.randint(0, 3)
 
                     changed = True
 
@@ -917,8 +923,10 @@ class AdvancedSimulatedAnnealing:
                 # lc_code gene (0 when single-class, [0,max_lc) otherwise)
                 max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
                 lc_code = np.random.randint(0, max(max_lc, 1), size=1) if max_lc > 1 else np.zeros(1, dtype=int)
+                # class_mask genes (per-class variable assignments)
+                class_mask = np.random.randint(0, 3, size=D) if max_lc > 1 else np.zeros(D, dtype=int)
 
-                current = np.concatenate([roles, dists, disp, lc_code])
+                current = np.concatenate([roles, dists, disp, lc_code, class_mask])
                 current_score = self.evaluator.fitness(current)
                 no_improve = 0
 
@@ -1112,7 +1120,7 @@ class NSGA2Engine:
         self.evaluator = evaluator
         self.operator = operator
         self.dim = dimension
-        self.dim_core = (dimension-1)//2
+        self.dim_core = len(evaluator.vars)  # D = number of variables
         self.pop_size = pop_size
         self.max_iter = max_iter
         self.generations = int(max_iter/pop_size)
@@ -1326,8 +1334,10 @@ class NSGA2Engine:
             # lc_code gene (0 when single-class, [0,max_lc) otherwise)
             max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
             lc_code = np.random.randint(0, max(max_lc, 1), size=1) if max_lc > 1 else np.zeros(1, dtype=int)
+            # class_mask genes
+            class_mask = np.random.randint(0, 3, size=D) if max_lc > 1 else np.zeros(D, dtype=int)
 
-            candidate = np.hstack((roles, dists, disp, lc_code))
+            candidate = np.hstack((roles, dists, disp, lc_code, class_mask))
             candidate = self.repair(candidate)
 
             pop.append(candidate)

@@ -88,6 +88,7 @@ try:
         build_base_index,
         build_datasets,
         generate_master_halton,
+        generate_master_draws,
         fit_em,
         run_nsga,
         MultiStartSA,
@@ -125,6 +126,7 @@ except ImportError:
         build_base_index,
         build_datasets,
         generate_master_halton,
+        generate_master_draws,
         fit_em,
         run_nsga,
         MultiStartSA,
@@ -243,22 +245,29 @@ class StructureEvaluatorLC(StructureEvaluator):
         """
         Decode a decision vector into a manual_spec dict.
 
-        Decision layout (dimension = 2·D + 2):
-          decision[:D]   = role codes  (0–8)
-          decision[D:2D] = dist codes
-          decision[2D]   = dispersion bit
-          decision[2D+1] = latent_class_code  (0 → 1 class, 1 → 2, …)
+        Decision layout (dimension = 3·D + 2 for LC, 2·D + 1 for single-class):
+          decision[:D]       = role codes  (0–8)
+          decision[D:2D]     = dist codes
+          decision[2D]       = dispersion bit
+          decision[2D+1]     = latent_class_code  (0→1 class, 1→2, …)
+          decision[2D+2:3D+2]= class_mask  (per-class variable assignments)
+              0 = both classes   1 = class 1 only   2 = class 2 only
+              Only effective when max_latent_classes > 1.
         """
         D              = len(self.vars)
         roles          = decision[:D]
         dists          = decision[D : 2*D]
         dispersion_bit = int(decision[2*D])
         # LC gene only present when max_latent_classes > 1 (dim = 2*D+2).
-        # When dim = 2*D+1 (single-class evaluator), default lc_code to 0.
         if self.max_latent_classes > 1 and len(decision) > 2*D + 1:
             lc_code = int(decision[2*D + 1])
         else:
             lc_code = 0
+        # Per-class masks (new)
+        if self.max_latent_classes > 1 and len(decision) > 2*D + 2:
+            class_mask = [int(x) for x in decision[2*D + 2 : 3*D + 2]]
+        else:
+            class_mask = [0] * D
 
         use_nb          = dispersion_bit % 2 == 1
         latent_classes  = lc_code % self.max_latent_classes + 1
@@ -269,34 +278,57 @@ class StructureEvaluatorLC(StructureEvaluator):
         grouped    = []
         hetero     = []
         zi         = []
-        membership = []    # NEW: variables in class-prob equation
+        membership = []
+        # Per-class variable lists (same categories, partitioned by class_mask)
+        class_fixed   = [[] for _ in range(latent_classes)]
+        class_rdm_ind = [[] for _ in range(latent_classes)]
+        class_rdm_cor = [[] for _ in range(latent_classes)]
 
         for i, var in enumerate(self.vars):
             role = int(roles[i])
             if role not in self.allowed_roles.get(var, [0]):
                 return None
 
-            # ── Skip unidentifiable variables regardless of role ─────────
             if var in self._unidentifiable and role != 0:
                 return None
+
+            cm = class_mask[i] if latent_classes > 1 else 0
+            # Map class_mask to per-class inclusion
+            in_class = []
+            if latent_classes <= 1:
+                in_class = [True]
+            else:
+                in_class = [
+                    cm in (0, 1),   # class 1
+                    cm in (0, 2),   # class 2
+                ][:latent_classes]
 
             if role == 0:
                 pass  # excluded
 
             elif role == 1:
                 fixed.append(var)
+                for c, inc in enumerate(in_class):
+                    if inc:
+                        class_fixed[c].append(var)
 
             elif role == 2:
                 dist = decode_distribution(
                     dists[i], self.allowed_distributions.get(var, ["normal"])
                 )
                 rdm_ind.append(f"{var}:{dist}")
+                for c, inc in enumerate(in_class):
+                    if inc:
+                        class_rdm_ind[c].append(f"{var}:{dist}")
 
             elif role == 3:
                 dist = decode_distribution(
                     dists[i], self.allowed_distributions.get(var, ["normal"])
                 )
                 rdm_cor.append(f"{var}:{dist}")
+                for c, inc in enumerate(in_class):
+                    if inc:
+                        class_rdm_cor[c].append(f"{var}:{dist}")
 
             elif role == 4:
                 dist = decode_distribution(
@@ -311,33 +343,44 @@ class StructureEvaluatorLC(StructureEvaluator):
                 zi.append(var)
 
             elif role == 7:
-                # Membership-only — only matters when LC > 1
                 if latent_classes > 1:
                     membership.append(var)
-                # else: treated as excluded
 
             elif role == 8:
-                # Membership + fixed outcome
                 if latent_classes > 1:
-                    membership.append(var)  # class-prob equation
-                fixed.append(var)           # outcome equation (class-specific)
+                    membership.append(var)
+                fixed.append(var)
+                for c, inc in enumerate(in_class):
+                    if inc:
+                        class_fixed[c].append(var)
 
         # Single correlated var → demote to independent
         if len(rdm_cor) == 1:
             rdm_ind.extend(rdm_cor)
             rdm_cor = []
+            for c in range(latent_classes):
+                if len(class_rdm_cor[c]) == 1:
+                    class_rdm_ind[c].extend(class_rdm_cor[c])
+                    class_rdm_cor[c] = []
 
-        return {
+        spec = {
             "fixed_terms":      fixed,
             "rdm_terms":        rdm_ind,
             "rdm_cor_terms":    rdm_cor,
             "grouped_terms":    grouped,
             "hetro_in_means":   hetero,
             "zi_terms":         zi,
-            "membership_terms": membership,   # NEW
+            "membership_terms": membership,
             "dispersion":       1 if use_nb else 0,
             "latent_classes":   latent_classes,
         }
+        # Per-class terms: only include when classes actually differ
+        if latent_classes > 1:
+            spec["class_fixed"]   = class_fixed
+            spec["class_rdm_ind"] = class_rdm_ind
+            spec["class_rdm_cor"] = class_rdm_cor
+
+        return spec
 
     # ── structural_signature ────────────────────────────────────────
 
@@ -362,7 +405,10 @@ class StructureEvaluatorLC(StructureEvaluator):
             tuple(sorted(spec_dict["grouped_terms"])),
             hetero_eff,
             tuple(sorted(spec_dict["zi_terms"])),
-            tuple(sorted(spec_dict.get("membership_terms", []))),   # NEW
+            tuple(sorted(spec_dict.get("membership_terms", []))),
+            tuple(
+                tuple(sorted(cf)) for cf in spec_dict.get("class_fixed", [])
+            ),
             spec_dict["dispersion"],
             spec_dict.get("latent_classes", 1),
         )
@@ -380,6 +426,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             id_col=self.id_col,
             y_col=self.y_col,
             offset_col=self.offset_col,
+            draw_method=getattr(self, 'draw_method', 'sobol'),
             R=self.R,
         )
 
@@ -397,7 +444,8 @@ class StructureEvaluatorLC(StructureEvaluator):
             if self.group_id_col is None:
                 raise ValueError("Grouped effects require group_id_col")
             G = df[self.group_id_col].nunique()
-            mh_g    = generate_master_halton(G, len(self.vars), self.R, seed=999)
+            mh_g    = generate_master_draws(G, len(self.vars), self.R,
+                                             seed=999, draw_method=getattr(self, 'draw_method', 'halton'))
             draws_g = mh_g[:, g_idx, :]
 
         # Rebuild with correct draws (membership_cols flows through spec_dict)
@@ -410,6 +458,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             draws_ind=draws_ind,
             draws_cor=draws_cor,
             draws_g=draws_g,
+            draw_method=getattr(self, 'draw_method', 'sobol'),
             R=self.R,
         )
 
