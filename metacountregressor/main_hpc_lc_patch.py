@@ -220,6 +220,7 @@ class ModelSpec:
     class_fixed_idx:     tuple = ()   # per-class column indices into Xf (tuple of tuples)
     class_rdm_ind_idx:   tuple = ()   # per-class column indices into Xr_ind
     class_rdm_cor_idx:   tuple = ()   # per-class column indices into Xr_cor
+    class_variable_masks: tuple = ()  # per-class variable sets (frozensets) [NEW: alternative to indices]
 
     @property
     def K_random_total(self):
