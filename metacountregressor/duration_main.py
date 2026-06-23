@@ -116,19 +116,16 @@ def ll_with_budget_penalty(params, X, y, ids, budgets, lambda_penalty=10.0):
     return -total_ll
 
 
-from scipy.optimize import minimize
-from jax import grad
+from jaxopt import ScipyMinimize as JaxoptMinimize
 
 def estimate_model(objective, init_params):
-
-    result = minimize(
-        objective,
-        init_params,
-        jac=grad(objective),
-        method="L-BFGS-B"
+    solver = JaxoptMinimize(
+        fun=objective,
+        method="SLSQP",
+        tol=1e-8,
+        maxiter=2000,
     )
-
-    return result
+    return solver.run(jnp.array(init_params, dtype=jnp.float64))
 
 
 

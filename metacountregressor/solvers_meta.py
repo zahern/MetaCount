@@ -1080,7 +1080,7 @@ class JAXMLE(ObjectiveFunction):
             return loglik_fn(params, *args)
         #the args need to be applied onto the loglik_fun not the function..
 
-        return jax_minimize(objective, x, method='BFGS', tol=tol, options=options)
+        return jax_minimize(objective, x, method='SLSQP', tol=tol, options=options)
 
 
     def _nonlog_nbin(self, y, lam, gamma, Q=0):
@@ -1743,7 +1743,7 @@ class JAXMLE(ObjectiveFunction):
 
 
 
-def jax_minimize(fun, x0, method="BFGS", tol=1e-8, options=None, callback=None,
+def jax_minimize(fun, x0, method="SLSQP", tol=1e-8, options=None, callback=None,
                  has_aux=False, value_and_grad=False, dtype=jnp.float64,
                  implicit_diff_solve=True, maxiter=25000):
     """
@@ -1783,8 +1783,7 @@ def jax_minimize(fun, x0, method="BFGS", tol=1e-8, options=None, callback=None,
     options = options or {}
 
     from jaxopt import implicit_diff, linear_solve
-    method = 'addddam'
-    
+
     # 1️⃣ handle Optax-based methods
     if method.lower() in {"lion", "adam", "sgd", "rmsprop", "adagrad", "adamw"}:
         logging.info(f"Using OptaxSolver with {method.upper()}")
@@ -1860,21 +1859,23 @@ def jax_minimize(fun, x0, method="BFGS", tol=1e-8, options=None, callback=None,
     from jaxopt import ScipyMinimize
     solver = ScipyMinimize(
         fun=fun,
-        method='BFGS'
+        method=method,
+        tol=tol,
+        maxiter=maxiter,
     )
 
     opt_step = solver.run(x0)
 
     params, info = opt_step.params, opt_step.state
 
-    # mimic SciPy result interface
+    # mimic SciPy result interface (hess_inv only available for quasi-Newton methods)
     res = {
         "x": params,
         "fun": info.fun_val,
-        "hess_inv": info.hess_inv,
+        "hess_inv": getattr(info, "hess_inv", None),
         "nit": int(info.iter_num),
-        "nfev": int(info.num_fun_eval),
-        "njev": int(info.num_jac_eval),
+        "nfev": int(getattr(info, "num_fun_eval", 0)),
+        "njev": int(getattr(info, "num_jac_eval", 0)),
         "status": int(info.status),
         "success": bool(info.success),
     }

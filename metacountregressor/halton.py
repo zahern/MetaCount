@@ -1,310 +1,228 @@
 import numpy as np
-from scipy.optimize import minimize, rosen
-from scipy.optimize import fmin_bfgs
-from scipy.stats import poisson
-from scipy.stats import t, norm, gamma, poisson, triang
-from scipy.special import gammaln, factorial
-import itertools
+import jax.numpy as jnp
+import jax
+from scipy.optimize import minimize
+from scipy.stats import norm, gamma, triang
+from scipy.stats.qmc import Sobol
 import pandas as pd
 import warnings
 
-class count_model(object):
+jax.config.update("jax_enable_x64", True)
 
-    def __init__(self, nDraws, distribution = None, predictor = 'FREQ'):
+
+def _next_power_of_2(n: int) -> int:
+    """Round n up to the nearest power of 2 (required for optimal Sobol uniformity)."""
+    return 1 if n <= 1 else 2 ** int(np.ceil(np.log2(n)))
+
+
+def generate_sobol_draws(
+    dim: int,
+    n_obs: int,
+    n_draws: int,
+    distribution: list[str],
+    scramble: bool = True,
+    as_jax: bool = True,
+) -> np.ndarray | jnp.ndarray:
+    """
+    Generate quasi-random draws using a scrambled Sobol sequence and apply
+    inverse-CDF transforms to match the requested marginal distributions.
+
+    Sobol sequences have better uniformity than Halton in higher dimensions
+    and their scrambled variant avoids the base-correlation artefact.
+
+    Args:
+        dim:          Number of random dimensions (one per random parameter).
+        n_obs:        Number of observations.
+        n_draws:      Number of simulation draws per observation.
+        distribution: List of length `dim` with distribution names:
+                      'normal', 'lognormal', 'gamma', 'triangular', 'uniform'.
+        scramble:     Use Owen scrambling for better uniformity (default True).
+        as_jax:       Return a jnp.ndarray instead of np.ndarray (default True).
+
+    Returns:
+        Array of shape (n_obs * n_draws, dim) with transformed draws.
+    """
+    total = n_obs * n_draws
+    # Sobol works best with power-of-2 sample counts; round up then trim
+    n_sobol = _next_power_of_2(total)
+
+    engine = Sobol(d=dim, scramble=scramble, seed=42)
+    # Sobol requires sampling 2^k points; use random_base2 if possible
+    k = int(np.log2(n_sobol))
+    uniform = engine.random_base2(k)          # shape: (n_sobol, dim) in (0, 1)
+    uniform = uniform[:total]                  # trim to exact count needed
+
+    # Apply per-dimension inverse-CDF transforms
+    sample = uniform.copy()
+    for i, dist in enumerate(distribution):
+        u = uniform[:, i]
+        if dist == "normal":
+            sample[:, i] = norm.ppf(u)
+        elif dist == "lognormal":
+            sample[:, i] = np.exp(norm.ppf(u))
+        elif dist == "gamma":
+            sample[:, i] = gamma.ppf(u, a=1.0)
+        elif dist in ("triangular", "triang"):
+            sample[:, i] = triang.ppf(u, c=0.5)
+        elif dist == "uniform":
+            sample[:, i] = 2.0 * u - 1.0          # maps [0,1] → [-1, 1]
+        else:
+            warnings.warn(
+                f"Unknown distribution '{dist}' at dim {i}; keeping uniform [0,1].",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    return jnp.array(sample, dtype=jnp.float64) if as_jax else sample
+
+
+# Backward-compatible alias so existing code calling prepare_halton still works
+def prepare_halton(
+    dim: int,
+    n_obs: int,
+    n_draws: int,
+    distribution: list[str],
+    scramble: bool = True,
+    as_jax: bool = True,
+) -> np.ndarray | jnp.ndarray:
+    """Alias for generate_sobol_draws (Sobol replaces legacy Halton draws)."""
+    return generate_sobol_draws(dim, n_obs, n_draws, distribution, scramble, as_jax)
+
+
+class count_model:
+    """Mixed Poisson regression estimated by simulated maximum likelihood."""
+
+    def __init__(self, nDraws: int, distribution: list[str] | None = None, predictor: str = "FREQ"):
         self.Ndraws = nDraws
-        self.draws1 = None
-        self.observations = None
-        self.distribution = distribution
+        self.distribution = distribution or []
         self.predictor = predictor
-        self._x_data = None
+        self._draws_cache: jnp.ndarray | None = None
+        self._x_data: pd.DataFrame | None = None
+        self.observations: int | None = None
 
+    # ------------------------------------------------------------------
+    # Draw management
+    # ------------------------------------------------------------------
 
+    def _get_draws(self, dim: int, n_obs: int) -> jnp.ndarray:
+        """Return cached Sobol draws or generate fresh ones."""
+        if self._draws_cache is None:
+            self._draws_cache = generate_sobol_draws(
+                dim, n_obs, self.Ndraws, self.distribution
+            )
+        return self._draws_cache
 
-    def PoissonNegLogLikelihood(self, lam, y):
-        """computers the negative log-likelihood for a poisson random variable"""
-        prob = poisson.pmf(y, lam)
-        prob = prob.reshape(self.observations, -1, order = 'F')
-        log_lik = np.sum(np.log(prob.mean(axis=1)))
-        '''return log_like at possitive to ensure minimisation'''
+    # ------------------------------------------------------------------
+    # Likelihood
+    # ------------------------------------------------------------------
+
+    def PoissonNegLogLikelihood(self, lam: np.ndarray, y: np.ndarray) -> float:
+        prob = np.exp(-lam) * np.power(lam, y) / np.vectorize(np.math.factorial)(y.astype(int))
+        prob = prob.reshape(self.observations, -1, order="F")
+        log_lik = np.sum(np.log(np.maximum(prob.mean(axis=1), 1e-300)))
         return -log_lik
 
-
-
-
-
-
-    def poisson_mle(self, data):
-        """
-            Compute the maximum likelihood estimate (mle) for a poisson distribution given data.
-
-            Inputs:
-            data - float or array.  Observed data.
-
-            Outputs:
-            lambda_mle - float.  The mle for poisson distribution.
-            """
-        mle = minimize(self.PoissonNegLogLikelihood, 1, args=(data))
-        lambda_mle = mle.x[0]
-        return lambda_mle
-
-
-    def poissonRegressionNegLogLikelihood(self, b, X, y, Xr =None):
-        """
-        Computes the negative log-likelihood for a poisson regression.
-
-        Inputs:
-        b - array.  Coefficients for the poisson regression
-        X - array.  Design matrix.
-        y - array.  Observed outcomes.
-
-        Outputs:
-        log_lik - float.  Negative log likelihood for the poisson regression with coefficients b.
-
-        """
-
-
+    def poissonRegressionNegLogLikelihood(
+        self, b: np.ndarray, X: np.ndarray, y: np.ndarray, Xr: np.ndarray | None = None
+    ) -> float:
         if Xr is not None:
-            n, p = X.shape
-            nr, pr = Xr.shape
+            n, p   = X.shape
+            _,  pr = Xr.shape
 
+            bf  = b[:p]
+            br  = b[p : p + pr]
+            brstd = b[p + pr : p + pr + pr]
 
-            #if nfixed is not None:
-            bf = b[0:p]
-            print(self.Ndraws)
-            eta = np.tile(np.dot(X, np.transpose(bf)), (1, self.Ndraws))
+            draws = np.array(self._get_draws(pr, n))  # (n*R, pr)
 
-            if self.draws1 is None:
-                draws1 = self.prepare_halton(pr, nr, self.Ndraws, self.distribution)
-                self.draws1 = draws1
-            else:
-                draws1 = self.draws1
-
-            br = b[p:p+pr]
-
-            brstd = b[p+pr:p+pr+pr]
-
-
-            beta = draws1*brstd+br
-
-            datadraws = np.tile(Xr, (self.Ndraws, 1))
-            het = eta + np.sum(datadraws*beta, axis=1)
-            lam = np.exp(het)
-            y = np.tile(y, (1, self.Ndraws))
-            log_lik = self.PoissonNegLogLikelihood(lam, y)
-            print(log_lik)
-            return log_lik
+            eta      = np.tile(X @ bf, (1, self.Ndraws))        # (n, R)
+            beta     = draws * brstd + br                        # (n*R, pr)
+            data_rep = np.tile(Xr, (self.Ndraws, 1))            # (n*R, pr)
+            het      = eta.ravel(order="F") + (data_rep * beta).sum(axis=1)
+            lam      = np.exp(het)
+            y_rep    = np.tile(y, (1, self.Ndraws))
+            return self.PoissonNegLogLikelihood(lam, y_rep)
         else:
-            print('this shouldnt happen')
-            n, p = X.shape
             eta = X @ b
             lam = np.exp(eta)
-            log_lik = self.PoissonNegLogLikelihood(lam, y)
+            return self.PoissonNegLogLikelihood(lam, y.reshape(-1, 1))
 
-            return log_lik
+    # ------------------------------------------------------------------
+    # Estimation
+    # ------------------------------------------------------------------
 
-    def fitPoissonRegression(self, X, y, Xr = None):
-        """
-        Fits a poisson regression given data and outcomes.
-
-        Inputs:
-        X - array.  Design matrix
-        y - array.  Observed outcomes
-
-        Outputs:
-        betas_est - array.  Coefficients which maximize the negative log-liklihood.
-        """
+    def fitPoissonRegression(
+        self, X: np.ndarray, y: np.ndarray, Xr: np.ndarray | None = None
+    ):
         if Xr is not None:
-            n, p = X.shape
-            _r, pr = Xr.shape
-            paramNum = p+2*pr
-            degF = n -paramNum
+            n, p   = X.shape
+            _,  pr = Xr.shape
+            n_params = p + 2 * pr
+            b0       = np.zeros(n_params)
 
-            b = np.random.normal(size=paramNum)
+            result = minimize(
+                self.poissonRegressionNegLogLikelihood,
+                b0,
+                args=(X, y, Xr),
+                method="SLSQP",
+                tol=1e-6,
+                options={"maxiter": 2000},
+            )
 
+            # Standard errors from numerical Hessian (finite difference)
+            eps    = 1e-5
+            n_p    = len(result.x)
+            H      = np.zeros((n_p, n_p))
+            f0     = self.poissonRegressionNegLogLikelihood(result.x, X, y, Xr)
+            for i in range(n_p):
+                ei       = np.zeros(n_p)
+                ei[i]    = eps
+                fi       = self.poissonRegressionNegLogLikelihood(result.x + ei, X, y, Xr)
+                for j in range(i, n_p):
+                    ej   = np.zeros(n_p)
+                    ej[j] = eps
+                    fij  = self.poissonRegressionNegLogLikelihood(result.x + ei + ej, X, y, Xr)
+                    fj   = self.poissonRegressionNegLogLikelihood(result.x + ej, X, y, Xr)
+                    H[i, j] = H[j, i] = (fij - fi - fj + f0) / (eps ** 2)
 
+            try:
+                cov    = np.linalg.inv(H)
+                stderr = np.sqrt(np.maximum(np.diag(cov), 0.0))
+            except np.linalg.LinAlgError:
+                stderr = np.full(n_p, np.nan)
 
-            betas_est = minimize(self.poissonRegressionNegLogLikelihood, b, args=(X, y, Xr), method='BFGS', tol = 1e-5, options={'gtol': 1e-5})
-            #betas_est = fmin_bfgs(poissonRegressionNegLogLikelihood, b, args=(X, y, Xr), maxiter=10, full_output=False, retall=False).x
-
-            stderr = np.sqrt(np.diag(betas_est.hess_inv))
-
-            zvalues = np.nan_to_num(betas_est.x/stderr)
-            zvalues = [z if z < 1e+5 else 1e+5 for z in zvalues]
-            zvalues = [z if z > -1e+5 else -1e+5 for z in zvalues]
-            #pvalues = 2*(1-t.cdf(np.abs(zvalues),df =degF)) #todo check
-            pvalue_alt = norm.sf(np.abs(zvalues))*2
-
-            return -betas_est.fun, betas_est.x, stderr, pvalue_alt
+            z_vals  = np.where(stderr > 1e-12, result.x / stderr, 0.0)
+            p_vals  = 2.0 * norm.sf(np.abs(z_vals))
+            return -result.fun, result.x, stderr, p_vals
         else:
             _, p = X.shape
-            b = np.random.normal(size= p)
-            betas_est = minimize(self.poissonRegressionNegLogLikelihood, b, args=(X, y, Xr), method='BFGS', tol = 1e-5, options={'gtol': 1e-5}).x
+            b0   = np.zeros(p)
+            result = minimize(
+                self.poissonRegressionNegLogLikelihood,
+                b0,
+                args=(X, y, None),
+                method="SLSQP",
+                tol=1e-6,
+                options={"maxiter": 2000},
+            )
+            return result.x
 
+    # ------------------------------------------------------------------
+    # Data utilities
+    # ------------------------------------------------------------------
 
     def tranformer(self, transform, idc):
-
-        if transform == 0 or 1 or None:
+        if transform in (0, 1, None):
             tr = self._x_data.iloc[:, idc]
-        elif transform == 'ln':
+        elif transform == "ln":
             tr = np.log(self._x_data.iloc[:, idc])
-        elif transform == 'exp':
-            tr = np.log(self._x_data.iloc[:, idc])
-        elif transform == 'sqrt':
+        elif transform == "exp":
+            tr = np.exp(self._x_data.iloc[:, idc])
+        elif transform == "sqrt":
             tr = np.power(self._x_data.iloc[:, idc], 0.5)
-        else: #will be a number
+        else:
             tr = np.power(self._x_data.iloc[:, idc], transform)
 
-        if np.any(np.isfinite(tr)) == False:
+        if not np.any(np.isfinite(tr)):
             tr = self._x_data.iloc[:, idc]
-            
         return tr
-
-
-
-    def makePoissonRegressionPlot(self, alpha = None, alpha_rdm = None, transform = None):
-        df = pd.read_csv("Ex-16-3.csv")
-        self.observations = df.shape[0]
-        ones = np.ones(self.observations)
-        df.insert(loc=0, column='ONE', value=ones)
-        self._x_data = df
-        df_tf = df
-
-        if transform is None:
-            f =1
-        if transform is not None:
-            for idx, t in enumerate(transform):
-                df_tf.iloc[:, idx] = self.tranformer(t, idx)
-
-
-        select_data = self._x_data.columns.values.tolist()
-
-        if alpha is None:
-            alpha = np.zeros(32)
-            alpha[1] = 1
-            alpha[2] = 1
-
-        select_subset_fixed = [x for x, z in zip(select_data, alpha) if z == 1]
-        X = df_tf[select_subset_fixed].to_numpy()
-        if alpha_rdm is not None:
-            select_subset_rdm = [x for x, y in zip(select_data, alpha_rdm) if y == 1]
-            Xr = df_tf[select_subset_rdm].to_numpy()
-        else:
-            Xr = None
-
-        y = df[self.predictor].values
-
-        x = df.AVEPRE.values.reshape(-1,1)
-        X = np.c_[np.ones(x.shape[0]),x]
-        xn = np.log(df.AADT.values)
-        xnn = df.MEDWIDTH.values
-        Xr = np.c_[xn, xnn]
-
-
-        log_lik, betas = self.fitPoissonRegression(X, y, Xr)
-        print(betas)
-
-
-
-        return None
-
-
-
-
-    def primes_from_2_to(self, n):
-        """Prime number from 2 to n.
-        From `StackOverflow <https://stackoverflow.com/questions/2068372>`_.
-        :param int n: sup bound with ``n >= 6``.
-        :return: primes in 2 <= p < n.
-        :rtype: list
-        """
-        sieve = np.ones(n // 3 + (n % 6 == 2), dtype=bool)
-        for i in range(1, int(n ** 0.5) // 3 + 1):
-            if sieve[i]:
-                k = 3 * i + 1 | 1
-                sieve[k * k // 3::2 * k] = False
-                sieve[k * (k - 2 * (i & 1) + 4) // 3::2 * k] = False
-        return np.r_[2, 3, ((3 * np.nonzero(sieve)[0][1:] + 1) | 1)]
-
-
-    def van_der_corput(self, n_sample, base=2):
-        """Van der Corput sequence.
-        :param int n_sample: number of element of the sequence.
-        :param int base: base of the sequence.
-        :return: sequence of Van der Corput.
-        :rtype: list (n_samples,)
-        """
-        sequence = []
-        for i in range(n_sample):
-            n_th_number, denom = 0., 1.
-            while i > 0:
-                i, remainder = divmod(i, base)
-                denom *= base
-                n_th_number += remainder / denom
-            sequence.append(n_th_number)
-
-        return sequence
-
-
-
-
-
-    def halton(self, dim, n_sample):
-        """Halton sequence.
-        :param int dim: dimension
-        :param int n_sample: number of samples.
-        :return: sequence of Halton.
-        :rtype: array_like (n_samples, n_features)
-        """
-        big_number = 10
-        while 'Not enought primes':
-            base = self.primes_from_2_to(big_number)[:dim]
-            if len(base) == dim:
-                break
-            big_number += 1000
-
-        # Generate a sample using a Van der Corput sequence per dimension.
-        sample = [self.van_der_corput(n_sample + 1, dim) for dim in base]
-        sample = np.stack(sample, axis=-1)[1:]
-
-        return sample
-
-
-    def prepare_halton(self, dim, n_sample, draws, distribution, init_coeff = None):
-        n_coef = 0
-        sample = self.halton(dim, n_sample*draws)
-        while n_coef < len(distribution):
-            if distribution[n_coef] == 'normal': #normal based
-                sample[:, n_coef] = norm.ppf(sample[:, n_coef])
-            elif distribution[n_coef] == 'gamma':
-                sample[:, n_coef] = gamma.ppf(sample[:, n_coef])
-            elif distribution[n_coef] == 'triangular':
-                sample[:, n_coef] = triang.ppf(sample[:, n_coef])
-            elif distribution[n_coef] == 'uniform':  # Uniform
-                sample[:, n_coef] = 2 * draws[:, n_coef] - 1
-            n_coef+=1
-
-        if init_coeff is None:
-            betas = np.repeat(0.1, n_coef)
-        else:
-            betas = init_coeff
-            if len(init_coeff) != n_coef:
-                raise ValueError("The size of the init_coeff must be " + n_coef)
-
-        return sample
-
-
-
-
-
-s = count_model(500, ['normal', 'normal'])
-
-s.makePoissonRegressionPlot()
-#Ndraws=500      # set number of draws
-#dimensions=2
-#N = 275
-#distribution = ['normal', 'normal']
-#prepare_halton(dimensions, N, Ndraws, distribution)
-
-
-
-

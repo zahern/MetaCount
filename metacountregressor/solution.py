@@ -6224,7 +6224,7 @@ class ObjectiveFunction(object):
                 return self._bfgs(loglik_fn, x, args=args, tol=tol, **options)
 
             except:
-                return minimize(loglik_fn, x, args=args, jac=args[6], method='BFGS', tol=tol, options=options)
+                return minimize(loglik_fn, x, args=args, jac=args[6], method='SLSQP', tol=tol, options=options)
 
 
         elif method == 'dogleg' or method == 'trust-exact':
@@ -6251,10 +6251,10 @@ class ObjectiveFunction(object):
             else:
                 return result
         elif method == 'BFGS_2':
-            return minimize(loglik_fn, x, args=args, jac=args[6], method='BFGS')
+            return minimize(loglik_fn, x, args=args, jac=args[6], method='SLSQP')
         elif method == "L-BFGS-B":
 
-            return minimize(loglik_fn, x, args=args, jac=args[6], hess=args[7], method='L-BFGS-B', bounds=bounds,
+            return minimize(loglik_fn, x, args=args, jac=args[6], method='SLSQP', bounds=bounds,
                             tol=tol, options=options)
 
         else:

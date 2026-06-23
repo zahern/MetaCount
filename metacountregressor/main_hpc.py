@@ -2526,15 +2526,13 @@ def estimate_latent_class_mixed_example():
 
     print("🔹 Polishing with full MLE...\n")
 
-    from scipy.optimize import minimize
+    from jaxopt import ScipyMinimize as JaxoptMinimize
 
-    result_final = minimize(
-        lambda p: mixed_model_loglik(p, data, spec),
-        params_em,
-        method="L-BFGS-B"
-    )
+    _polish_fn = lambda p: mixed_model_loglik(p, data, spec)
+    _polish_solver = JaxoptMinimize(fun=_polish_fn, method="SLSQP", tol=1e-8, maxiter=3000)
+    result_final = _polish_solver.run(jnp.array(params_em, dtype=jnp.float64))
 
-    print("Final log-likelihood:", -result_final.fun)
+    print("Final log-likelihood:", -float(_polish_fn(result_final.params)))
 
     # --------------------------------------------------
     # 9️⃣ Print summary
@@ -3546,9 +3544,31 @@ class CountModel:
 
         return result
 
-  
-    
-    
+    def scipy_slsqp(self, seed=0):
+        """Optimize using jaxopt.ScipyMinimize with SLSQP. Gradients via JAXopt autodiff."""
+        from jaxopt import ScipyMinimize as JaxoptMinimize
+
+        key = jax.random.PRNGKey(seed)
+        init = 0.01 * jax.random.normal(key, (self.param_index["total_params"],))
+        init = jnp.array(init, dtype=jnp.float64)
+
+        solver = JaxoptMinimize(
+            fun=self.objective,
+            method="SLSQP",
+            maxiter=3000,
+            tol=1e-8,
+        )
+
+        result = solver.run(init)
+        params, state = result.params, result.state
+
+        ll = -float(self.objective(params))
+        print("\nJAXOPT SLSQP LL:", ll)
+        print("Iterations:", int(state.iter_num))
+        print("Success:", bool(state.success))
+
+        return result
+
 
     def test_solvers(self, seed=0):
 
@@ -5844,7 +5864,7 @@ def fit_em(init_params, data, spec, max_iter=100, tol=1e-6, verbose=True):
             result = minimize(
                 weighted_objective,
                 theta_all[c],
-                method="L-BFGS-B"
+                method="SLSQP"
             )
 
             theta_new.append(result.x)

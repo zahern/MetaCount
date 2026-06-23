@@ -1069,37 +1069,27 @@ class ExperimentBuilder:
         if x0.size == 0:
             return x0
 
-        def _obj_np(x):
+        from jaxopt import ScipyMinimize as JaxoptMinimize
+
+        def _obj_val(x):
             try:
-                value = float(objective(jnp.array(x)))
+                value = float(objective(jnp.array(x, dtype=jnp.float64)))
             except Exception:
                 return 1e20
-            if not np.isfinite(value):
-                return 1e20
-            return value
+            return value if np.isfinite(value) else 1e20
 
-        def _grad_np(x):
-            try:
-                grad = jax.grad(objective)(jnp.array(x))
-                grad_np = np.asarray(grad, dtype=float)
-            except Exception:
-                grad_np = np.zeros_like(x0)
-            grad_np = np.where(np.isfinite(grad_np), grad_np, 0.0)
-            return grad_np
-
-        start_val = _obj_np(x0)
+        start_val = _obj_val(x0)
 
         try:
-            result = scipy_minimize(
-                _obj_np,
-                x0,
-                method="L-BFGS-B",
-                jac=_grad_np,
-                bounds=bounds,
-                options={"maxiter": int(maxiter)},
+            solver = JaxoptMinimize(
+                fun=objective,
+                method="SLSQP",
+                tol=1e-8,
+                maxiter=int(maxiter),
             )
-            cand = np.asarray(result.x, dtype=float)
-            cand_val = _obj_np(cand)
+            result = solver.run(jnp.array(x0, dtype=jnp.float64), bounds=bounds)
+            cand = np.asarray(result.params, dtype=float)
+            cand_val = _obj_val(cand)
             if np.isfinite(cand_val) and cand_val <= start_val:
                 return cand
         except Exception as exc:

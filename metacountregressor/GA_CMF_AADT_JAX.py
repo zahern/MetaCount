@@ -53,6 +53,7 @@ except ImportError:
 import jax
 import jax.numpy as jnp
 from jax.scipy.special import gammaln, logsumexp
+from jaxopt import ScipyMinimize as JaxoptMinimize
 
 # Enable 64-bit floats — essential for numerical optimisation
 jax.config.update("jax_enable_x64", True)
@@ -277,8 +278,8 @@ def spf_loglike(params, y, AADT, baseline_mat, locals_mat,
 def make_objective(y_jax, AADT_jax, baseline_jax, locals_jax,
                    rand_baseline, rand_local, draws, R, model):
     """
-    Returns a (value, gradient) callable compatible with scipy L-BFGS-B.
-    Gradients are exact (JAX autodiff), not finite-difference approximations.
+    Returns the raw JAX objective function for use with jaxopt.
+    Autodiff (gradients) is handled internally by jaxopt.ScipyMinimize.
     """
     rand_baseline_t = tuple(rand_baseline)
     rand_local_t    = tuple(rand_local)
@@ -293,28 +294,22 @@ def make_objective(y_jax, AADT_jax, baseline_jax, locals_jax,
             p, y_jax, AADT_jax, baseline_jax, locals_jax,
             rand_baseline_t, rand_local_t, draws, model)
 
-    val_and_grad = jax.value_and_grad(raw_fn)
-
-    def objective(p_np):
-        p   = jnp.array(p_np)
-        v, g = val_and_grad(p)
-        return float(v), np.array(g, dtype=np.float64)
-
-    return objective
+    return raw_fn
 
 
-def run_optimizer(objective, p0, method="L-BFGS-B", maxiter=2000, disp=False):
+def run_optimizer(objective, p0, method="SLSQP", maxiter=2000, disp=False):
     """
-    Thin wrapper around scipy.optimize.minimize.
-    objective must return (value, gradient) — i.e. jac=True.
+    Optimize using jaxopt.ScipyMinimize so autodiff is handled by JAXopt.
+    objective must be a raw JAX function (scalar output); gradients are
+    computed via JAX autodiff internally — no manual jac=True needed.
     """
-    return minimize(
-        objective,
-        p0,
+    solver = JaxoptMinimize(
+        fun=objective,
         method=method,
-        jac=True,
-        options={'maxiter': maxiter, 'disp': disp}
+        maxiter=maxiter,
+        tol=1e-8,
     )
+    return solver.run(jnp.array(p0, dtype=jnp.float64))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -345,19 +340,18 @@ def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
             rand_baseline_t, rand_local_t, draws, model)
 
     hess_fn = jax.jit(jax.hessian(raw_fn))
-    p_star  = jnp.array(result.x)
+    # support both jaxopt result (.params) and scipy result (.x)
+    p_star  = jnp.array(result.params if hasattr(result, "params") else result.x)
 
     try:
         H   = np.array(hess_fn(p_star))
         cov = np.linalg.inv(H)
         se  = np.sqrt(np.maximum(np.diag(cov), 0.0))
     except np.linalg.LinAlgError:
-        print("  WARNING: Hessian singular — falling back to L-BFGS-B approx.")
-        try:
-            cov = result.hess_inv.todense()
-        except AttributeError:
-            cov = np.array(result.hess_inv)
-        se = np.sqrt(np.maximum(np.diag(cov), 0.0))
+        print("  WARNING: Hessian singular — no hess_inv fallback for SLSQP; returning NaN SEs.")
+        n = len(p_star)
+        cov = np.full((n, n), np.nan)
+        se  = np.full(n, np.nan)
 
     return se, cov
 
@@ -413,19 +407,22 @@ def evaluate_model(solution,
     objective = make_objective(y_jax, AADT_jax, baseline_jax, locals_jax,
                                rand_baseline, rand_local, draws, R, model)
 
-    res = run_optimizer(objective, p0, method="L-BFGS-B", maxiter=1000)
+    res = run_optimizer(objective, p0, method="SLSQP", maxiter=1000)
 
-    ll  = -res.fun
-    bic = -2.0 * ll + n_params * np.log(N)
+    params    = jnp.array(res.params)
+    ll        = -float(objective(params))
+    bic       = -2.0 * ll + n_params * np.log(N)
 
-    # Significance penalty — use fast fixed-SE from L-BFGS-B inverse here
-    try:
-        cov_approx = res.hess_inv.todense()
-    except AttributeError:
-        cov_approx = np.atleast_2d(res.hess_inv)
-    se_approx = np.sqrt(np.maximum(np.diag(cov_approx), 0.0))
+    # Significance penalty — diagonal Hessian via forward-over-reverse autodiff (O(p))
+    grad_fn   = jax.grad(objective)
+    n_p       = len(params)
+    diag_hess = jnp.array([
+        jax.jvp(grad_fn, (params,), (jnp.eye(n_p)[i],))[1][i]
+        for i in range(n_p)
+    ])
+    se_approx = np.array(jnp.sqrt(jnp.maximum(1.0 / (jnp.abs(diag_hess) + 1e-30), 0.0)))
 
-    params    = res.x
+    params    = np.array(params)
     z         = np.where(se_approx > 1e-12, params / se_approx, 0.0)
     p_vals    = 2 * (1 - norm.cdf(np.abs(z)))
     # exclude sigma and log_theta from significance test
@@ -624,7 +621,7 @@ def fit_final_model(data,
                                rand_baseline, rand_local, draws, R, model)
 
     print("  Compiling JAX kernel (first call) …")
-    res = run_optimizer(objective, p0, method="L-BFGS-B", maxiter=2000, disp=True)
+    res = run_optimizer(objective, p0, method="SLSQP", maxiter=2000)
 
     return res, y_jax, AADT_jax, baseline_jax, locals_jax, draws
 
@@ -641,7 +638,7 @@ def build_summary_table(result,
     """
     se : numpy array of standard errors (from exact Hessian or fallback).
     """
-    params = result.x
+    params = np.array(result.params if hasattr(result, "params") else result.x)
     z      = np.where(se > 1e-12, params / se, 0.0)
     p      = 2 * (1 - norm.cdf(np.abs(z)))
     labels = _param_labels(selected_baseline, selected_local, rand_baseline, rand_local, model)
@@ -687,7 +684,7 @@ def print_cmf_results(result,
       Fixed  : constant elasticity shift
       Random : elasticity varies; 95% range given
     """
-    params = result.x
+    params = np.array(result.params if hasattr(result, "params") else result.x)
     idx    = 0
     W      = 72
     col_w  = 20
