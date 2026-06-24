@@ -3132,8 +3132,11 @@ def generate_master_halton(N, K, R, seed=42,  burn=50):
 
 
 def generate_master_sobol(N, K, R, seed=42):
+    import math
     sampler = qmc.Sobol(d=K, scramble=True, seed=seed)
-    u = sampler.random(N * R)
+    total = N * R
+    k = math.ceil(math.log2(max(total, 2)))
+    u = sampler.random_base2(k)[:total]  # power-of-2 draw, trimmed to exact count
     u = np.clip(u, 1e-12, 1 - 1e-12)
     z = norm.ppf(u)
     z = z.reshape(N, R, K).swapaxes(1, 2)

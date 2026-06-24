@@ -12,11 +12,33 @@
       "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; cd \"c:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\"; & \".\\\\metacountregressor\\\\.venv\\\\Scripts\\\\python.exe\" metacountregressor/test_bandit_sa.py --iters 40 > C:\\\\Temp\\\\bandit_out.txt 2> C:\\\\Temp\\\\bandit_err.txt; $code = $LASTEXITCODE; Write-Host \"Exit: $code\")",
       "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; cd \"c:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\"; & \".\\\\metacountregressor\\\\.venv\\\\Scripts\\\\python.exe\" metacountregressor/test_bandit_sa.py --iters 10 --no-sa > C:\\\\Temp\\\\bandit_quick.txt 2> C:\\\\Temp\\\\bandit_quick_err.txt; $code = $LASTEXITCODE; Write-Host \"Exit: $code\")",
       "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; cd \"c:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\"; & \".\\\\metacountregressor\\\\.venv\\\\Scripts\\\\python.exe\" metacountregressor/test_bandit_sa.py --iters 15 --no-sa > C:\\\\Temp\\\\audit_out.txt 2> C:\\\\Temp\\\\audit_err.txt; $code = $LASTEXITCODE; Write-Host \"Exit: $code\")",
-      "Read(//z/latent_class_metacount/**)"
+      "Read(//z/latent_class_metacount/**)",
+      "Read(//z/test_runs_tours/code/**)",
+      "PowerShell(pip show SearchLibrium 2>$null)",
+      "PowerShell(python -c \"import SearchLibrium; print\\(SearchLibrium.__version__\\)\" 2>$null)",
+      "PowerShell(python -c \"import SearchLibrium; print\\(SearchLibrium.__file__\\)\" 2>&1)",
+      "PowerShell(head -5)",
+      "Read(//c/Users/ahernz/source/**)",
+      "PowerShell(& \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import SearchLibrium; print\\(SearchLibrium.__version__\\)\" 2>&1)",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\MixedLogit.py\" -Pattern \"def setup\" -Context 5,35 | Select-Object -First 1 | ForEach-Object { $_.Context.PreContext + $_.Line + $_.Context.PostContext } | ForEach-Object { $_ })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\multinomial_logit.py\" -Pattern \"def setup\" -Context 0,15 | Select-Object -First 1 | ForEach-Object { $_.Context.PreContext + $_.Line + $_.Context.PostContext } | ForEach-Object { $_ })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\MixedLogit.py\" -Pattern \"def fit\" -Context 0,20 | Select-Object -First 1 | ForEach-Object { $_.Context.PreContext + $_.Line + $_.Context.PostContext } | ForEach-Object { $_ })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\multinomial_logit.py\" -Pattern \"def fit\" -Context 0,15 | Select-Object -First 1 | ForEach-Object { $_.Context.PreContext + $_.Line + $_.Context.PostContext } | ForEach-Object { $_ })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\multinomial_logit.py\" -Pattern \"def fit\" -Context 0,60 | Select-Object -First 1 | ForEach-Object { $_.Context.PreContext + $_.Line + $_.Context.PostContext } | ForEach-Object { $_ })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\MixedLogit.py\" -Pattern \"def fit\" -Context 0,80 | Select-Object -First 1 | ForEach-Object { $_.Context.PreContext + $_.Line + $_.Context.PostContext } | ForEach-Object { $_ })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\MixedLogit.py\" -Pattern \"self\\\\.loglik|self\\\\.coeff_est|return \" -Context 2,2 | Select-Object -First 10 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\MixedLogit.py\" -Pattern \"loglik|coeff_est\" -Context 0,2 | Select-Object -First 10 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\_choice_model.py\" -Pattern \"loglik|coeff_est\" | Select-Object -First 15 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\ga_hypothesis_testing.py\" -Pattern \"BanditSA|BanditFeatureSearcher|SearchLibrium\" | Select-Object -First 10 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\ga_hypothesis_testing.py\" -Pattern \"BanditSA\\\\\\(\" -Context 0,5 | Select-Object -First 3 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\ga_hypothesis_testing.py\" -Pattern \"BanditSA|banditsa|PerturbationBandit\" | Select-Object -First 10 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\ga_hypothesis_testing.py\" -Pattern \"BanditFeatureSearcher\" -Context 0,10 | Select-Object -First 2 | ForEach-Object { \"L$\\($_.LineNumber\\): \" + $_.Line; $_.Context.PostContext | ForEach-Object { \"  $_\" } })",
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\multinomial_logit.py\" -Pattern \"def fit\" -Context 0,5 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\"; $_.Context.PostContext | ForEach-Object { \"  $_\" } })"
     ],
     "additionalDirectories": [
       "Z:\\latent_class_metacount\\metacountregressor",
-      "Z:\\latent_class_metacount"
+      "Z:\\latent_class_metacount",
+      "Z:\\test_runs_tours\\code"
     ]
   }
 }

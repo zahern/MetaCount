@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "metacountregressor"
-version = "1.0.33"
-description = "JAX-first hierarchical search and fitting for count, CMF, duration, and linear models."
+version = "1.0.51"
+description = "JAX-first hierarchical search and fitting for count, CMF, duration, linear, and pavement CLR models."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -50,6 +50,7 @@ py-modules = [
   "model_constraints",
   "output_config",
   "pareto_file",
+  "pavement_clr",
   "sample_data",
   "solution",
   "solvers_meta",

@@ -1,0 +1,39 @@
+model;analysis;feature;  parameter  
+hierarchical;washington;a0; -10,3774 
+hierarchical;washington;WIDTH_PER_LANE; -0,0534 
+hierarchical;washington;CURVES; 0,0954 
+hierarchical;washington;TANGENT_LENGTH; 0,1014 
+hierarchical;washington;INTERCHANGES; 0,4192 
+hierarchical;washington;MXGRDIFF; 0,0769 
+hierarchical;washington;SHOULDER_WIDTH; -0,4338 
+hierarchical;washington;b0; 5,3944 
+hierarchical;washington;SLOPE; -0,0076 
+literature;washington;a0; 2,8100 
+literature;washington;lowpre; -0,4100 
+literature;washington;grade_breaks; -0,0500 
+literature;washington;friction; -0,0100 
+literature;washington;exposure; 2,7000 
+literature;washington;interchanges; 0,1500 
+literature;washington;curves; -0,1600 
+literature;washington;high_snow; -0,1800 
+hierarchical;QLD HV;a0; -10,8590 
+hierarchical;QLD HV;Total_width; -0,2758 
+hierarchical;QLD HV;RS_HS; 1,3780 
+hierarchical;QLD HV;LNMCV; 0,9219 
+hierarchical;QLD HV;b0; 2,1655 
+hierarchical;QLD HV;RS; 0,1179 
+hierarchical;Maine;a0; -57,2378 
+hierarchical;Maine;speed; 0,4949 
+hierarchical;Maine;right_shoulder_width; -0,0234 
+hierarchical;Maine;DP01; 0,0440 
+hierarchical;Maine;DX32; 0,0455 
+hierarchical;Maine;b0; 7,5549 
+hierarchical;Maine;dummy_winter; 0,2350 
+literature;Maine;const; -10,3600 
+literature;Maine;madt; 0,8050 
+literature;Maine;segment_length; 0,9550 
+literature;Maine;speed_limit; 0,0300 
+literature;Maine;shoulder_width; -0,1650 
+literature;Maine;CURVES; 0,2040 
+literature;Maine;precipitation; 0,0790 
+literature;Maine;temperature; 0,0440 

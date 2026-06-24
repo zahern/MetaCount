@@ -21,6 +21,14 @@ __all__ = [
     "LogNormalRandomEffectsAFTFitter",
     "WeibullRandomEffectsAFTFitter",
     "LogLogisticRandomEffectsAFTFitter",
+    # Pavement CLR with temporal error structures
+    "PavementCLROptimizer",
+    "PavementTemporalComparison",
+    "fit_cluster_ols",
+    "fit_cluster_ar1",
+    "fit_cluster_random_walk",
+    "fit_cluster_nur",
+    "log_transform_pavement",
     # Data loaders
     "load_example16_3_model_data",
     "load_example16_3_raw_data",
@@ -51,6 +59,14 @@ __all__ = [
 _EXPORTS = {
     # Core builders
     "CMFExperimentBuilder": ("cmf_package", "CMFExperimentBuilder"),
+    # Pavement CLR
+    "PavementCLROptimizer": ("pavement_clr", "PavementCLROptimizer"),
+    "PavementTemporalComparison": ("pavement_clr", "PavementTemporalComparison"),
+    "fit_cluster_ols": ("pavement_clr", "fit_cluster_ols"),
+    "fit_cluster_ar1": ("pavement_clr", "fit_cluster_ar1"),
+    "fit_cluster_random_walk": ("pavement_clr", "fit_cluster_random_walk"),
+    "fit_cluster_nur": ("pavement_clr", "fit_cluster_nur"),
+    "log_transform_pavement": ("pavement_clr", "log_transform_pavement"),
     "CMFFamilySearchProblem": ("family_search", "CMFFamilySearchProblem"),
     "DurationSearchProblem": ("family_search", "DurationSearchProblem"),
     "ExperimentBuilder": ("experiment_package", "ExperimentBuilder"),
