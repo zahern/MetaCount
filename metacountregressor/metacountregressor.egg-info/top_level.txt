@@ -17,6 +17,8 @@ metaheuristics
 model_constraints
 output_config
 pareto_file
+pavement_clr
 sample_data
 solution
 solvers_meta
+survival_models

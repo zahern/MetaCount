@@ -17,10 +17,12 @@ metaheuristics.py
 model_constraints.py
 output_config.py
 pareto_file.py
+pavement_clr.py
 pyproject.toml
 sample_data.py
 solution.py
 solvers_meta.py
+survival_models.py
 metacountregressor/__init__.py
 metacountregressor/_version.py
 metacountregressor/cmf_package.py
@@ -30,7 +32,9 @@ metacountregressor/fitted_specifications.py
 metacountregressor/help_guide.py
 metacountregressor/model_constraints.py
 metacountregressor/output_config.py
+metacountregressor/pavement_clr.py
 metacountregressor/sample_data.py
+metacountregressor/survival_models.py
 metacountregressor.egg-info/PKG-INFO
 metacountregressor.egg-info/SOURCES.txt
 metacountregressor.egg-info/dependency_links.txt

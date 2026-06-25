@@ -17,15 +17,6 @@ try:
         prepare_data,
         predict_daily_schedule,
     )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", FutureWarning)
-        from .metaheuristics import (
-            differential_evolution,
-            harmony_search,
-            simulated_annealing,
-        )
-    from .GA_CMF_AADT_JAX import evaluate_model, fit_final_model
-    from .solution import ObjectiveFunction
 except ImportError:
     from cmf_package import CMFExperimentBuilder
     from duration_main import (
@@ -35,16 +26,16 @@ except ImportError:
         prepare_data,
         predict_daily_schedule,
     )
-    from metaheuristics import (
-        differential_evolution,
-        harmony_search,
-        simulated_annealing,
-    )
-    from GA_CMF_AADT_JAX import evaluate_model, fit_final_model
-    from solution import ObjectiveFunction
 
 
 def _run_metaheuristic(algo: str, objective_function, **kwargs):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        from metaheuristics import (
+            differential_evolution,
+            harmony_search,
+            simulated_annealing,
+        )
     algo = algo.lower()
     if algo == "hs":
         return harmony_search(objective_function, **kwargs)
@@ -178,6 +169,7 @@ class CMFMetaheuristicObjective:
         }
 
     def get_fitness(self, vector, multi=False, verbose=False, max_routine=3):
+        from GA_CMF_AADT_JAX import evaluate_model
         vec = np.asarray(vector, dtype=int)
         key = tuple(int(v) for v in vec.tolist())
         self._last_vector = vec
@@ -239,6 +231,7 @@ class LinearSearchProblem:
         X = self.df[self.variables].copy()
         y = self.df[[self.y_col]].copy()
 
+        from solution import ObjectiveFunction
         objective = ObjectiveFunction(
             X,
             y,
