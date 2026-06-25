@@ -326,23 +326,26 @@ def generate_halton_normal(N, K, R, seed=42):
 
     sampler = qmc.Halton(d=K, scramble=False, seed=seed)
     sampler.fast_forward(50)
-    u = sampler.random(N*R)          # (R, K)
-    z = norm.ppf(u)                # (R, K)
-
-   # z = z.T                        # (K, R)
-  # z = np.tile(z[None, :, :], (N, 1, 1))  # (N, K, R)
+    u = sampler.random(N*R)          # (N*R, K)
+    u = np.clip(u, 1e-12, 1 - 1e-12)
+    z = norm.ppf(u)                # (N*R, K)
     z = z.reshape(N, R, K).swapaxes(1, 2)
     return z
 
 
 def generate_sobol_normal(N, K, R, seed=42):
+    import math
     sampler = qmc.Sobol(d=K, scramble=True, seed=seed)
-    u = sampler.random(N * R)
-    # Clip to avoid ppf extremes
+    total = N * R
+    k = math.ceil(math.log2(max(total, 2)))
+    try:
+        u = sampler.random_base2(k)[:total]
+    except (AttributeError, TypeError):
+        u = sampler.random(total)
     u = np.clip(u, 1e-12, 1 - 1e-12)
     z = norm.ppf(u)
     z = z.reshape(N, R, K).swapaxes(1, 2)
-    return z
+    return jnp.array(z)
 
 
 def decode_distribution(dist_code, allowed_list):
@@ -3126,6 +3129,7 @@ def generate_master_halton(N, K, R, seed=42,  burn=50):
     sampler = qmc.Halton(d=K, scramble=False, seed=seed)
     sampler.fast_forward(burn)
     u = sampler.random(N * R)
+    u = np.clip(u, 1e-12, 1 - 1e-12)
     z = norm.ppf(u)
     z = z.reshape(N, R, K).swapaxes(1, 2)
     return jnp.array(z)
@@ -3136,7 +3140,10 @@ def generate_master_sobol(N, K, R, seed=42):
     sampler = qmc.Sobol(d=K, scramble=True, seed=seed)
     total = N * R
     k = math.ceil(math.log2(max(total, 2)))
-    u = sampler.random_base2(k)[:total]  # power-of-2 draw, trimmed to exact count
+    try:
+        u = sampler.random_base2(k)[:total]
+    except (AttributeError, TypeError):
+        u = sampler.random(total)
     u = np.clip(u, 1e-12, 1 - 1e-12)
     z = norm.ppf(u)
     z = z.reshape(N, R, K).swapaxes(1, 2)

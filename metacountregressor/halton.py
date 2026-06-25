@@ -47,9 +47,11 @@ def generate_sobol_draws(
     n_sobol = _next_power_of_2(total)
 
     engine = Sobol(d=dim, scramble=scramble, seed=42)
-    # Sobol requires sampling 2^k points; use random_base2 if possible
     k = int(np.log2(n_sobol))
-    uniform = engine.random_base2(k)          # shape: (n_sobol, dim) in (0, 1)
+    try:
+        uniform = engine.random_base2(k)      # power-of-2 draw (deprecated in scipy >= 1.12)
+    except (AttributeError, TypeError):
+        uniform = engine.random(n_sobol)       # fallback for newer scipy
     uniform = uniform[:total]                  # trim to exact count needed
 
     # Apply per-dimension inverse-CDF transforms
