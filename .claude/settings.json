@@ -33,7 +33,11 @@
       "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\ga_hypothesis_testing.py\" -Pattern \"BanditSA\\\\\\(\" -Context 0,5 | Select-Object -First 3 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
       "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\ga_hypothesis_testing.py\" -Pattern \"BanditSA|banditsa|PerturbationBandit\" | Select-Object -First 10 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\" })",
       "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\ga_hypothesis_testing.py\" -Pattern \"BanditFeatureSearcher\" -Context 0,10 | Select-Object -First 2 | ForEach-Object { \"L$\\($_.LineNumber\\): \" + $_.Line; $_.Context.PostContext | ForEach-Object { \"  $_\" } })",
-      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\multinomial_logit.py\" -Pattern \"def fit\" -Context 0,5 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\"; $_.Context.PostContext | ForEach-Object { \"  $_\" } })"
+      "PowerShell(Select-String -Path \"Z:\\\\test_runs_tours\\\\code\\\\.venv\\\\Lib\\\\site-packages\\\\SearchLibrium\\\\multinomial_logit.py\" -Pattern \"def fit\" -Context 0,5 | ForEach-Object { \"L$\\($_.LineNumber\\): $\\($_.Line\\)\"; $_.Context.PostContext | ForEach-Object { \"  $_\" } })",
+      "PowerShell(Import-Csv \"C:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\\\\metacountregressor\\\\Re_ CMF\\\\washington_predictions.csv\")",
+      "PowerShell(Import-Csv \"C:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\\\\metacountregressor\\\\Re_ CMF\\\\maine_predictions.csv\")",
+      "PowerShell(Import-Csv \"C:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\\\\metacountregressor\\\\Re_ CMF\\\\queensland_predictions.csv\")",
+      "PowerShell(Import-Csv \"C:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\\\\metacountregressor\\\\Re_ CMF\\\\Parameters_hierarchical_models.csv\" -Delimiter \";\")"
     ],
     "additionalDirectories": [
       "Z:\\latent_class_metacount\\metacountregressor",
