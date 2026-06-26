@@ -616,21 +616,28 @@ class AdvancedSimulatedAnnealing:
             neighbor = self.generate_neighbor(solution)
             neighbor = self.repair(neighbor)
             f_neighbor = self.evaluator.fitness(neighbor)
-            #neighbor = self.repair(neighbor)
-            if not self.is_valid_fitness(f_neighbor):
+            if not self.is_valid_fitness(f_neighbor, max_allowed=1e20):
                 continue
 
             delta = self.energy_difference(f_current, f_neighbor)
 
-            if delta > 0:
+            if delta > 0 and np.isfinite(delta):
                 deltas.append(delta)
 
         if len(deltas) == 0:
             return 1.0
 
         avg_delta = np.mean(deltas)
+        T_est = -avg_delta / np.log(target_accept)
 
-        return -avg_delta / np.log(target_accept)
+        # Clamp: never let auto-temperature exceed a sane ceiling.
+        # Extremely high T0 makes the SA accept all moves for hundreds
+        # of generations before any selection pressure kicks in.
+        MAX_T0 = 50000.0
+        T0 = min(T_est, MAX_T0)
+        if T_est > MAX_T0:
+            print(f"[SA init] Auto T0 clamped from {T_est:.1f} to {T0:.1f}")
+        return max(T0, 1.0)
         
     def energy_difference(self, current_score, neighbor_score):
 
@@ -669,8 +676,10 @@ class AdvancedSimulatedAnnealing:
         2 active predictors.  The old default of 5 caused an empty
         range(5, 5) = [] when dim_core == 5, raising immediately.
         """
+        D = self.dim_core
+        has_lc = getattr(self.evaluator, "max_latent_classes", 1) > 1
         print(f"[SA init] searching for valid solution "
-              f"(min_active={min_active}, dim_core={self.dim_core})")
+              f"(min_active={min_active}, dim_core={D}, dim={self.dim}, has_lc={has_lc})")
 
         # range is inclusive of dim_core so we always try the full model
         for complexity in range(min_active, self.dim_core + 1):
@@ -686,21 +695,35 @@ class AdvancedSimulatedAnnealing:
                     replace=False
                 )
 
-                D = self.dim_core
-
                 for j in idx:
-                    if j < D:
-                        solution[j] = self.sample_allowed_role(j, force_active=True)
-                    else:
-                        solution[j] = np.random.randint(0, 7)
+                    solution[j] = self.sample_allowed_role(j, force_active=True)
+
+                # Randomise distribution genes (D … 2D-1)
+                for j in range(D, 2 * D):
+                    solution[j] = np.random.randint(0, 6)
+
+                # Dispersion bit (2D): randomise 0 or 1
+                if self.dim > 2 * D:
+                    solution[2 * D] = np.random.randint(0, 2)
+
+                # LC code (2D+1): randomise within max_latent_classes
+                if has_lc and self.dim > 2 * D + 1:
+                    max_lc = getattr(self.evaluator, "max_latent_classes", 2)
+                    solution[2 * D + 1] = np.random.randint(0, max_lc)
+
+                # Class masks (2D+2 … 3D+1): randomise 0/1/2 per variable
+                if has_lc and self.dim > 2 * D + 2:
+                    for j in range(2 * D + 2, min(3 * D + 2, self.dim)):
+                        solution[j] = np.random.randint(0, 3)
 
                 solution = self.repair(solution)
                 score    = self.evaluator.fitness(solution)
 
                 if self.is_valid_fitness(score):
                     score_str = " ".join(f"{v:.1f}" for v in np.asarray(score).ravel())
+                    lc_val = int(solution[2 * D + 1]) + 1 if has_lc and self.dim > 2 * D + 1 else 1
                     print(f"[SA init] valid model found  "
-                          f"active={complexity}  score={score_str}")
+                          f"active={complexity}  classes={lc_val}  score={score_str}")
                     return solution, score
 
         raise ValueError(
@@ -960,16 +983,23 @@ class AdvancedSimulatedAnnealing:
                     "best_obj2": best_obj2
                 })
                 # Multiobjective stagnation check
+                # Only activate after 40% of max_iter has elapsed.
+                # Use relative hypervolume change (not absolute) to avoid
+                # premature stopping on problems where HV scale is large.
                 if (
+                    gen > self.max_iter * 0.4 and
                     len(self.archive) >= 2 and
-                    len(self.hypervolume_history) > 40
+                    len(self.hypervolume_history) > 60
                 ):
 
-                    recent_hv = self.hypervolume_history[-20:]
-                    recent_size = archive_sizes[-20:]
+                    recent_hv = self.hypervolume_history[-50:]
+                    recent_size = archive_sizes[-50:]
+
+                    hv_range = max(recent_hv) - min(recent_hv)
+                    hv_rel_change = hv_range / (abs(recent_hv[0]) + 1e-12)
 
                     if (
-                        max(recent_hv) - min(recent_hv) < self.tol and
+                        hv_rel_change < 1e-4 and
                         max(recent_size) == min(recent_size)
                     ):
                         print("[STOP] Early stop: multiobjective stagnation")

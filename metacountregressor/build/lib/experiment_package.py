@@ -731,8 +731,9 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
     """
     Extended generate_neighbor that correctly mutates ALL gene slots:
 
-    Tail gene index  2D   → dispersion bit (flip 0↔1)
-    Tail gene index  2D+1 → latent-class code (step ±1)
+    Tail gene index  2D     → dispersion bit (flip 0↔1)
+    Tail gene index  2D+1   → latent-class code (step ±1)
+    Tail gene indices 2D+2 … 3D+1 → class-specific masks (cycle 0→1→2→0)
     Role genes now include 7 and 8 (sampled via ROLE_PROBS).
     """
     for _ in range(max_attempts):
@@ -765,18 +766,25 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
                     changed = True
 
                 else:
-                    # Tail genes
+                    # Tail genes  — indices >= 2*D
                     tail_pos = idx - 2 * D
 
                     if tail_pos == 0:
                         # Dispersion bit: flip
                         neighbor[idx] = 1 - int(neighbor[idx])
-                    else:
+                    elif tail_pos == 1:
                         # Latent-class code: step ±1 within bounds
                         max_code      = self.evaluator.max_latent_classes - 1
                         step          = np.random.choice([-1, 1])
                         neighbor[idx] = int(np.clip(neighbor[idx] + step,
                                                     0, max_code))
+                    else:
+                        # Class-specific variable masks (indices 2D+2 … 3D+1):
+                        #   0 = both classes  1 = class 1 only  2 = class 2 only
+                        # Cycle through the three possible values or pick random.
+                        old_val = int(neighbor[idx])
+                        choices = [v for v in (0, 1, 2) if v != old_val]
+                        neighbor[idx] = int(np.random.choice(choices))
                     changed = True
 
         # Enforce min-active constraint
@@ -812,6 +820,12 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         possible = [v for v in allowed if v != old]
         if possible:
             neighbor[idx] = np.random.choice(possible)
+
+    # Also randomize class masks in the fallback when LC is enabled
+    has_lc = getattr(self.evaluator, "max_latent_classes", 1) > 1
+    if has_lc and len(neighbor) > 2 * D + 2:
+        for idx in range(2 * D + 2, min(3 * D + 2, len(neighbor))):
+            neighbor[idx] = np.random.randint(0, 3)
 
     if self.is_same(solution, neighbor):
         return self.generate_neighbor(solution, T,
@@ -2571,8 +2585,8 @@ class ExperimentBuilder:
         )
 
         D   = len(variables)
-        _dim = 2 * D + 2 if max_latent_classes > 1 else 2 * D + 1
-        _dim_note = f"2×{D} + 2  (roles+dists+dispersion+LC gene)" if max_latent_classes > 1 else f"2×{D} + 1  (roles+dists+dispersion)"
+        _dim = 3 * D + 2 if max_latent_classes > 1 else 2 * D + 1
+        _dim_note = f"3×{D} + 2  (roles+dists+dispersion+LC+class_masks)" if max_latent_classes > 1 else f"2×{D} + 1  (roles+dists+dispersion)"
         print(f"\n  Evaluator ready:")
         print(f"    Variables          : {D}")
         print(f"    Decision dimension : {_dim}  ({_dim_note})")
@@ -2842,7 +2856,7 @@ class ExperimentBuilder:
         # The LC gene (index 2*D+1) is only present when max_latent_classes > 1.
         # Without it the SA never generates valid LC solutions (IndexError in build_spec).
         has_lc = getattr(evaluator, "max_latent_classes", 1) > 1
-        dim    = 2 * D + 2 if has_lc else 2 * D + 1
+        dim    = 3 * D + 2 if has_lc else 2 * D + 1
 
         print(f"\n  Running {algo.upper()} | dim={dim} | max_iter={max_iter} | seed={seed}")
 

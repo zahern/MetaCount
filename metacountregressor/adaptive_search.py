@@ -789,7 +789,7 @@ class BanditGuidedSA:
     def _initial_solution(self) -> np.ndarray:
         D   = len(self.evaluator.vars)
         has_lc = getattr(self.evaluator, "max_latent_classes", 1) > 1
-        dim    = 2 * D + 2 if has_lc else 2 * D + 1
+        dim    = 3 * D + 2 if has_lc else 2 * D + 1
         for _ in range(200):
             roles = np.array([
                 self.evaluator.allowed_roles.get(v, [0, 1])[
