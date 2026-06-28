@@ -271,6 +271,12 @@ class StructureEvaluatorLC(StructureEvaluator):
 
         use_nb          = dispersion_bit % 2 == 1
         latent_classes  = lc_code % self.max_latent_classes + 1
+        # Effective LC count for STRUCTURAL decisions (membership roles,
+        # class masks, per-class variable lists).  The fitness function may
+        # override the actual number of fitted classes later, but we must
+        # always build the spec as if latent classes are present so that
+        # membership (roles 7,8) and class-specific masks are not lost.
+        struct_lc       = max(latent_classes, self.max_latent_classes) if self.max_latent_classes > 1 else 1
 
         fixed      = []
         rdm_ind    = []
@@ -280,9 +286,9 @@ class StructureEvaluatorLC(StructureEvaluator):
         zi         = []
         membership = []
         # Per-class variable lists (same categories, partitioned by class_mask)
-        class_fixed   = [[] for _ in range(latent_classes)]
-        class_rdm_ind = [[] for _ in range(latent_classes)]
-        class_rdm_cor = [[] for _ in range(latent_classes)]
+        class_fixed   = [[] for _ in range(struct_lc)]
+        class_rdm_ind = [[] for _ in range(struct_lc)]
+        class_rdm_cor = [[] for _ in range(struct_lc)]
 
         for i, var in enumerate(self.vars):
             role = int(roles[i])
@@ -292,16 +298,16 @@ class StructureEvaluatorLC(StructureEvaluator):
             if var in self._unidentifiable and role != 0:
                 return None
 
-            cm = class_mask[i] if latent_classes > 1 else 0
+            cm = class_mask[i] if struct_lc > 1 else 0
             # Map class_mask to per-class inclusion
             in_class = []
-            if latent_classes <= 1:
+            if struct_lc <= 1:
                 in_class = [True]
             else:
                 in_class = [
                     cm in (0, 1),   # class 1
                     cm in (0, 2),   # class 2
-                ][:latent_classes]
+                ][:struct_lc]
 
             if role == 0:
                 pass  # excluded
@@ -343,11 +349,11 @@ class StructureEvaluatorLC(StructureEvaluator):
                 zi.append(var)
 
             elif role == 7:
-                if latent_classes > 1:
+                if struct_lc > 1:
                     membership.append(var)
 
             elif role == 8:
-                if latent_classes > 1:
+                if struct_lc > 1:
                     membership.append(var)
                 fixed.append(var)
                 for c, inc in enumerate(in_class):
@@ -358,7 +364,7 @@ class StructureEvaluatorLC(StructureEvaluator):
         if len(rdm_cor) == 1:
             rdm_ind.extend(rdm_cor)
             rdm_cor = []
-            for c in range(latent_classes):
+            for c in range(struct_lc):
                 if len(class_rdm_cor[c]) == 1:
                     class_rdm_ind[c].extend(class_rdm_cor[c])
                     class_rdm_cor[c] = []
@@ -375,7 +381,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             "latent_classes":   latent_classes,
         }
         # Per-class terms: only include when classes actually differ
-        if latent_classes > 1:
+        if struct_lc > 1:
             spec["class_fixed"]   = class_fixed
             spec["class_rdm_ind"] = class_rdm_ind
             spec["class_rdm_cor"] = class_rdm_cor
