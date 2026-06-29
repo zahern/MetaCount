@@ -997,7 +997,254 @@ def fit_em(init_params, data, spec: ModelSpec,
     return best_params
 
 
-_hpc.fit_em = fit_em
+_hpc.fit_em = fit_em          # keep original accessible as fit_em
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 7a-sq. fit_em_squarem
+#
+#   Drop-in replacement for fit_em that applies the Squared Extrapolation
+#   Method (SQUAREM) of Varadhan & Roland (2008) to accelerate convergence.
+#
+#   Algorithm (outer loop):
+#     1. θ₁ = F(θ)      — one full E+M step
+#     2. θ₂ = F(θ₁)     — second full E+M step
+#     3. r = θ₁ − θ,  v = θ₂ − 2θ₁ + θ
+#     4. α = min(−‖r‖/‖v‖, −1)      (step length ≤ −1)
+#     5. θ_prop = θ − 2α·r + α²·v   (extrapolation)
+#     6. Step-halve α toward −1 until LL(θ_prop) ≥ LL at step 1
+#        or fall back to θ₂ if no gain.
+#
+#   All parameters (theta + gamma) are unconstrained reals so no projection
+#   is needed after the extrapolation.
+# ═══════════════════════════════════════════════════════════════════════
+
+def fit_em_squarem(init_params, data, spec: ModelSpec,
+                   max_iter=100, tol=1e-6, verbose=True, return_trace=False):
+    """SQUAREM-accelerated EM for latent-class mixed count models.
+
+    Each outer iteration executes exactly two full E+M steps (identical to
+    the inner body of ``fit_em``) and then proposes a squared extrapolation.
+    Convergence is reached in far fewer total E+M calls than standard EM for
+    well-separated classes.
+
+    Parameters
+    ----------
+    init_params, data, spec, max_iter, tol, verbose, return_trace
+        Same semantics as :func:`fit_em`.
+
+    Returns
+    -------
+    best_params : np.ndarray
+        Parameter vector with the highest observed log-likelihood.
+    trace : list of tuples, optional
+        ``(outer_iter, em_calls, alpha, loglik, delta_ll, class_shares)``
+        returned only when ``return_trace=True``.
+    """
+    from jax.nn import log_softmax as _log_softmax
+
+    assert spec.latent_classes > 1, "SQUAREM-EM only needed for latent classes"
+
+    C          = spec.latent_classes
+    K_mem      = spec.K_membership
+    models     = spec.models
+    base_spec_nolc = replace(spec, latent_classes=1)
+    gamma_size = (C - 1) * (K_mem + 1)
+
+    class_K_base = []
+    class_offsets = []
+    class_base_specs = []
+    offset = 0
+    for c in range(C):
+        _spec_c = base_spec_nolc
+        if spec.class_fixed_idx and c < len(spec.class_fixed_idx):
+            cfix = spec.class_fixed_idx[c]
+            if len(cfix) < spec.Kf:
+                _spec_c = replace(_spec_c, Kf=len(cfix))
+        _kc = build_base_index(_spec_c, model=models[c])["total_params"]
+        class_K_base.append(_kc)
+        class_offsets.append(offset)
+        class_base_specs.append(replace(_spec_c, model=models[c]))
+        offset += _kc
+    total_theta = offset
+
+    params = np.array(init_params)
+    N = int(np.array(
+        mixed_model_loglik(params[:class_K_base[0]], data, class_base_specs[0], indivi=True)
+    ).shape[0])
+
+    if K_mem > 0:
+        Xmem   = np.array(data["Xmem"])
+        Z      = np.mean(Xmem, axis=1)
+        Z_full = np.concatenate([np.ones((N, 1)), Z], axis=1)
+    else:
+        Z_full = np.ones((N, 1))
+    Z_full_jnp = jnp.array(Z_full)
+
+    # ── Quick marginal loglik (no M-step) for step-halving checks ──────
+    def _eval_loglik(p):
+        try:
+            return -float(mixed_model_loglik(jnp.array(p), data, spec))
+        except Exception:
+            return -np.inf
+
+    best_params = params.copy()
+    try:
+        best_ll = _eval_loglik(params)
+    except Exception:
+        best_ll = -np.inf
+
+    prev_ll = best_ll
+    trace   = []
+    em_calls = 0
+
+    # ── Single E+M step (mirrors the body of fit_em's inner loop) ───────
+    def _one_em_step(p, m_iters, T=1.0):
+        theta_all = []
+        for c in range(C):
+            oc = class_offsets[c]; kc = class_K_base[c]
+            theta_all.append(p[oc:oc + kc])
+        gamma = p[total_theta:].reshape(C - 1, K_mem + 1)
+
+        logits_i    = Z_full @ gamma.T
+        logits_full = np.concatenate([np.zeros((N, 1)), logits_i], axis=1)
+        log_pi = np.array(_log_softmax(jnp.array(logits_full), axis=1))
+
+        logL = np.zeros((N, C))
+        for c in range(C):
+            ll_ind = mixed_model_loglik(
+                jnp.array(theta_all[c]), data, class_base_specs[c], indivi=True
+            )
+            logL[:, c] = np.array(ll_ind)
+
+        log_num = (logL + log_pi) / T
+        max_log = log_num.max(axis=1, keepdims=True)
+        w = np.exp(log_num - max_log)
+        w /= w.sum(axis=1, keepdims=True)
+        mean_w = w.mean(axis=0)
+
+        # M-step: outcome params
+        theta_new = []
+        for c in range(C):
+            wc = w[:, c].copy()
+            _base_c = class_base_specs[c]
+            _data_c = data
+            cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
+            if cfix is not None and len(cfix) < data["Xf"].shape[2]:
+                _data_c = dict(data)
+                _data_c["Xf"] = data["Xf"][:, :, list(cfix)]
+
+            def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
+                ll_ind = mixed_model_loglik(theta_c, _data, _spec, indivi=True)
+                return -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
+
+            solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
+            result = solver_theta.run(jnp.array(theta_all[c]))
+            theta_new.append(np.array(result.params))
+
+        # M-step: gamma
+        below_thresh = np.maximum(0.0, getattr(spec, 'min_class_proportion', 0.15) - mean_w)
+        prior_weight = float(np.sum(below_thresh) * 5.0)
+        _w_jnp = jnp.array(w)
+        _pw    = prior_weight
+
+        def gamma_objective(gamma_flat):
+            gc = gamma_flat.reshape(C - 1, K_mem + 1)
+            li = Z_full_jnp @ gc.T
+            lf = jnp.concatenate([jnp.zeros((N, 1)), li], axis=1)
+            lp = _log_softmax(lf, axis=1)
+            ce = -jnp.sum(_w_jnp * lp)
+            log_pi_marg = jax.nn.log_softmax(jnp.mean(lf, axis=0, keepdims=True), axis=1)
+            return ce - _pw * jnp.sum(log_pi_marg)
+
+        solver_gamma = LBFGS(fun=gamma_objective, maxiter=m_iters)
+        result_gamma = solver_gamma.run(jnp.array(gamma.flatten()))
+        gamma_new = np.array(result_gamma.params)
+
+        new_p = np.concatenate([np.concatenate(theta_new), gamma_new])
+        return new_p, mean_w
+
+    for outer_iter in range(max_iter):
+        warmup_frac = min(1.0, outer_iter / max(1, max_iter * 0.4))
+        T      = max(1.0, 2.0 - warmup_frac)
+        m_iters = min(50 + 25 * (outer_iter // 3), 300)
+
+        # Two full E+M steps
+        params1, mean_w1 = _one_em_step(params,  m_iters, T=T)
+        em_calls += 1
+        params2, mean_w2 = _one_em_step(params1, m_iters, T=T)
+        em_calls += 1
+
+        # Collapse guard (after warmup)
+        if outer_iter >= 3 and np.any(mean_w2 < 0.01):
+            if verbose:
+                print(f"  [SQUAREM] class collapse at outer_iter {outer_iter} — stopping early")
+            params = params2
+            break
+
+        r = params1 - params
+        v = params2 - 2.0 * params1 + params
+        norm_v = np.linalg.norm(v)
+
+        if norm_v < 1e-14:
+            params   = params2
+            ll_cand  = _eval_loglik(params2)
+            used_alpha = -1.0
+        else:
+            alpha  = min(-np.linalg.norm(r) / norm_v, -1.0)
+            ll1    = _eval_loglik(params1)
+
+            accepted  = False
+            ll_cand   = _eval_loglik(params2)
+            used_alpha = -1.0
+            p_acc      = params2
+
+            for _ in range(10):
+                p_prop = params - 2.0 * alpha * r + alpha ** 2 * v
+                ll_prop = _eval_loglik(p_prop)
+                if np.isfinite(ll_prop) and ll_prop >= ll1:
+                    p_acc      = p_prop
+                    ll_cand    = ll_prop
+                    used_alpha = alpha
+                    accepted   = True
+                    break
+                alpha = (alpha + (-1.0)) / 2.0  # halve toward α = −1
+
+            params = p_acc
+
+        current_ll = _eval_loglik(params)
+        if np.isfinite(current_ll) and current_ll > best_ll:
+            best_ll     = current_ll
+            best_params = params.copy()
+
+        ll_delta = abs(current_ll - prev_ll) if np.isfinite(current_ll) else np.inf
+        prev_ll  = current_ll
+
+        class_shares = tuple(float(mw) for mw in mean_w2)
+        if return_trace:
+            trace.append((outer_iter, em_calls, float(used_alpha), current_ll,
+                          ll_delta, class_shares))
+
+        if verbose:
+            print(f"SQUAREM iter {outer_iter:3d} | em_calls={em_calls:4d} | "
+                  f"α={used_alpha:.3f} | LL={current_ll:.4f} | "
+                  f"delta_LL={ll_delta:.2e} | "
+                  f"shares={' '.join(f'{mw:.2f}' for mw in mean_w2)}")
+
+        if outer_iter >= 3 and ll_delta < tol:
+            if verbose:
+                print(f"  [SQUAREM] converged at outer_iter {outer_iter}  "
+                      f"(delta_LL={ll_delta:.2e} < tol={tol:.0e}, em_calls={em_calls})")
+            break
+
+    if return_trace:
+        return best_params, trace
+    return best_params
+
+
+# Make SQUAREM the default EM for all callers (experiment_package, etc.)
+# The original standard EM remains available as fit_em for direct use.
+_hpc.fit_em = fit_em_squarem
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1411,6 +1658,7 @@ __all__ = [
     "parse_manual_spec",
     "mixed_model_loglik",
     "fit_em",
+    "fit_em_squarem",
     "print_summary",
     "unpack_lc_params",
     "compute_lc_posteriors",

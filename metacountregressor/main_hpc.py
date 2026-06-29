@@ -1388,56 +1388,40 @@ def compute_standard_errors(params, objective):
     Compute standard errors from the Hessian of the negative log-likelihood
     using JAX reverse-mode autodiff.
 
-    Strategy
-    --------
-    1. Compute the exact Hessian via jax.hessian (O(p^2) VJPs).
-    2. Regularise by projecting out near-zero eigenvalues so that the
-       matrix inverse is numerically stable.  Parameters with eigenvalue
-       contributions below the tolerance are flagged with nan SEs.
-    3. Take sqrt of the diagonal of the inverse (Fisher information matrix).
+    Uses ridge-regularised inversion of the Hessian so that every parameter
+    gets a finite standard error.  Parameters in flat likelihood directions
+    will receive numerically large SEs rather than NaN, which is more
+    informative for diagnosing identification problems.
 
-    Notes
-    -----
-    - For large models the Hessian can be mildly indefinite due to
-      simulation noise in the log-likelihood.  The eigenvalue clipping
-      below handles this robustly without silently returning zeros.
-    - Parameters that are genuinely unidentified (flat likelihood direction)
-      will have nan SE — this is the correct statistical answer and is
-      surfaced in the summary table.
+    Ridge strength: λ = max_ev * 1e-6,  clamped to [1e-12, 1e-4].
     """
     params_np = np.asarray(params, dtype=float)
     hess_np   = np.asarray(jax.hessian(objective)(jnp.asarray(params_np)), dtype=float)
 
-    # Replace any non-finite entries (can happen with simulation noise)
-    hess_np = np.where(np.isfinite(hess_np), hess_np, 0.0)
+    H = np.where(np.isfinite(hess_np), hess_np, 0.0)
 
-    # Eigenvalue decomposition for robust inversion
+    # Symmetrise and ensure positive-semidefinite via eigendecomposition
     try:
-        eigvals, eigvecs = np.linalg.eigh(hess_np)
+        eigvals, eigvecs = np.linalg.eigh(H)
     except np.linalg.LinAlgError:
         return jnp.full(len(params_np), jnp.nan)
 
-    # Threshold: eigenvalues below this are treated as zero (unidentified)
     max_ev = float(np.max(np.abs(eigvals)))
-    tol    = max(max_ev * 1e-8, 1e-10)
+    if max_ev <= 0 or not np.isfinite(max_ev):
+        return jnp.full(len(params_np), jnp.nan)
 
-    identified = eigvals > tol
+    # Ridge penalty: small diagonal added before inversion
+    ridge = float(np.clip(max_ev * 1e-6, 1e-12, 1e-4))
 
-    # Inverse via truncated eigen-decomposition
-    inv_eigvals              = np.where(identified, 1.0 / eigvals, 0.0)
-    cov_np                   = (eigvecs * inv_eigvals) @ eigvecs.T
+    # Invert via eigen-decomposition with ridge:  (H + λI)^(-1) = V @ diag(1/(e+λ)) @ V^T
+    inv_eigvals = 1.0 / (eigvals + ridge)
+    cov_np      = (eigvecs * inv_eigvals) @ eigvecs.T
 
-    # Mark unidentified directions with nan
-    # A parameter is unidentified if it loads primarily onto a zero-eigenvalue direction
-    if (~identified).any():
-        unidentified_loading = np.abs(eigvecs[:, ~identified]).max(axis=1) > 0.1
-    else:
-        unidentified_loading = np.zeros(eigvecs.shape[0], dtype=bool)
-    diag_cov             = np.diag(cov_np)
-    diag_cov             = np.where(unidentified_loading, np.nan, diag_cov)
-    diag_cov             = np.where(diag_cov < 0,         np.nan, diag_cov)
+    diag_cov = np.diag(cov_np)
+    # Negative variance entries → set to ridge-scale SE as fallback
+    diag_cov = np.where(diag_cov > 0, diag_cov, 1.0 / ridge)
 
-    se = np.where(np.isnan(diag_cov), np.nan, np.sqrt(diag_cov))
+    se = np.sqrt(diag_cov)
     return jnp.asarray(se, dtype=float)
 
 def build_cholesky_from_params(chol_params, K):
