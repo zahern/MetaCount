@@ -369,6 +369,38 @@ class StructureEvaluatorLC(StructureEvaluator):
                     class_rdm_ind[c].extend(class_rdm_cor[c])
                     class_rdm_cor[c] = []
 
+        # ── Force structural uniqueness across classes ────────────────
+        # A decision can legally decode with every class_mask == 0, which
+        # gives every class the identical variable set. Left alone, the SA
+        # tends to converge there (class_mask mutation is the
+        # slowest-exploring gene under the annealed mutation rate in
+        # _generate_neighbor_patched), so two-class searches were observed
+        # collapsing onto one shared spec for both classes. When that
+        # happens here, deterministically move one shared variable into a
+        # single class so every decoded spec is guaranteed to differentiate
+        # the classes. The RNG is seeded from the decision vector itself so
+        # the same decision always decodes to the same forced spec.
+        if struct_lc > 1:
+            class_var_sets = [
+                frozenset(class_fixed[c])
+                | frozenset(t.split(":")[0] for t in class_rdm_ind[c])
+                | frozenset(t.split(":")[0] for t in class_rdm_cor[c])
+                for c in range(struct_lc)
+            ]
+            if class_var_sets[0] and all(s == class_var_sets[0] for s in class_var_sets[1:]):
+                eligible = sorted(class_var_sets[0])
+                seed = abs(hash(tuple(int(x) for x in decision))) % (2 ** 32)
+                rng = np.random.default_rng(seed)
+                var = eligible[int(rng.integers(len(eligible)))]
+                drop_class = int(rng.integers(struct_lc))
+                class_fixed[drop_class] = [v for v in class_fixed[drop_class] if v != var]
+                class_rdm_ind[drop_class] = [
+                    t for t in class_rdm_ind[drop_class] if t.split(":")[0] != var
+                ]
+                class_rdm_cor[drop_class] = [
+                    t for t in class_rdm_cor[drop_class] if t.split(":")[0] != var
+                ]
+
         spec = {
             "fixed_terms":      fixed,
             "rdm_terms":        rdm_ind,

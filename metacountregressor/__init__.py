@@ -39,6 +39,21 @@ __all__ = [
     "extract_summary",
     "extract_search_best",
     "compare_models",
+    # Bivariate copula NB (Ahmad, Gayah & Donnell 2023) – joint
+    # negative-binomial models with Frank / Normal / Kimeldorf-Sampson
+    # copulas for modelling crash counts and near-miss counts jointly.
+    "BivariateCopulaNB",
+    "BivariateCopulaFit",
+    "bivariate_copula_loglik",
+    "famoye_bivariate_nb_loglik",
+    "marshall_olkin_nb_loglik",
+    "frank_logpdf",
+    "normal_logpdf",
+    "kimeldorf_sampson_logpdf",
+    "fit_copula_bivariate_nb",
+    "fit_famoye_nb",
+    "fit_marshall_olkin_nb",
+    "compare_bivariate_copulas",
     # Plotting & figures
     "generate_all_lc_figures",
     "plot_search_convergence",
@@ -90,6 +105,19 @@ _EXPORTS = {
     "plot_cmf_search_convergence": ("cmf_plotting", "plot_cmf_search_convergence"),
     "plot_cmf_obs_vs_pred": ("cmf_plotting", "plot_cmf_obs_vs_pred"),
     "plot_cmf_model_comparison": ("cmf_plotting", "plot_cmf_model_comparison"),
+    # Bivariate copula NB
+    "BivariateCopulaNB": ("bivariate_copula", "BivariateCopulaNB"),
+    "BivariateCopulaFit": ("bivariate_copula", "BivariateCopulaFit"),
+    "bivariate_copula_loglik": ("bivariate_copula", "bivariate_copula_loglik"),
+    "famoye_bivariate_nb_loglik": ("bivariate_copula", "famoye_bivariate_nb_loglik"),
+    "marshall_olkin_nb_loglik": ("bivariate_copula", "marshall_olkin_nb_loglik"),
+    "frank_logpdf": ("bivariate_copula", "frank_logpdf"),
+    "normal_logpdf": ("bivariate_copula", "normal_logpdf"),
+    "kimeldorf_sampson_logpdf": ("bivariate_copula", "kimeldorf_sampson_logpdf"),
+    "fit_copula_bivariate_nb": ("bivariate_copula", "fit_copula_bivariate_nb"),
+    "fit_famoye_nb": ("bivariate_copula", "fit_famoye_nb"),
+    "fit_marshall_olkin_nb": ("bivariate_copula", "fit_marshall_olkin_nb"),
+    "compare_bivariate_copulas": ("bivariate_copula", "compare_bivariate_copulas"),
 }
 
 _LEGACY_EXPORTS = {

@@ -29,7 +29,14 @@
       "Bash(python -W ignore scripts/generate_washington_hierarchical_cmf_assets.py --input data/Ex-16-3.csv --output-dir results/ex16_3_fix_test --search-iter 8 --families both --max-upper-terms 6 --max-lower-terms 4 --allow-nonmonotonic-fallback)",
       "Bash(awk '{print $5,$6,$7,$9}')",
       "Bash(python -W ignore scripts/generate_washington_hierarchical_cmf_assets.py --input data/Ex-16-3.csv --output-dir results/ex16_3_final_verify --search-iter 8 --families both --max-upper-terms 6 --max-lower-terms 4 --allow-nonmonotonic-fallback)",
-      "Bash(python -W ignore scripts/generate_washington_hierarchical_cmf_assets.py --input data/Ex-16-3.csv --output-dir results/ex16_3_sa_test --search-iter 20 --families both --allow-nonmonotonic-fallback)"
+      "Bash(python -W ignore scripts/generate_washington_hierarchical_cmf_assets.py --input data/Ex-16-3.csv --output-dir results/ex16_3_sa_test --search-iter 20 --families both --allow-nonmonotonic-fallback)",
+      "Read(//z/latent_class_metacount/**)",
+      "Read(//z/test_runs_tours/demand_/paper/Unofficial_Transportation_Research_Board__TRB__LaTeX_template/**)",
+      "PowerShell(& \"C:\\\\Users\\\\ahernz\\\\AppData\\\\Local\\\\Temp\\\\opencode\\\\nm_venv\\\\Scripts\\\\python.exe\" -c \"import sys; print\\(sys.path\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\ahernz\\\\AppData\\\\Local\\\\Temp\\\\opencode\\\\nm_venv\\\\Scripts\\\\python.exe\" -c \"import metacountregressor; print\\(metacountregressor.__file__\\); print\\(metacountregressor.__version__\\)\")"
+    ],
+    "additionalDirectories": [
+      "Z:\\test_runs_tours\\demand_\\paper\\Unofficial_Transportation_Research_Board__TRB__LaTeX_template"
     ]
   }
 }
