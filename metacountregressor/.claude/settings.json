@@ -33,7 +33,9 @@
       "Read(//z/latent_class_metacount/**)",
       "Read(//z/test_runs_tours/demand_/paper/Unofficial_Transportation_Research_Board__TRB__LaTeX_template/**)",
       "PowerShell(& \"C:\\\\Users\\\\ahernz\\\\AppData\\\\Local\\\\Temp\\\\opencode\\\\nm_venv\\\\Scripts\\\\python.exe\" -c \"import sys; print\\(sys.path\\)\")",
-      "PowerShell(& \"C:\\\\Users\\\\ahernz\\\\AppData\\\\Local\\\\Temp\\\\opencode\\\\nm_venv\\\\Scripts\\\\python.exe\" -c \"import metacountregressor; print\\(metacountregressor.__file__\\); print\\(metacountregressor.__version__\\)\")"
+      "PowerShell(& \"C:\\\\Users\\\\ahernz\\\\AppData\\\\Local\\\\Temp\\\\opencode\\\\nm_venv\\\\Scripts\\\\python.exe\" -c \"import metacountregressor; print\\(metacountregressor.__file__\\); print\\(metacountregressor.__version__\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\ahernz\\\\AppData\\\\Local\\\\Temp\\\\opencode\\\\nm_venv\\\\Scripts\\\\python.exe\" -c \"import matplotlib; print\\(matplotlib.__version__\\)\")",
+      "Read(//z/test_runs_tours/demand_/paper/Unofficial_Transportation_Research_Board__TRB__LaTeX_template/plots/**)"
     ],
     "additionalDirectories": [
       "Z:\\test_runs_tours\\demand_\\paper\\Unofficial_Transportation_Research_Board__TRB__LaTeX_template"
