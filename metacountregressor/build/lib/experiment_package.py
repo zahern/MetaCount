@@ -108,6 +108,7 @@ try:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
+        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -146,6 +147,7 @@ except ImportError:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
+        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -360,6 +362,30 @@ class StructureEvaluatorLC(StructureEvaluator):
                     if inc:
                         class_fixed[c].append(var)
 
+        # ── Force at least one membership variable for LC models ──────
+        if struct_lc > 1 and len(membership) == 0:
+            eligible_mem = [
+                v for v in self.vars
+                if v in fixed
+                and self.allowed_roles.get(v, [0]) != [0]
+                and v not in self._unidentifiable
+            ]
+            if not eligible_mem:
+                eligible_mem = [
+                    v for v in self.vars
+                    if self.allowed_roles.get(v, [0]) != [0]
+                    and v not in self._unidentifiable
+                ]
+            if eligible_mem:
+                seed = abs(hash(tuple(int(x) for x in decision))) % (2 ** 32)
+                rng = np.random.default_rng(seed)
+                mem_var = eligible_mem[int(rng.integers(len(eligible_mem)))]
+                membership.append(mem_var)
+                if mem_var not in fixed:
+                    fixed.append(mem_var)
+                    for c in range(struct_lc):
+                        class_fixed[c].append(mem_var)
+
         # Single correlated var → demote to independent
         if len(rdm_cor) == 1:
             rdm_ind.extend(rdm_cor)
@@ -368,6 +394,35 @@ class StructureEvaluatorLC(StructureEvaluator):
                 if len(class_rdm_cor[c]) == 1:
                     class_rdm_ind[c].extend(class_rdm_cor[c])
                     class_rdm_cor[c] = []
+
+        # ── Force structural uniqueness across classes ────────────────
+        if struct_lc > 1:
+            class_var_sets = [
+                frozenset(class_fixed[c])
+                | frozenset(t.split(":")[0] for t in class_rdm_ind[c])
+                | frozenset(t.split(":")[0] for t in class_rdm_cor[c])
+                for c in range(struct_lc)
+            ]
+            all_vars = set.union(*class_var_sets) if class_var_sets else set()
+            seed = abs(hash(tuple(int(x) for x in decision))) % (2 ** 32)
+            rng = np.random.default_rng(seed)
+            if class_var_sets[0] and all(s == class_var_sets[0] for s in class_var_sets[1:]):
+                eligible = sorted(class_var_sets[0])
+                n_diff = min(2, len(eligible))
+                for d in range(n_diff):
+                    avail = sorted(set(eligible) & class_var_sets[0])
+                    if not avail:
+                        break
+                    var = avail[int(rng.integers(len(avail)))]
+                    drop_class = (d + int(rng.integers(struct_lc))) % struct_lc
+                    class_fixed[drop_class] = [v for v in class_fixed[drop_class] if v != var]
+                    class_rdm_ind[drop_class] = [
+                        t for t in class_rdm_ind[drop_class] if t.split(":")[0] != var
+                    ]
+                    class_rdm_cor[drop_class] = [
+                        t for t in class_rdm_cor[drop_class] if t.split(":")[0] != var
+                    ]
+                    class_var_sets[drop_class] = class_var_sets[drop_class] - {var}
 
         spec = {
             "fixed_terms":      fixed,
@@ -590,14 +645,14 @@ class StructureEvaluatorLC(StructureEvaluator):
                 except Exception:
                     params_em = init_params
 
-                # Step 4 — MLE polish (JAX-native optimizer)
+                # Step 4 — MLE polish (JAX-native optimizer, regularised if l2_penalty > 0)
                 polish = LBFGS(
-                    fun=lambda p: mixed_model_loglik(p, data_train, spec_c),
+                    fun=lambda p: mixed_model_loglik_reg(p, data_train, spec_c),
                     maxiter=500,
                 )
                 result_c = polish.run(jnp.array(params_em))
                 params_c = np.array(result_c.params)
-                ll  = -float(result_c.state.value)
+                ll  = -float(mixed_model_loglik(params_c, data_train, spec_c))  # unregularised LL
                 n   = data_train["y"].shape[0]
                 k   = len(params_c)
                 bic = k * np.log(n) - 2.0 * ll
@@ -753,7 +808,20 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         mut_rate = float(np.clip(mut_rate, 0.0, 1.0))
 
         n_changes = np.random.randint(self.min_changes, self.max_changes + 1)
-        indices   = np.random.choice(self.dim, size=n_changes, replace=False)
+        indices   = list(np.random.choice(self.dim, size=n_changes, replace=False))
+
+        if self.evaluator.max_latent_classes > 1:
+            mask_start = 2 * D + 2
+            mask_end   = 3 * D + 1
+            mask_indices = list(range(mask_start, min(mask_end + 1, self.dim)))
+            if mask_indices and not any(i in indices for i in mask_indices):
+                replace_ix = np.random.choice(range(len(indices)))
+                indices[replace_ix] = int(np.random.choice(mask_indices))
+            if len(mask_indices) > 0 and np.random.rand() < 0.8:
+                extra = int(np.random.choice(mask_indices))
+                if extra not in indices:
+                    indices.append(extra)
+        indices = np.asarray(indices, dtype=int)
 
         changed = False
         D       = self.dim_core          # number of role/dist pairs
@@ -1458,7 +1526,7 @@ class ExperimentBuilder:
                         params_em = init_params
 
                     polish_seed, de_report_lc = self._continuous_de_warm_start(
-                        objective=lambda p: mixed_model_loglik(p, data, spec_c),
+                        objective=lambda p: mixed_model_loglik_reg(p, data, spec_c),
                         init_params=np.asarray(params_em),
                         enabled=continuous_de_warm_start,
                         maxiter=de_maxiter,
@@ -1477,7 +1545,7 @@ class ExperimentBuilder:
                     de_report["latent_class_attempts"].append(de_report_lc)
 
                     polish = LBFGS(
-                        fun=lambda p: mixed_model_loglik(p, data, spec_c),
+                        fun=lambda p: mixed_model_loglik_reg(p, data, spec_c),
                         maxiter=polish_maxiter,
                     )
                     candidate = polish.run(jnp.array(polish_seed))

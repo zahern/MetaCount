@@ -221,6 +221,7 @@ class ModelSpec:
     class_rdm_ind_idx:   tuple = ()   # per-class column indices into Xr_ind
     class_rdm_cor_idx:   tuple = ()   # per-class column indices into Xr_cor
     class_variable_masks: tuple = ()  # per-class variable sets (frozensets) [NEW: alternative to indices]
+    l2_penalty:          float = 0.0  # L2 regularisation strength on non-intercept params (0 = off)
 
     @property
     def K_random_total(self):
@@ -576,6 +577,46 @@ _hpc.build_model_from_manual_spec = build_model_from_manual_spec
 #     logits — backward-compatible with the old constant-pi behaviour.
 # ═══════════════════════════════════════════════════════════════════════
 
+
+def _l2_penalty(params, spec: ModelSpec):
+    """
+    L2 ridge penalty on non-intercept parameters.
+    Only penalises outcome-model parameters (not membership gamma).
+    Returns 0.0 when spec.l2_penalty <= 0.
+    """
+    if spec.l2_penalty <= 0.0:
+        return 0.0
+    lam = float(spec.l2_penalty)
+    if spec.latent_classes > 1:
+        C = spec.latent_classes
+        pindex = build_param_index(spec)
+        class_offsets = list(pindex["class_offsets"])
+        class_K_base = list(pindex["class_K_base"])
+        total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
+        # Penalise all per-class outcome params except the intercept (param[0] of each class)
+        s = 0.0
+        for c in range(C):
+            oc = class_offsets[c]
+            kc = class_K_base[c]
+            if kc > 1:
+                s += jnp.sum(params[oc + 1 : oc + kc] ** 2)
+        return lam * s
+    else:
+        if len(params) > 1:
+            return lam * jnp.sum(params[1:] ** 2)
+        return 0.0
+
+
+def mixed_model_loglik_reg(params, data, spec: ModelSpec, indivi: bool = False):
+    """Regularised log-likelihood (L2 penalty added to unregularised objective)."""
+    base = mixed_model_loglik(params, data, spec, indivi=indivi)
+    penalty = _l2_penalty(params, spec)
+    if indivi:
+        N = data["y"].shape[0]
+        return base + penalty / N
+    return base + penalty
+
+
 @partial(jax.jit, static_argnames=("spec", "indivi"))
 def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
 
@@ -925,7 +966,10 @@ def fit_em(init_params, data, spec: ModelSpec,
                 ll_ind = mixed_model_loglik(
                     theta_c, _data, _spec, indivi=True
                 )
-                return -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
+                loss = -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
+                if spec.l2_penalty > 0.0 and len(theta_c) > 1:
+                    loss = loss + spec.l2_penalty * jnp.sum(theta_c[1:] ** 2)
+                return loss
 
             solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
             result = solver_theta.run(jnp.array(theta_all[c]))
@@ -1136,7 +1180,10 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
 
             def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
                 ll_ind = mixed_model_loglik(theta_c, _data, _spec, indivi=True)
-                return -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
+                loss = -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
+                if spec.l2_penalty > 0.0 and len(theta_c) > 1:
+                    loss = loss + spec.l2_penalty * jnp.sum(theta_c[1:] ** 2)
+                return loss
 
             solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
             result = solver_theta.run(jnp.array(theta_all[c]))
@@ -1433,24 +1480,44 @@ def print_summary(result, objective, data, spec: ModelSpec,
 
         for c in range(C):
             _model_c = models[c]
-            base_spec_c = replace(base_spec_nolc, model=_model_c, latent_classes=1)
-            _base_idx_c = build_base_index(base_spec_c, model=_model_c)
+            _theta_c = theta_all[c]  # per-class outcome params only
+
+            # Build per-class spec with correct Kf/fixed_names when
+            # class_fixed_idx is used (each class may use different variables).
+            _spec_c = base_spec_nolc
+            _data_c = data
+            cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
+            if cfix is not None and len(cfix) < data["Xf"].shape[2]:
+                _fn_all = list(spec.fixed_names) if spec.fixed_names else []
+                _fn_c = tuple(_fn_all[i] for i in cfix if i < len(_fn_all))
+                _spec_c = replace(_spec_c, Kf=len(cfix), fixed_names=_fn_c)
+                _data_c = dict(data)
+                _data_c["Xf"] = data["Xf"][:, :, list(cfix)]
+            _spec_c = replace(_spec_c, model=_model_c, latent_classes=1)
+            _base_idx_c = build_base_index(_spec_c, model=_model_c)
 
             print(f"\n{'#' * 20}  CLASS {c+1}  (pi = {pi[c]:.4f})  "
                   f"[{_model_c.upper()}]  {'#' * 20}\n")
             dummy       = DummyRes()
-            dummy.params = theta_all[c]
-            dummy.x      = theta_all[c]
+            dummy.params = _theta_c
+            dummy.x      = _theta_c
 
             obj_c = partial(
-                mixed_model_loglik, data=data,
-                spec=base_spec_c
+                mixed_model_loglik, data=_data_c,
+                spec=_spec_c
             )
-            print_summary(
-                result=dummy, objective=obj_c, data=data,
-                spec=base_spec_c,
-                param_index=_base_idx_c, se=se_all[c]
-            )
+            try:
+                print_summary(
+                    result=dummy, objective=obj_c, data=_data_c,
+                    spec=_spec_c,
+                    param_index=_base_idx_c, se=se_all[c]
+                )
+            except Exception as exc:
+                print(f"\n  [fitness error] {exc}")
+                # Fallback: print raw params without SEs
+                for i, val in enumerate(_theta_c):
+                    print(f"  param[{i}] = {val:+.6f}")
+                print()
 
         # ── Membership gamma ─────────────────────────────────────
         print("\n" + "=" * 65)
@@ -1657,6 +1724,8 @@ __all__ = [
     "build_model_from_manual_spec",
     "parse_manual_spec",
     "mixed_model_loglik",
+    "mixed_model_loglik_reg",
+    "_l2_penalty",
     "fit_em",
     "fit_em_squarem",
     "print_summary",
