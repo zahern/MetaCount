@@ -403,7 +403,7 @@ class StructureEvaluatorLC(StructureEvaluator):
                 | frozenset(t.split(":")[0] for t in class_rdm_cor[c])
                 for c in range(struct_lc)
             ]
-            all_vars = set.union(*class_var_sets) if class_var_sets else set()
+            all_vars = set().union(*class_var_sets) if class_var_sets else set()
             seed = abs(hash(tuple(int(x) for x in decision))) % (2 ** 32)
             rng = np.random.default_rng(seed)
             if class_var_sets[0] and all(s == class_var_sets[0] for s in class_var_sets[1:]):
