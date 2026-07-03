@@ -1394,6 +1394,10 @@ def compute_standard_errors(params, objective):
     informative for diagnosing identification problems.
 
     Ridge strength: λ = max_ev * 1e-6,  clamped to [1e-12, 1e-4].
+
+    See also: compute_regularized_estimates() which applies the PARTE
+    post-MLE shrinkage (Alghamdi et al. 2026) before computing SEs,
+    giving lower-MSE coefficient estimates when predictors are correlated.
     """
     params_np = np.asarray(params, dtype=float)
     hess_np   = np.asarray(jax.hessian(objective)(jnp.asarray(params_np)), dtype=float)
@@ -1423,6 +1427,113 @@ def compute_standard_errors(params, objective):
 
     se = np.sqrt(diag_cov)
     return jnp.asarray(se, dtype=float)
+
+
+def compute_regularized_estimates(
+    params,
+    objective,
+    param_index: dict,
+    variant: str = "k3d3",
+    check_multicollinearity: bool = True,
+):
+    """
+    Apply PARTE post-MLE shrinkage to the fixed-effect coefficients,
+    yielding lower-MSE estimates under multicollinearity.
+
+    Works for ALL model types (Poisson, NB, ZINB, Gaussian, Tobit,
+    latent-class, random-effects) — only the fixed-effect block (β_f)
+    is modified; all other parameters are left at their MLE values.
+
+    Algorithm (Alghamdi et al. 2026, eq 23):
+        β̂_PARTE = (F + k(1+d)I)⁻¹ (F + kdI) β̂_MLE
+    where F = X'WX is the Fisher information matrix at the MLE, and
+    (k, d) are selected via data-adaptive rules (eqs 37-41).
+
+    Parameters
+    ----------
+    params    : full MLE parameter vector (JAX or numpy array)
+    objective : callable  params → negative log-likelihood  (no grad needed)
+    param_index : dict from build_param_index() or build_base_index()
+    variant   : "k3d3" (default, best by paper), "k1d1", or "k2d2"
+    check_multicollinearity : if True, print a diagnostic warning when the
+                              condition number of F exceeds 30
+
+    Returns
+    -------
+    params_parte : full param vector with β_f replaced by PARTE estimate
+    se_parte     : standard errors — PARTE for β_f, ridge-MLE for the rest
+    parte_result : regularization.ParteResult for the fixed-effect block,
+                   or None when fewer than 2 fixed effects exist
+    """
+    from regularization import (
+        compute_regularized_estimates_jax,
+        compute_regularized_estimates as _compute_np,
+        multicollinearity_diagnostics,
+        condition_number_jax,
+        ParteResult,
+        apply_parte_to_fixed_effects,
+    )
+
+    params_jax = jnp.asarray(params, dtype=float)
+    # Hessian of the negative log-likelihood at the MLE — the Fisher
+    # information matrix.  jax.hessian gives us this as a jnp array,
+    # so we can feed it directly into the JAX-native PARTE path without
+    # any numpy round-trip.
+    hess_jax = jax.hessian(objective)(params_jax)
+
+    # Identify fixed-effect block indices (static at JIT compile time)
+    fixed_key = "fixed" if "fixed" in param_index else "beta_f"
+    if fixed_key not in param_index or (param_index[fixed_key][1] - param_index[fixed_key][0]) < 2:
+        # Intercept-only or no fixed effects — fall back to plain ridge SEs
+        se = compute_standard_errors(params, objective)
+        return params_jax, se, None
+
+    i0, i1 = int(param_index[fixed_key][0]), int(param_index[fixed_key][1])
+
+    if check_multicollinearity:
+        # Condition number is also JAX-native (one extra eigvalsh call)
+        kappa = float(condition_number_jax(hess_jax, i0, i1))
+        if kappa > 1000.0:
+            print(
+                f"[PARTE] WARNING: severe multicollinearity "
+                f"(condition number = {kappa:.1f}). "
+                "PARTE shrinkage strongly recommended."
+            )
+        elif kappa > 30.0:
+            print(
+                f"[PARTE] NOTE: moderate multicollinearity "
+                f"(condition number = {kappa:.1f}). "
+                "PARTE shrinkage applied."
+            )
+
+    # ── JAX-native path (JIT-compiled, GPU-ready) ──────────────────────────
+    params_parte_jax, se_full_jax, beta_parte_jax, k_jax, d_jax = \
+        compute_regularized_estimates_jax(
+            params_jax, hess_jax, i0, i1, variant
+        )
+
+    # Build a lightweight ParteResult for the caller without a numpy round-trip
+    # on the main arrays (only the scalars and diagnostics need np.array()).
+    beta_f_np = np.asarray(params_jax[i0:i1])
+    F_np = np.asarray(hess_jax[i0:i1, i0:i1])
+    q_raw, theta = np.linalg.eigh(
+        np.where(np.isfinite(F_np), F_np, 0.0)
+    )
+    parte_result = ParteResult(
+        beta_mle=beta_f_np,
+        beta_parte=np.asarray(beta_parte_jax),
+        k=float(k_jax),
+        d=float(d_jax),
+        se_mle=np.asarray(se_full_jax[i0:i1]),   # ridge-MLE SE for the block
+        se_parte=np.asarray(se_full_jax[i0:i1]),  # these are PARTE SEs
+        condition_number=float(np.maximum(q_raw, 1e-12)[-1] /
+                               float(max(np.maximum(q_raw, 1e-12)[0], 1e-12))),
+        eigenvalues=q_raw,
+        alpha=theta.T @ beta_f_np,
+        variant=variant,
+    )
+
+    return params_parte_jax, se_full_jax, parte_result
 
 def build_cholesky_from_params(chol_params, K):
     L = np.zeros((K, K))

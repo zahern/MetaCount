@@ -108,7 +108,6 @@ try:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
-        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -147,7 +146,6 @@ except ImportError:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
-        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -660,7 +658,7 @@ class StructureEvaluatorLC(StructureEvaluator):
 
                 # Step 4 — MLE polish (JAX-native optimizer, regularised if l2_penalty > 0)
                 polish = LBFGS(
-                    fun=lambda p: mixed_model_loglik_reg(p, data_train, spec_c),
+                    fun=lambda p: mixed_model_loglik(p, data_train, spec_c),
                     maxiter=500,
                 )
                 result_c = polish.run(jnp.array(params_em))
@@ -1547,7 +1545,7 @@ class ExperimentBuilder:
                         params_em = init_params
 
                     polish_seed, de_report_lc = self._continuous_de_warm_start(
-                        objective=lambda p: mixed_model_loglik_reg(p, data, spec_c),
+                        objective=lambda p: mixed_model_loglik(p, data, spec_c),
                         init_params=np.asarray(params_em),
                         enabled=continuous_de_warm_start,
                         maxiter=de_maxiter,
@@ -1566,7 +1564,7 @@ class ExperimentBuilder:
                     de_report["latent_class_attempts"].append(de_report_lc)
 
                     polish = LBFGS(
-                        fun=lambda p: mixed_model_loglik_reg(p, data, spec_c),
+                        fun=lambda p: mixed_model_loglik(p, data, spec_c),
                         maxiter=polish_maxiter,
                     )
                     candidate = polish.run(jnp.array(polish_seed))

@@ -221,7 +221,10 @@ class ModelSpec:
     class_rdm_ind_idx:   tuple = ()   # per-class column indices into Xr_ind
     class_rdm_cor_idx:   tuple = ()   # per-class column indices into Xr_cor
     class_variable_masks: tuple = ()  # per-class variable sets (frozensets) [NEW: alternative to indices]
-    l2_penalty:          float = 0.0  # L2 regularisation strength on non-intercept params (0 = off)
+    # Note: L2 (ridge) penalty on parameters during fitting has been removed.
+    # Use compute_regularized_estimates() (from main_hpc) for post-MLE PARTE
+    # shrinkage (Alghamdi et al. 2026), which is provably superior to naive
+    # L2 penalty in count regression under multicollinearity.
 
     @property
     def K_random_total(self):
@@ -578,43 +581,11 @@ _hpc.build_model_from_manual_spec = build_model_from_manual_spec
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _l2_penalty(params, spec: ModelSpec):
-    """
-    L2 ridge penalty on non-intercept parameters.
-    Only penalises outcome-model parameters (not membership gamma).
-    Returns 0.0 when spec.l2_penalty <= 0.
-    """
-    if spec.l2_penalty <= 0.0:
-        return 0.0
-    lam = float(spec.l2_penalty)
-    if spec.latent_classes > 1:
-        C = spec.latent_classes
-        pindex = build_param_index(spec)
-        class_offsets = list(pindex["class_offsets"])
-        class_K_base = list(pindex["class_K_base"])
-        total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
-        # Penalise all per-class outcome params except the intercept (param[0] of each class)
-        s = 0.0
-        for c in range(C):
-            oc = class_offsets[c]
-            kc = class_K_base[c]
-            if kc > 1:
-                s += jnp.sum(params[oc + 1 : oc + kc] ** 2)
-        return lam * s
-    else:
-        if len(params) > 1:
-            return lam * jnp.sum(params[1:] ** 2)
-        return 0.0
-
-
-def mixed_model_loglik_reg(params, data, spec: ModelSpec, indivi: bool = False):
-    """Regularised log-likelihood (L2 penalty added to unregularised objective)."""
-    base = mixed_model_loglik(params, data, spec, indivi=indivi)
-    penalty = _l2_penalty(params, spec)
-    if indivi:
-        N = data["y"].shape[0]
-        return base + penalty / N
-    return base + penalty
+    # _l2_penalty and mixed_model_loglik_reg (naive L2/ridge during fitting)
+    # have been removed in favour of post-MLE PARTE shrinkage.
+    # Call compute_regularized_estimates(params, objective, param_index)
+    # from main_hpc after a standard MLE fit to obtain shrinkage-corrected
+    # coefficients and standard errors under multicollinearity.
 
 
 @partial(jax.jit, static_argnames=("spec", "indivi"))
@@ -967,8 +938,7 @@ def fit_em(init_params, data, spec: ModelSpec,
                     theta_c, _data, _spec, indivi=True
                 )
                 loss = -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
-                if spec.l2_penalty > 0.0 and len(theta_c) > 1:
-                    loss = loss + spec.l2_penalty * jnp.sum(theta_c[1:] ** 2)
+                # L2 in-loop penalty removed; use compute_regularized_estimates post-MLE
                 return loss
 
             solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
@@ -1181,8 +1151,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
             def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
                 ll_ind = mixed_model_loglik(theta_c, _data, _spec, indivi=True)
                 loss = -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
-                if spec.l2_penalty > 0.0 and len(theta_c) > 1:
-                    loss = loss + spec.l2_penalty * jnp.sum(theta_c[1:] ** 2)
+                # L2 in-loop penalty removed; use compute_regularized_estimates post-MLE
                 return loss
 
             solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
@@ -1724,8 +1693,6 @@ __all__ = [
     "build_model_from_manual_spec",
     "parse_manual_spec",
     "mixed_model_loglik",
-    "mixed_model_loglik_reg",
-    "_l2_penalty",
     "fit_em",
     "fit_em_squarem",
     "print_summary",
