@@ -447,30 +447,49 @@ class ModelSolution:
     # Evaluate on a dataset
     # -------------------------------------
 
-    def evaluate(self, data, name="train"):
+    def evaluate(self, data, name="train", param_index: dict = None):
 
         objective = partial(mixed_model_loglik, data=data, spec=self.spec)
-        ll = -objective(self.params)
+        mle_ll = float(-objective(self.params))
+
+        # Apply PARTE shrinkage and track the corrected LL separately.
+        # The corrected LL is used for AIC / BIC so that information
+        # criteria reflect the parameters actually used for inference.
+        corrected_ll = mle_ll
+        if param_index is not None:
+            try:
+                params_parte, _, _ = compute_regularized_estimates(
+                    self.params, objective, param_index,
+                    variant="k3d3", check_multicollinearity=False,
+                )
+                corrected_ll = float(-objective(params_parte))
+                self.params_parte = params_parte
+            except Exception:
+                pass
 
         metrics = evaluate_metrics(self.params, data, self.spec, name.upper())
 
         if name == "train":
-            self.train_ll = float(ll)
-            self.train_metrics = metrics
+            self.train_ll           = mle_ll
+            self.train_ll_corrected = corrected_ll
+            self.train_metrics      = metrics
 
             k = len(self.params)
             n = data["y"].shape[0]
-
-            self.aic = float(2*k - 2*ll)
-            self.bic = float(k * jnp.log(n) - 2*ll)
+            self.aic = float(2*k - 2*corrected_ll)
+            self.bic = float(k * jnp.log(n) - 2*corrected_ll)
+            self.aic_mle = float(2*k - 2*mle_ll)
+            self.bic_mle = float(k * jnp.log(n) - 2*mle_ll)
 
         elif name == "test":
-            self.test_ll = float(ll)
-            self.test_metrics = metrics
+            self.test_ll           = mle_ll
+            self.test_ll_corrected = corrected_ll
+            self.test_metrics      = metrics
 
         elif name == "validation":
-            self.validation_ll = float(ll)
-            self.validation_metrics = metrics
+            self.validation_ll           = mle_ll
+            self.validation_ll_corrected = corrected_ll
+            self.validation_metrics      = metrics
 
     # -------------------------------------
     # Print summary
@@ -480,20 +499,32 @@ class ModelSolution:
 
         print("\n================ MODEL PERFORMANCE ================")
 
+        def _ll_line(mle, corrected):
+            line = f"  LL (MLE):              {mle:.4f}"
+            if corrected != mle:
+                line += f"\n  LL (PARTE-corrected):  {corrected:.4f}  [d={corrected-mle:+.4f} vs MLE]"
+            return line
+
         print("\n--- TRAIN ---")
-        print(f"LogLik: {self.train_ll:.4f}")
+        print(_ll_line(self.train_ll, getattr(self, "train_ll_corrected", self.train_ll)))
         print(self.train_metrics)
 
-        print("\n--- TEST ---")
-        print(f"LogLik: {self.test_ll:.4f}")
-        print(self.test_metrics)
+        if getattr(self, "test_ll", None) is not None:
+            print("\n--- TEST ---")
+            print(_ll_line(self.test_ll, getattr(self, "test_ll_corrected", self.test_ll)))
+            print(self.test_metrics)
 
-        print("\n--- VALIDATION ---")
-        print(f"LogLik: {self.validation_ll:.4f}")
-        print(self.validation_metrics)
+        if getattr(self, "validation_ll", None) is not None:
+            print("\n--- VALIDATION ---")
+            print(_ll_line(self.validation_ll,
+                           getattr(self, "validation_ll_corrected", self.validation_ll)))
+            print(self.validation_metrics)
 
-        print("\nAIC:", self.aic)
-        print("BIC:", self.bic)
+        print(f"\nAIC (PARTE LL): {self.aic}")
+        print(f"BIC (PARTE LL): {self.bic}")
+        if hasattr(self, "aic_mle"):
+            print(f"AIC (MLE LL):   {self.aic_mle}")
+            print(f"BIC (MLE LL):   {self.bic_mle}")
 
         print("===================================================")
 
@@ -1859,18 +1890,50 @@ def print_summary(result, objective, data, spec, param_index):
     
 
     params = result.params
-    se = compute_standard_errors(params, objective)
-
-    z_vals = params / se
-    p_vals = 2 * (1 - stats.norm.cdf(np.abs(z_vals)))
-
-    # Log-likelihood
-    final_ll = -objective(params)
     k = len(params)
     n = data["y"].shape[0]
 
-    aic = 2*k - 2*final_ll
-    bic = k * np.log(n) - 2*final_ll
+    # ── MLE log-likelihood (upper bound — always reported) ────────────────
+    mle_ll = float(-objective(params))
+
+    # ── PARTE regularisation ──────────────────────────────────────────────
+    # Apply PARTE shrinkage when a valid param_index is supplied.  The
+    # corrected LL (evaluated at PARTE parameters) is always lower than the
+    # MLE LL because the MLE maximises the likelihood, but it reflects the
+    # actual goodness-of-fit of the parameter vector used for inference and
+    # prediction.  AIC / BIC are computed from the corrected LL.
+    parte_applied = False
+    params_eval = params                    # params used for display & IC
+    se_eval      = None
+
+    if objective is not None and param_index is not None:
+        try:
+            params_parte_j, se_parte_j, parte_result = compute_regularized_estimates(
+                params, objective, param_index,
+                variant="k3d3", check_multicollinearity=True,
+            )
+            corrected_ll = float(-objective(params_parte_j))
+            params_eval  = np.asarray(params_parte_j)
+            se_eval      = np.asarray(se_parte_j)
+            parte_applied = True
+        except Exception as _e:
+            corrected_ll = mle_ll           # fall back silently
+
+    if not parte_applied:
+        corrected_ll = mle_ll
+        se_eval = np.asarray(compute_standard_errors(params, objective))
+        params_eval = np.asarray(params)
+
+    # ICs use the corrected LL so that model comparison reflects the
+    # parameter vector that is actually used.
+    eval_ll = corrected_ll
+    aic = 2*k - 2*eval_ll
+    bic = k * np.log(n) - 2*eval_ll
+
+    # z / p for the displayed (PARTE) estimates
+    se_eval_safe = np.where(se_eval > 1e-12, se_eval, np.nan)
+    z_vals = params_eval / se_eval_safe
+    p_vals = 2 * (1 - stats.norm.cdf(np.abs(z_vals)))
 
     names = []
 
@@ -1930,13 +1993,19 @@ def print_summary(result, objective, data, spec, param_index):
     elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
         names.append("sigma")
 
-    summary_df = pd.DataFrame({
-        "Parameter": names,
-        "Estimate": np.array(params),
-        "Std.Err": np.array(se),
-        "z-value": np.array(z_vals),
-        "p-value": np.array(p_vals)
-    })
+    params_mle_np = np.asarray(params)
+    df_cols = {
+        "Parameter":        names,
+        "Estimate (MLE)":   params_mle_np,
+        "Estimate":         params_eval,   # PARTE when applied, otherwise MLE
+        "Std.Err":          se_eval,
+        "z-value":          z_vals,
+        "p-value":          p_vals,
+    }
+    if parte_applied:
+        # Show the shrinkage so the user can see which params moved
+        df_cols["Shrinkage"] = params_eval - params_mle_np
+    summary_df = pd.DataFrame(df_cols)
 
     # ==========================================================
     # PRINT CLEAN SECTIONS
@@ -2040,9 +2109,18 @@ def print_summary(result, objective, data, spec, param_index):
                 print(f"Corr({cols[i]},{cols[j]}) = {Corr[i,j]:.6f}")
 
     print("\n------------------------------------------------")
-    print(f"Log-Likelihood: {float(final_ll):.4f}")
-    print(f"AIC: {float(aic):.4f}")
-    print(f"BIC: {float(bic):.4f}")
+    print(f"Log-Likelihood (MLE):              {mle_ll:>14.4f}")
+    if parte_applied:
+        ll_cost = corrected_ll - mle_ll     # always ≤ 0
+        print(f"Log-Likelihood (PARTE-corrected):  {corrected_ll:>14.4f}"
+              f"  [d = {ll_cost:+.4f} vs MLE]")
+        print(f"  (k = {parte_result.k:.4f},  d = {parte_result.d:.4f},"
+              f"  cond = {parte_result.condition_number:.1f})")
+        print(f"AIC  (PARTE LL): {float(aic):>14.4f}")
+        print(f"BIC  (PARTE LL): {float(bic):>14.4f}")
+    else:
+        print(f"AIC: {float(aic):>14.4f}")
+        print(f"BIC: {float(bic):>14.4f}")
     print("================================================\n")
 
 
@@ -2943,14 +3021,40 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
     def sigmoid(x):
         return 1 / (1 + np.exp(-x))
 
-    params_raw = np.asarray(result.params, dtype=np.float64)
-    if se is None:
-        se_raw = np.asarray(
-            compute_standard_errors(result.params, objective),
-            dtype=np.float64
-        )
-    else:
-        se_raw = se
+    params_mle = np.asarray(result.params, dtype=np.float64)
+
+    # ── PARTE shrinkage (post-MLE) ─────────────────────────────────────────
+    # When an objective and param_index are available, apply the PARTE
+    # adjusted ridge-type estimator (Alghamdi et al. 2026) to the
+    # fixed-effect block.  The corrected LL (evaluated at PARTE params)
+    # is used for AIC / BIC; the MLE LL is also reported for reference.
+    parte_applied = False
+    params_raw    = params_mle      # default: show MLE params
+    corrected_ll  = None
+
+    if objective is not None and param_index is not None and se is None:
+        try:
+            params_parte_j, se_parte_j, _pr = compute_regularized_estimates(
+                result.params, objective, param_index,
+                variant="k3d3", check_multicollinearity=True,
+            )
+            corrected_ll   = float(-objective(params_parte_j))
+            params_raw     = np.asarray(params_parte_j, dtype=np.float64)
+            se_raw         = np.asarray(se_parte_j,     dtype=np.float64)
+            parte_applied  = True
+            _parte_result  = _pr
+        except Exception:
+            pass                    # fall back to MLE
+
+    if not parte_applied:
+        params_raw = params_mle
+        if se is None:
+            se_raw = np.asarray(
+                compute_standard_errors(result.params, objective),
+                dtype=np.float64,
+            )
+        else:
+            se_raw = se
 
     names = []
 
@@ -3000,17 +3104,19 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
         names.append("sigma")
 
     df = pd.DataFrame({
-        "Parameter": names,
-        "Estimate_raw": params_raw,
-        "StdErr_raw": se_raw
+        "Parameter":    names,
+        "Estimate_raw": params_raw,       # PARTE if applied, else MLE
+        "MLE_raw":      params_mle,       # always the MLE (for shrinkage column)
+        "StdErr_raw":   se_raw,
     })
 
     # ==========================================================
     # ✅ APPLY DELTA METHOD WHERE NEEDED
     # ==========================================================
 
-    df["Estimate"] = df["Estimate_raw"]
-    df["Std.Err"] = df["StdErr_raw"]
+    df["Estimate"]     = df["Estimate_raw"]
+    df["Estimate_MLE"] = df["MLE_raw"]
+    df["Std.Err"]      = df["StdErr_raw"]
 
     for i, row in df.iterrows():
 
@@ -3071,7 +3177,18 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
     # CLEAN DISPLAY (remove raw columns)
     # ==========================================================
 
-    df_display = df[["Parameter", "Estimate", "Std.Err", "z-value", "p-value"]]
+    disp_cols = ["Parameter", "Estimate", "Std.Err", "z-value", "p-value"]
+    if parte_applied:
+        # Show MLE and shrinkage amount alongside the PARTE estimates
+        df["Estimate_MLE_display"] = df["Estimate_MLE"]
+        df["Shrinkage"] = df["Estimate"] - df["Estimate_MLE_display"]
+        disp_cols = ["Parameter", "Estimate (MLE)", "Estimate (PARTE)",
+                     "Std.Err", "z-value", "p-value", "Shrinkage"]
+        df = df.rename(columns={
+            "Estimate_MLE_display": "Estimate (MLE)",
+            "Estimate":             "Estimate (PARTE)",
+        })
+    df_display = df[disp_cols]
 
     # Remove raw chol from main table
     main_df = df_display[~df_display["Parameter"].isin(chol_names)]
@@ -3123,17 +3240,29 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
     # ==========================================================
     if objective is not None:
 
-        final_ll = -objective(result.params)
+        mle_ll = float(-objective(result.params))
         k = len(result.params)
         n = data["y"].shape[0]
 
-        aic = 2*k - 2*final_ll
-        bic = k * np.log(n) - 2*final_ll
+        # Use corrected LL (at PARTE params) for AIC/BIC when available
+        eval_ll = corrected_ll if (parte_applied and corrected_ll is not None) else mle_ll
+        aic = 2*k - 2*eval_ll
+        bic = k * np.log(n) - 2*eval_ll
 
         print("\n------------------------------------------------")
-        print(f"Log-Likelihood: {float(final_ll):.4f}")
-        print(f"AIC: {float(aic):.4f}")
-        print(f"BIC: {float(bic):.4f}")
+        print(f"Log-Likelihood (MLE):              {mle_ll:>14.4f}")
+        if parte_applied and corrected_ll is not None:
+            ll_delta = corrected_ll - mle_ll
+            print(f"Log-Likelihood (PARTE-corrected):  {corrected_ll:>14.4f}"
+                  f"  [d = {ll_delta:+.4f} vs MLE]")
+            if _parte_result is not None:
+                print(f"  (k = {_parte_result.k:.4f},  d = {_parte_result.d:.4f},"
+                      f"  cond = {_parte_result.condition_number:.1f})")
+            print(f"AIC  (PARTE LL): {float(aic):>14.4f}")
+            print(f"BIC  (PARTE LL): {float(bic):>14.4f}")
+        else:
+            print(f"AIC: {float(aic):>14.4f}")
+            print(f"BIC: {float(bic):>14.4f}")
         print("================================================\n")
         if return_df is not None and return_df:
             return df

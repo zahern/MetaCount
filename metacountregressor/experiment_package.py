@@ -821,6 +821,8 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         n_changes = np.random.randint(self.min_changes, self.max_changes + 1)
         indices   = list(np.random.choice(self.dim, size=n_changes, replace=False))
 
+        D = self.dim_core  # number of role/dist pairs (must be defined before LC block)
+
         # ── Always include at least one class_mask mutation when LC is enabled ──
         # The class_mask genes (2D+2 … 3D+1) govern per-class variable
         # assignments.  Without forced mutation here the SA spends most
@@ -843,7 +845,6 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         indices = np.asarray(indices, dtype=int)
 
         changed = False
-        D       = self.dim_core          # number of role/dist pairs
 
         for idx in indices:
             if np.random.rand() < mut_rate:
