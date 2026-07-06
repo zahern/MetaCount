@@ -810,6 +810,8 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         n_changes = np.random.randint(self.min_changes, self.max_changes + 1)
         indices   = list(np.random.choice(self.dim, size=n_changes, replace=False))
 
+        D = self.dim_core  # number of role/dist pairs
+
         if self.evaluator.max_latent_classes > 1:
             mask_start = 2 * D + 2
             mask_end   = 3 * D + 1
@@ -824,7 +826,6 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         indices = np.asarray(indices, dtype=int)
 
         changed = False
-        D       = self.dim_core          # number of role/dist pairs
 
         for idx in indices:
             if np.random.rand() < mut_rate:
