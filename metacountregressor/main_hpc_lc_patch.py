@@ -77,6 +77,11 @@ from functools import partial
 from scipy import stats as scipy_stats
 from jaxopt import LBFGS
 
+try:
+    from .regularization import compute_regularized_estimates_jax
+except ImportError:
+    from regularization import compute_regularized_estimates_jax
+
 # ── Import the rest of main_hpc unchanged ──────────────────────────────
 try:
     from . import main_hpc as _hpc  # type: ignore[attr-defined]
@@ -221,10 +226,15 @@ class ModelSpec:
     class_rdm_ind_idx:   tuple = ()   # per-class column indices into Xr_ind
     class_rdm_cor_idx:   tuple = ()   # per-class column indices into Xr_cor
     class_variable_masks: tuple = ()  # per-class variable sets (frozensets) [NEW: alternative to indices]
-    # Note: L2 (ridge) penalty on parameters during fitting has been removed.
-    # Use compute_regularized_estimates() (from main_hpc) for post-MLE PARTE
-    # shrinkage (Alghamdi et al. 2026), which is provably superior to naive
-    # L2 penalty in count regression under multicollinearity.
+    l2_penalty:          float = 0.0  # naive L2 ridge strength on non-intercept params (0 = off; opt-in only)
+    # ── DEFAULT IN-LOOP REGULARISATION ─────────────────────────────────
+    # Every M-step outcome-parameter update is shrunk with PARTE (Alghamdi
+    # et al. 2026) immediately after the LBFGS solve, using (k, d) selected
+    # adaptively from the per-class Fisher information — there is no fixed
+    # "default lambda" the way there would be for naive L2; the paper's
+    # whole premise is that (k, d) are data-adaptive rather than preset.
+    parte_shrinkage_in_loop: bool = True
+    parte_variant:        str  = "k3d3"  # "k1d1" | "k2d2" | "k3d3"
 
     @property
     def K_random_total(self):
@@ -581,11 +591,69 @@ _hpc.build_model_from_manual_spec = build_model_from_manual_spec
 # ═══════════════════════════════════════════════════════════════════════
 
 
-    # _l2_penalty and mixed_model_loglik_reg (naive L2/ridge during fitting)
-    # have been removed in favour of post-MLE PARTE shrinkage.
-    # Call compute_regularized_estimates(params, objective, param_index)
-    # from main_hpc after a standard MLE fit to obtain shrinkage-corrected
-    # coefficients and standard errors under multicollinearity.
+def _l2_penalty(params, spec: ModelSpec):
+    """
+    L2 ridge penalty on non-intercept parameters.
+    Only penalises outcome-model parameters (not membership gamma).
+    Returns 0.0 when spec.l2_penalty <= 0.
+    """
+    if spec.l2_penalty <= 0.0:
+        return 0.0
+    lam = float(spec.l2_penalty)
+    if spec.latent_classes > 1:
+        C = spec.latent_classes
+        pindex = build_param_index(spec)
+        class_offsets = list(pindex["class_offsets"])
+        class_K_base = list(pindex["class_K_base"])
+        # Penalise all per-class outcome params except the intercept (param[0] of each class)
+        s = 0.0
+        for c in range(C):
+            oc = class_offsets[c]
+            kc = class_K_base[c]
+            if kc > 1:
+                s += jnp.sum(params[oc + 1 : oc + kc] ** 2)
+        return lam * s
+    else:
+        if len(params) > 1:
+            return lam * jnp.sum(params[1:] ** 2)
+        return 0.0
+
+
+def mixed_model_loglik_reg(params, data, spec: ModelSpec, indivi: bool = False):
+    """Regularised log-likelihood (L2 penalty added to unregularised objective)."""
+    base = mixed_model_loglik(params, data, spec, indivi=indivi)
+    penalty = _l2_penalty(params, spec)
+    if indivi:
+        N = data["y"].shape[0]
+        return base + penalty / N
+    return base + penalty
+
+
+def _parte_shrink_theta(theta_c, objective, param_index_c: dict, variant: str = "k3d3"):
+    """
+    Apply PARTE (Alghamdi et al. 2026) shrinkage to a per-class outcome
+    parameter vector immediately after its M-step MLE solve.
+
+    ``objective`` must be the same weighted negative log-likelihood the
+    M-step just minimised over ``theta_c`` — its Hessian at the solution
+    is the (weighted) Fisher information PARTE shrinks against.  (k, d)
+    are selected adaptively (eqs 37-41); there is no free hyperparameter.
+
+    Falls back to the unshrunk ``theta_c`` when the class has fewer than
+    two fixed-effect parameters (PARTE needs a >=2-D block to be meaningful).
+    """
+    fixed_key = "fixed" if "fixed" in param_index_c else "beta_f"
+    if fixed_key not in param_index_c:
+        return theta_c
+    i0, i1 = int(param_index_c[fixed_key][0]), int(param_index_c[fixed_key][1])
+    if (i1 - i0) < 2:
+        return theta_c
+
+    hess = jax.hessian(objective)(theta_c)
+    theta_parte, _se_full, _beta_parte, _k, _d = compute_regularized_estimates_jax(
+        theta_c, hess, i0, i1, variant
+    )
+    return theta_parte
 
 
 @partial(jax.jit, static_argnames=("spec", "indivi"))
@@ -810,6 +878,7 @@ def fit_em(init_params, data, spec: ModelSpec,
     class_K_base = []
     class_offsets = []
     class_base_specs = []
+    class_param_index = []
     offset = 0
     for c in range(C):
         _spec_c = base_spec_nolc
@@ -817,11 +886,12 @@ def fit_em(init_params, data, spec: ModelSpec,
             cfix = spec.class_fixed_idx[c]
             if len(cfix) < spec.Kf:
                 _spec_c = replace(_spec_c, Kf=len(cfix))
-        _kc = build_base_index(_spec_c, model=models[c])["total_params"]
-        class_K_base.append(_kc)
+        _pindex_c = build_base_index(_spec_c, model=models[c])
+        class_K_base.append(_pindex_c["total_params"])
         class_offsets.append(offset)
         class_base_specs.append(replace(_spec_c, model=models[c]))
-        offset += _kc
+        class_param_index.append(_pindex_c)
+        offset += _pindex_c["total_params"]
     total_theta = offset
 
     params = np.array(init_params)
@@ -938,12 +1008,19 @@ def fit_em(init_params, data, spec: ModelSpec,
                     theta_c, _data, _spec, indivi=True
                 )
                 loss = -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
-                # L2 in-loop penalty removed; use compute_regularized_estimates post-MLE
+                if spec.l2_penalty > 0.0 and len(theta_c) > 1:
+                    loss = loss + spec.l2_penalty * jnp.sum(theta_c[1:] ** 2)
                 return loss
 
             solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
             result = solver_theta.run(jnp.array(theta_all[c]))
-            theta_new.append(np.array(result.params))
+            theta_c_mle = jnp.array(result.params)
+            if spec.parte_shrinkage_in_loop:
+                theta_c_mle = _parte_shrink_theta(
+                    theta_c_mle, weighted_objective,
+                    class_param_index[c], spec.parte_variant
+                )
+            theta_new.append(np.array(theta_c_mle))
 
         theta_new_flat = np.concatenate(theta_new)
 
@@ -1068,6 +1145,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
     class_K_base = []
     class_offsets = []
     class_base_specs = []
+    class_param_index = []
     offset = 0
     for c in range(C):
         _spec_c = base_spec_nolc
@@ -1075,11 +1153,12 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
             cfix = spec.class_fixed_idx[c]
             if len(cfix) < spec.Kf:
                 _spec_c = replace(_spec_c, Kf=len(cfix))
-        _kc = build_base_index(_spec_c, model=models[c])["total_params"]
-        class_K_base.append(_kc)
+        _pindex_c = build_base_index(_spec_c, model=models[c])
+        class_K_base.append(_pindex_c["total_params"])
         class_offsets.append(offset)
         class_base_specs.append(replace(_spec_c, model=models[c]))
-        offset += _kc
+        class_param_index.append(_pindex_c)
+        offset += _pindex_c["total_params"]
     total_theta = offset
 
     params = np.array(init_params)
@@ -1151,12 +1230,19 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
             def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
                 ll_ind = mixed_model_loglik(theta_c, _data, _spec, indivi=True)
                 loss = -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
-                # L2 in-loop penalty removed; use compute_regularized_estimates post-MLE
+                if spec.l2_penalty > 0.0 and len(theta_c) > 1:
+                    loss = loss + spec.l2_penalty * jnp.sum(theta_c[1:] ** 2)
                 return loss
 
             solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
             result = solver_theta.run(jnp.array(theta_all[c]))
-            theta_new.append(np.array(result.params))
+            theta_c_mle = jnp.array(result.params)
+            if spec.parte_shrinkage_in_loop:
+                theta_c_mle = _parte_shrink_theta(
+                    theta_c_mle, weighted_objective,
+                    class_param_index[c], spec.parte_variant
+                )
+            theta_new.append(np.array(theta_c_mle))
 
         # M-step: gamma
         below_thresh = np.maximum(0.0, getattr(spec, 'min_class_proportion', 0.15) - mean_w)
@@ -1693,6 +1779,8 @@ __all__ = [
     "build_model_from_manual_spec",
     "parse_manual_spec",
     "mixed_model_loglik",
+    "mixed_model_loglik_reg",
+    "_l2_penalty",
     "fit_em",
     "fit_em_squarem",
     "print_summary",
