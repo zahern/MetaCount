@@ -642,6 +642,14 @@ def build_eta(params, data, spec: ModelSpec):
     # FIXED EFFECTS
     # =====================================================
     if spec.Kf > 0:
+        if data["Xf"].shape[-1] != spec.Kf:
+            raise ValueError(
+                f"ModelSpec.Kf={spec.Kf} does not match data['Xf'] width "
+                f"({data['Xf'].shape[-1]}). The spec and data were built for "
+                f"different fixed-effect variable sets — e.g. a per-class "
+                f"Kf reduction (class_fixed_idx) was applied to the spec but "
+                f"data['Xf'] was not sliced to the same columns, or vice versa."
+            )
         eta = jnp.einsum("npk,k->np", data["Xf"], blocks["beta_f"])[..., None]
 
     # =====================================================

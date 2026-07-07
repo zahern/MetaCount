@@ -895,9 +895,21 @@ def fit_em(init_params, data, spec: ModelSpec,
     total_theta = offset
 
     params = np.array(init_params)
-    N = int(np.array(
-        mixed_model_loglik(params[:class_K_base[0]], data, class_base_specs[0], indivi=True)
-    ).shape[0])
+    N = int(data["y"].shape[0])
+
+    # Per-class data: pre-slice Xf to each class's own fixed-effect columns
+    # (matching class_base_specs[c].Kf) once, up front — every per-class
+    # mixed_model_loglik call below must use this, not the unsliced `data`,
+    # whenever class_fixed_idx has reduced that class's Kf below the global.
+    class_data = []
+    for c in range(C):
+        cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
+        if cfix is not None and len(cfix) < data["Xf"].shape[2]:
+            _dc = dict(data)
+            _dc["Xf"] = data["Xf"][:, :, list(cfix)]
+            class_data.append(_dc)
+        else:
+            class_data.append(data)
 
     # Build membership design matrix Z_full (N, K_mem+1) — fixed for all iters
     if K_mem > 0:
@@ -958,7 +970,7 @@ def fit_em(init_params, data, spec: ModelSpec,
         logL = np.zeros((N, C))
         for c in range(C):
             ll_ind = mixed_model_loglik(
-                jnp.array(theta_all[c]), data, class_base_specs[c], indivi=True
+                jnp.array(theta_all[c]), class_data[c], class_base_specs[c], indivi=True
             )
             logL[:, c] = np.array(ll_ind)
 
@@ -996,12 +1008,7 @@ def fit_em(init_params, data, spec: ModelSpec,
         for c in range(C):
             wc = w[:, c].copy()
             _base_c = class_base_specs[c]
-            # ── Per-class data: slice Xf when class has fewer fixed effects ─
-            _data_c = data
-            cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
-            if cfix is not None and len(cfix) < data["Xf"].shape[2]:
-                _data_c = dict(data)
-                _data_c["Xf"] = data["Xf"][:, :, list(cfix)]
+            _data_c = class_data[c]
 
             def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
                 ll_ind = mixed_model_loglik(
@@ -1162,9 +1169,21 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
     total_theta = offset
 
     params = np.array(init_params)
-    N = int(np.array(
-        mixed_model_loglik(params[:class_K_base[0]], data, class_base_specs[0], indivi=True)
-    ).shape[0])
+    N = int(data["y"].shape[0])
+
+    # Per-class data: pre-slice Xf to each class's own fixed-effect columns
+    # (matching class_base_specs[c].Kf) once, up front — every per-class
+    # mixed_model_loglik call below must use this, not the unsliced `data`,
+    # whenever class_fixed_idx has reduced that class's Kf below the global.
+    class_data = []
+    for c in range(C):
+        cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
+        if cfix is not None and len(cfix) < data["Xf"].shape[2]:
+            _dc = dict(data)
+            _dc["Xf"] = data["Xf"][:, :, list(cfix)]
+            class_data.append(_dc)
+        else:
+            class_data.append(data)
 
     if K_mem > 0:
         Xmem   = np.array(data["Xmem"])
@@ -1206,7 +1225,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
         logL = np.zeros((N, C))
         for c in range(C):
             ll_ind = mixed_model_loglik(
-                jnp.array(theta_all[c]), data, class_base_specs[c], indivi=True
+                jnp.array(theta_all[c]), class_data[c], class_base_specs[c], indivi=True
             )
             logL[:, c] = np.array(ll_ind)
 
@@ -1221,11 +1240,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
         for c in range(C):
             wc = w[:, c].copy()
             _base_c = class_base_specs[c]
-            _data_c = data
-            cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
-            if cfix is not None and len(cfix) < data["Xf"].shape[2]:
-                _data_c = dict(data)
-                _data_c["Xf"] = data["Xf"][:, :, list(cfix)]
+            _data_c = class_data[c]
 
             def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
                 ll_ind = mixed_model_loglik(theta_c, _data, _spec, indivi=True)
