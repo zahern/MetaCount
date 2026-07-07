@@ -431,7 +431,9 @@ def _make_spec(Kf: int, col_names: list[str], family: str) -> "_ModelSpec":
 
 def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
              offset_np: np.ndarray | None, family: str,
-             n_restarts: int = 1) -> _JAXResult | None:
+             n_restarts: int = 1,
+             l2_penalty: float = 0.10,
+             max_abs_coef: float = 30.0) -> _JAXResult | None:
     """
     Fit NB2 or Poisson via the package's own JAX LBFGS engine.
 
@@ -440,6 +442,28 @@ def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
     get their own compiled version — subsequent calls with the same Kf reuse
     the compiled code, so the search gets faster after the first few unique
     column counts.
+
+    Regularisation: this fit was previously fully unconstrained MLE on the
+    RAW (unstandardised) design matrix — fine for well-separated variables,
+    but an upper term and its own lower (AADT-interaction) term built from
+    the same raw column are highly collinear, and an unconstrained fit
+    resolves that by sending coefficients to enormous, near-cancelling
+    values rather than failing outright (seen on the QLD dataset: intercept
+    -1180, log(AADT) elasticity -7437 -- a divergent, unidentified fit that
+    still nominally "converged"). Two guards address this:
+      - l2_penalty: a ridge penalty on each non-intercept coefficient's
+        contribution IN STANDARDISED units (coef * column_sd), computed from
+        this fit's own column SDs rather than by pre-standardising the design
+        matrix — so variables on very different raw scales (a 0-1 proportion
+        next to AADT-in-the-thousands) are regularised comparably, without
+        changing the raw scale that _predict/_aadt_elasticity/the readable-
+        coefficients report all still expect.
+      - max_abs_coef: hard rejection (returns None) if any coefficient still
+        exceeds this after the penalised fit -- mirrors the existing
+        _coefs_valid() bound used elsewhere in this codebase (e.g. the LC
+        search's MAX_ABS_COEF): a divergent fit is genuinely unidentified,
+        not just "a bit worse," so it should never be returned as a
+        candidate rather than merely scored worse.
     """
     if not _JAX_OK:
         return None
@@ -456,10 +480,21 @@ def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
         p0    = np.zeros(K)
         p0[0] = float(np.log(np.clip(float(np.mean(y_np)), 1e-8, None)))
 
+        col_sd = np.std(X_np, axis=0)
+        col_sd = np.where(col_sd > 1e-12, col_sd, 1.0)
+        col_sd_j = jnp.array(col_sd)
+
         # Use functools.partial so JAX sees a stable callable and can reuse
         # its compiled trace for calls with the same Kf (same spec hash).
         from functools import partial as _partial
-        obj  = _partial(_jax_loglik, data=data, spec=spec, indivi=False)
+
+        def _penalised_obj(params):
+            base = _jax_loglik(params, data=data, spec=spec, indivi=False)
+            beta = params[:Kf]
+            scaled = beta[1:] * col_sd_j[1:]   # skip "const" (column 0)
+            return base + l2_penalty * jnp.sum(scaled ** 2)
+
+        obj = _penalised_obj if l2_penalty > 0 else _partial(_jax_loglik, data=data, spec=spec, indivi=False)
         best = _LBFGS(fun=obj, maxiter=300).run(jnp.array(p0))
 
         if n_restarts > 1:
@@ -470,10 +505,16 @@ def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
                 if float(cand.state.value) < float(best.state.value):
                     best = cand
 
-        ll = float(-best.state.value)
+        params_final = np.array(best.params)
+        if not np.all(np.isfinite(params_final)) or np.max(np.abs(params_final)) > max_abs_coef:
+            return None
+
+        # Report the TRUE (unregularised) log-likelihood for AIC/BIC — the
+        # penalty is a fitting aid, not part of the reported likelihood.
+        ll = float(-_jax_loglik(jnp.array(params_final), data=data, spec=spec, indivi=False))
         if not np.isfinite(ll):
             return None
-        return _JAXResult(np.array(best.params), list(X_df.columns), ll, N, family)
+        return _JAXResult(params_final, list(X_df.columns), ll, N, family)
     except Exception:
         return None
 
@@ -510,6 +551,8 @@ def _fit_model(
     family: str,
     offset_col: str | None,
     include_log_aadt: bool = True,
+    l2_penalty: float = 0.10,
+    max_abs_coef: float = 30.0,
 ) -> FittedModel | None:
     X_train = _design_matrix(
         df_train,
@@ -524,7 +567,8 @@ def _fit_model(
     if offset_col is not None and offset_col in df_train.columns:
         offset = pd.to_numeric(df_train[offset_col], errors="coerce").to_numpy(dtype=float)
 
-    result = _jax_fit(X_train, y_train, offset, family)
+    result = _jax_fit(X_train, y_train, offset, family,
+                      l2_penalty=l2_penalty, max_abs_coef=max_abs_coef)
     if result is None:
         return None
 
