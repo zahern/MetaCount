@@ -55,6 +55,28 @@ except ImportError as exc:
             "Install package dependencies including 'jax' and 'jaxlib'."
         ) from exc
 
+
+class FitResult(dict):
+    """Dictionary-like wrapper for ``fit_manual_model()`` results.
+
+    Behaves like a regular dict (you can access ``fit["result"]``,
+    ``fit["summary"]``, etc.) but produces a formatted model-summary
+    table when printed or displayed in a notebook.
+
+    Example
+    -------
+    >>> fit = builder.fit_manual_model(manual_spec=..., model='nb')
+    >>> print(fit)          # shows formatted parameter table + fit stats
+    >>> fit["summary"]      # still works as a dict
+    """
+
+    def __repr__(self) -> str:
+        text = self.get("_summary_text")
+        if text:
+            return text
+        return dict.__repr__(self)
+
+
 import numpy as np
 import pandas as pd
 import jax
@@ -1690,7 +1712,8 @@ class ExperimentBuilder:
         objective = partial(mixed_model_loglik, data=data, spec=spec)
         param_index = build_param_index(spec)
 
-        if print_report:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
             summary = print_summary(
                 result=result,
                 objective=objective,
@@ -1698,17 +1721,11 @@ class ExperimentBuilder:
                 spec=spec,
                 param_index=param_index,
             )
-        else:
-            with redirect_stdout(io.StringIO()):
-                summary = print_summary(
-                    result=result,
-                    objective=objective,
-                    data=data,
-                    spec=spec,
-                    param_index=param_index,
-                )
+        summary_text = buf.getvalue()
+        if print_report:
+            print(summary_text, end="")
 
-        return {
+        return FitResult({
             "result": result,
             "data": data,
             "spec": spec,
@@ -1717,7 +1734,8 @@ class ExperimentBuilder:
             "param_index": param_index,
             "predictions": np.asarray(fitted.predict()).squeeze(),
             "de_warm_start_report": de_report,
-        }
+            "_summary_text": summary_text,
+        })
 
     def compute_latent_class_probabilities(
         self,
@@ -3191,3 +3209,156 @@ def compare_models(fit_results: dict) -> "pd.DataFrame":
     df.index = range(1, len(df) + 1)
     df.index.name = "Rank"
     return df
+
+
+def make_synthetic_count_data(
+    n_obs: int = 500,
+    n_periods: int = 3,
+    latent_classes: int = 0,
+    seed: int = 42,
+    include_membership: bool = False,
+) -> "pd.DataFrame":
+    """Generate synthetic count data with a known true DGP.
+
+    Creates a panel dataset with 5 outcome covariates (x1..x5),
+    optional latent classes with membership covariates (z1, z2),
+    and NB2-distributed counts.  Useful for step-by-step tutorials,
+    method demonstrations, and recovery tests.
+
+    Parameters
+    ----------
+    n_obs : int
+        Number of individuals (if ``n_periods > 1``) or total observations.
+    n_periods : int
+        Time periods per individual.  Set to 1 for cross-sectional data.
+    latent_classes : int
+        Number of latent classes (0 = no latent classes, single-class model).
+        When ``latent_classes >= 2``, data are drawn from a mixture with
+        different parameter vectors per class.
+    seed : int
+        Random seed for reproducibility.
+    include_membership : bool
+        When ``True`` and ``latent_classes >= 2``, add membership covariates
+        z1, z2 whose values drive class assignment probabilities.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns: ``id``, ``t`` (if ``n_periods > 1``),
+        ``x1``..``x5``, ``z1``, ``z2`` (if membership),
+        ``y`` (count outcome), and ``true_class`` (if latent_classes >= 2).
+
+    Examples
+    --------
+    >>> from metacountregressor import make_synthetic_count_data
+    >>> df = make_synthetic_count_data(n_obs=500, n_periods=3)
+    >>> print(df.head())
+
+    >>> df_lc = make_synthetic_count_data(
+    ...     latent_classes=2, include_membership=True,
+    ... )
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    true_classes = []
+    panel = n_periods > 1
+    N = n_obs
+    C = latent_classes
+
+    if C < 2:
+        C = 1
+
+    n_vars = 5
+
+    if C >= 2:
+        betas = [rng.normal(0.0, 0.5, size=n_vars + 1) for _ in range(C)]
+        alphas = [rng.uniform(0.3, 2.0) for _ in range(C)]
+        gam = None
+        if include_membership:
+            gam = np.zeros((C - 1, 3))
+            gam[:, 1:] = np.array([[+1.5, -1.0], [-0.8, +1.2]])[:C - 1, :2]
+    else:
+        betas = [rng.normal(0.0, 0.5, size=n_vars + 1)]
+        alphas = [rng.uniform(0.3, 2.0)]
+        gam = None
+
+    for i in range(N):
+        x = rng.normal(0.0, 1.0, size=n_vars)
+        z_data = np.zeros(2) if not include_membership else rng.normal(0.0, 1.0, size=2)
+        z1_val, z2_val = float(z_data[0]), float(z_data[1])
+
+        if C >= 2:
+            if gam is not None:
+                logit = np.zeros(C)
+                for c in range(1, C):
+                    log_odds = gam[c - 1, 0] + gam[c - 1, 1] * z1_val + gam[c - 1, 2] * z2_val
+                    logit[c] = log_odds
+                probs = np.exp(logit) / np.exp(logit).sum()
+            else:
+                probs = np.ones(C) / C
+            class_idx = int(rng.choice(C, p=probs))
+        else:
+            class_idx = 0
+        true_classes.append(class_idx if C >= 2 else 0)
+
+        b = betas[class_idx]
+        a = alphas[class_idx]
+
+        for t in range(max(n_periods, 1)):
+            eta = b[0]
+            for k in range(n_vars):
+                eta += b[k + 1] * x[k]
+            mu = np.exp(np.clip(float(eta), -20.0, 20.0))
+            p_nb = a / (a + mu)
+            y = int(rng.negative_binomial(a, p_nb))
+            row = {"id": i, "y": y}
+            for k in range(n_vars):
+                row[f"x{k + 1}"] = float(x[k])
+            if include_membership:
+                row["z1"] = z1_val
+                row["z2"] = z2_val
+            if panel:
+                row["t"] = t
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+    if C >= 2:
+        df["true_class"] = [true_classes[int(r["id"])] for _, r in df.iterrows()] if panel else true_classes
+
+    return df
+
+
+def print_fit(fit_result: dict, file=None) -> None:
+    """Pretty-print the formatted model summary from a fit result.
+
+    Works with the dictionary returned by ``fit_manual_model()``, including
+    older fit dicts that were computed before ``FitResult`` was introduced.
+
+    Parameters
+    ----------
+    fit_result : dict
+        Output of ``ExperimentBuilder.fit_manual_model()`` or
+        ``CMFExperimentBuilder.fit_manual_cmf_model()``.
+    file : file-like, optional
+        Where to write the output.  Defaults to ``sys.stdout``.
+
+    Examples
+    --------
+    >>> fit = builder.fit_manual_model(manual_spec=..., model='nb', R=500)
+    >>> print_fit(fit)
+    """
+    import sys as _sys
+    out = file or _sys.stdout
+    text = fit_result.get("_summary_text")
+    if text:
+        out.write(text)
+        return
+
+    summary = fit_result.get("summary", {})
+    if isinstance(summary, dict):
+        out.write("────────────────── Model Fit Summary ──────────────────\n")
+        for k in ("loglik", "num_parm", "n_obs", "aic", "bic"):
+            v = summary.get(k)
+            if v is not None:
+                out.write(f"  {k:>12}: {v:,.4f}\n" if isinstance(v, (int, float)) else f"  {k:>12}: {v}\n")
+        out.write("──────────────────────────────────────────────────────\n")

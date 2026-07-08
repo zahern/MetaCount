@@ -39,6 +39,11 @@ __all__ = [
     "extract_summary",
     "extract_search_best",
     "compare_models",
+    # Synthetic data generation
+    "make_synthetic_count_data",
+    # Fit inspection
+    "FitResult",
+    "print_fit",
     # Bivariate copula NB (Ahmad, Gayah & Donnell 2023) – joint
     # negative-binomial models with Frank / Normal / Kimeldorf-Sampson
     # copulas for modelling crash counts and near-miss counts jointly.
@@ -95,6 +100,11 @@ _EXPORTS = {
     "extract_summary": ("experiment_package", "extract_summary"),
     "extract_search_best": ("experiment_package", "extract_search_best"),
     "compare_models": ("experiment_package", "compare_models"),
+    # Synthetic data generation
+    "make_synthetic_count_data": ("experiment_package", "make_synthetic_count_data"),
+    # Fit inspection
+    "FitResult": ("experiment_package", "FitResult"),
+    "print_fit": ("experiment_package", "print_fit"),
     # Plotting
     "generate_all_lc_figures": ("lc_plotting", "generate_all_lc_figures"),
     "plot_search_convergence": ("lc_plotting", "plot_search_convergence"),
