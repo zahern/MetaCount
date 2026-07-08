@@ -63,6 +63,8 @@ include-package-data = true
 metacountregressor = [
     "metacountregressor/data/*.csv",
     "metacountregressor/templates/*.ipynb",
+    "metacountregressor/examples/*.py",
+    "metacountregressor/examples/*.md",
 ]
 
 [tool.setuptools.packages.find]

@@ -2628,7 +2628,27 @@ def _jax_random_params_refit(
     max_random_terms: int,
     rp_draws: int,
 ) -> dict[str, Any] | None:
-    """Attempt a random-parameters refit using ExperimentBuilder if available."""
+    """Attempt a random-parameters (partial-pooling) refit using ExperimentBuilder.
+
+    Continuous upper-level variables (up to max_random_terms, excluding
+    binary_vars) are fit as independent random parameters (rdm_terms, normal
+    distribution) — each segment effectively draws its own coefficient. This
+    is the partial-pooling mechanism: segment-level effects are shrunk toward
+    the population mean rather than forced identical (complete pooling, the
+    plain fixed-effects fit elsewhere in this script) or estimated with no
+    shared structure at all (no pooling). AADT enters as a free log(AADT)
+    term (elasticity estimated, not fixed at 1 via the offset) for
+    consistency with how the rest of this script treats it. When
+    include_lower_interactions is set, the {var}*log(AADT) interaction
+    columns from best_lower_raw are added as additional FIXED terms (the
+    varying-elasticity mechanism) — kept fixed rather than random to avoid
+    an under-identified model on top of the random main effects.
+
+    Correlated random parameters (rdm_cor_terms) are intentionally out of
+    scope here — independent random parameters already deliver genuine
+    partial pooling and match the "Random-Ind: Mean = population average;
+    SD = site-to-site variability" interpretation printed by the caller.
+    """
     # Ensure the package root is on sys.path regardless of how the script is invoked
     import sys as _sys
     _pkg_root = str(Path(__file__).resolve().parent.parent)
@@ -2642,6 +2662,104 @@ def _jax_random_params_refit(
             from ..experiment_package import ExperimentBuilder  # type: ignore
         except ImportError:
             return None
+    except Exception:
+        return None
+
+    try:
+        df = df_trainval_raw.copy()
+        df["_id"] = np.arange(len(df), dtype=int)
+
+        log_aadt_col = "_log_aadt"
+        log_aadt = np.log(np.clip(
+            pd.to_numeric(df[aadt_col], errors="coerce").to_numpy(dtype=float), 1e-12, None
+        ))
+        df[log_aadt_col] = log_aadt
+
+        continuous_upper = [v for v in best_upper_raw if v in df.columns and v not in binary_vars]
+        binary_upper = [v for v in best_upper_raw if v in df.columns and v in binary_vars]
+
+        n_random = max(0, int(max_random_terms))
+        rdm_terms = list(continuous_upper[:n_random])
+        fixed_terms = [log_aadt_col] + list(continuous_upper[n_random:]) + binary_upper
+
+        if include_lower_interactions:
+            for var in best_lower_raw:
+                if var not in df.columns:
+                    continue
+                inter_col = f"_{var}_x_logaadt"
+                x = pd.to_numeric(df[var], errors="coerce").to_numpy(dtype=float)
+                df[inter_col] = x * log_aadt
+                fixed_terms.append(inter_col)
+
+        # Need at least one random term for this to be a genuine random-
+        # parameters model — otherwise it's just the plain fixed-effects fit.
+        if not rdm_terms:
+            return None
+
+        builder = ExperimentBuilder(df=df, id_col="_id", y_col=y_col, offset_col=offset_col)
+        spec = builder.make_manual_spec(
+            fixed_terms=fixed_terms,
+            rdm_terms=[f"{v}:normal" for v in rdm_terms],
+            dispersion=1,
+        )
+        fit = builder.fit_manual_model(
+            spec,
+            model="nb",
+            print_report=False,
+            R=max(200, int(rp_draws)),
+        )
+
+        from main_hpc import unpack_params as _unpack  # type: ignore
+
+        fitted_spec = fit.get("spec", spec)
+        blocks = _unpack(np.array(fit["result"].params), fitted_spec)
+
+        rows: list[dict[str, Any]] = []
+        for k, name in enumerate(fitted_spec.fixed_names):
+            rows.append({
+                "Variable": VARIABLE_LABELS.get(name, name),
+                "Role": "Fixed",
+                "Estimate": float(np.array(blocks["beta_f"])[k]),
+                "StdDev": np.nan,
+            })
+
+        if fitted_spec.Kr_ind > 0 and blocks.get("mean_ind") is not None:
+            means = np.array(blocks["mean_ind"])
+            sds = np.abs(np.array(blocks["sd_ind"]))
+            for j, rname in enumerate(fitted_spec.random_ind_names):
+                rows.append({
+                    "Variable": VARIABLE_LABELS.get(rname, rname),
+                    "Role": "Random-Ind",
+                    "Estimate": float(means[j]),
+                    "StdDev": float(sds[j]),
+                })
+
+        if blocks.get("alpha") is not None:
+            rows.append({
+                "Variable": "NB2 Dispersion (alpha)",
+                "Role": "Dispersion",
+                "Estimate": float(jax.nn.softplus(blocks["alpha"])),
+                "StdDev": np.nan,
+            })
+
+        coef_df = pd.DataFrame(rows)
+        coef_str = coef_df.to_string(index=False, float_format=lambda v: f"{v:.4f}")
+
+        summary_d = fit.get("summary", {}) if isinstance(fit, dict) else {}
+        ll  = summary_d.get("loglik", float("nan")) if isinstance(summary_d, dict) else float("nan")
+        bic = summary_d.get("bic",    float("nan")) if isinstance(summary_d, dict) else float("nan")
+        aic = summary_d.get("aic",    float("nan")) if isinstance(summary_d, dict) else float("nan")
+
+        return {
+            "coef_str": coef_str,
+            "corr_matrix_str": "",   # no rdm_cor_terms in this refit
+            "loglik": ll,
+            "bic": bic,
+            "aic": aic,
+            "fit": fit,
+            "fixed_terms": fixed_terms,
+            "rdm_terms": rdm_terms,
+        }
     except Exception:
         return None
 
