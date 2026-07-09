@@ -835,129 +835,240 @@ class ForcedModelStructureEvaluatorLC(StructureEvaluatorLC):
 
 def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_active=2):
     """
-    Extended generate_neighbor that correctly mutates ALL gene slots:
+    Extended generate_neighbor that mutates ALL gene slots AND uses
+    classical analyst-inspired moves (forward-selection, backward-elimination,
+    stepwise-swap, role promotion/demotion, distribution-change, etc.)
+    alongside random exploration.
 
-    Tail gene index  2D     → dispersion bit (flip 0↔1)
-    Tail gene index  2D+1   → latent-class code (step ±1)
-    Tail gene indices 2D+2 … 3D+1 → class-specific masks (cycle 0→1→2→0)
-    Role genes now include 7 and 8 (sampled via ROLE_PROBS).
+    Move probabilities (temperature-adaptive):
+      - Forward selection  : 0.18   (excluded → active)
+      - Backward elimination: 0.18   (active → excluded)
+      - Stepwise swap      : 0.10   (remove one active, add one excluded)
+      - Role promotion     : 0.12   (upgrade role, e.g. fixed→random)
+      - Role demotion      : 0.12   (downgrade role, e.g. random→fixed)
+      - Distribution change: 0.08   (try a different distribution)
+      - Dispersion flip    : 0.04   (Poisson ↔ NB)
+      - LC step            : 0.03   (change latent class count)
+      - Random exploration : 0.15   (current behaviour)
     """
-    for _ in range(max_attempts):
+    D = self.dim_core
+    roles = solution[:D].astype(int)
 
+    if T is not None and self.T0 is not None:
+        mut_rate = self.mutation_rate * (T / self.T0)
+    else:
+        mut_rate = self.mutation_rate
+    mut_rate = float(np.clip(mut_rate, 0.0, 1.0))
+
+    # ── Build helper maps ─────────────────────────────────────────────
+    active_idx   = [i for i in range(D) if roles[i] != 0]
+    excluded_idx = [i for i in range(D) if roles[i] == 0]
+    var_names    = self.evaluator.vars
+    allowed_map  = self.evaluator.allowed_roles
+    has_lc       = getattr(self.evaluator, "max_latent_classes", 1) > 1
+
+    # ── Move-type weights ─────────────────────────────────────────────
+    explore_w    = 0.15
+    fwd_w         = 0.18
+    bwd_w         = 0.18
+    swap_w        = 0.10
+    promote_w     = 0.12
+    demote_w      = 0.12
+    dist_change_w = 0.08
+    disp_flip_w   = 0.04
+    lc_step_w     = 0.03
+
+    move_names = ["explore",   "forward",    "backward",  "stepwise",
+                  "promote",   "demote",     "dist",      "dispersion",
+                  "lc_step"]
+    move_probs = np.array([explore_w, fwd_w, bwd_w, swap_w,
+                           promote_w, demote_w, dist_change_w,
+                           disp_flip_w, lc_step_w])
+    move_probs = move_probs / move_probs.sum()
+
+    for _attempt in range(max_attempts):
         neighbor = solution.copy()
+        move = np.random.choice(move_names, p=move_probs)
 
-        if T is not None and self.T0 is not None:
-            mut_rate = self.mutation_rate * (T / self.T0)
+        # ── FORWARD SELECTION ─────────────────────────────────────
+        if move == "forward" and excluded_idx:
+            i = np.random.choice(excluded_idx)
+            allowed = allowed_map.get(var_names[i], [0])
+            non_zero = [r for r in allowed if r != 0]
+            if non_zero:
+                neighbor[i] = np.random.choice(non_zero)
+            else:
+                neighbor[i] = 1  # default to fixed
+
+        # ── BACKWARD ELIMINATION ──────────────────────────────────
+        elif move == "backward" and active_idx:
+            i = np.random.choice(active_idx)
+            neighbor[i] = 0
+
+        # ── STEPWISE SWAP ─────────────────────────────────────────
+        elif move == "stepwise" and active_idx and excluded_idx:
+            i_out = np.random.choice(active_idx)
+            i_in  = np.random.choice(excluded_idx)
+            neighbor[i_out] = 0
+            allowed_in = allowed_map.get(var_names[i_in], [0])
+            non_zero_in = [r for r in allowed_in if r != 0]
+            neighbor[i_in] = np.random.choice(non_zero_in) if non_zero_in else 1
+
+        # ── ROLE PROMOTION (upgrade complexity) ───────────────────
+        elif move == "promote" and active_idx:
+            i = np.random.choice(active_idx)
+            role = int(neighbor[i])
+            allowed = allowed_map.get(var_names[i], range(9))
+            # Analyst hierarchy: excluded(0) < fixed(1) < rdm-ind(2) < rdm-cor(3)
+            #                  < grouped(4) < hetero(5) < ZI(6)
+            # Also allow jump from fixed(1) to ZI(6)
+            promotions = {
+                1: [2, 3, 6],          # fixed → random-ind/cor or ZI
+                2: [3, 5],             # rdm-ind → rdm-cor or hetero
+                3: [2, 3],             # rdm-cor → (already high)
+                6: [2, 3],             # ZI → random
+            }
+            candidates = promotions.get(role, [])
+            candidates = [c for c in candidates if c in allowed]
+            if candidates:
+                neighbor[i] = np.random.choice(candidates)
+
+        # ── ROLE DEMOTION (simplify) ──────────────────────────────
+        elif move == "demote" and active_idx:
+            i = np.random.choice(active_idx)
+            role = int(neighbor[i])
+            allowed = allowed_map.get(var_names[i], range(9))
+            demotions = {
+                2: [1, 0],           # rdm-ind → fixed or excluded
+                3: [2, 1],           # rdm-cor → rdm-ind or fixed
+                5: [0],              # hetero → excluded (unlikely to be useful alone)
+                6: [1, 0],           # ZI → fixed or excluded
+                7: [0],              # membership → excluded
+                8: [1, 0],           # membership+fixed → fixed or excluded
+            }
+            candidates = demotions.get(role, [])
+            # Always allow downgrade to excluded (0) or fixed (1) from any non-zero role
+            if role not in (0, 1):
+                candidates.extend([0, 1])
+            candidates = sorted(set(c for c in candidates if c in allowed))
+            if candidates:
+                neighbor[i] = np.random.choice(candidates)
+
+        # ── DISTRIBUTION CHANGE ───────────────────────────────────
+        elif move == "dist" and active_idx:
+            # Find random variables (roles 2,3,4) and change their dist
+            rdm_idx = [i for i in active_idx if int(neighbor[i]) in (2, 3, 4)]
+            if rdm_idx:
+                i = np.random.choice(rdm_idx)
+                dist_idx = D + i  # distribution genes offset by D
+                old_dist = int(neighbor[dist_idx])
+                possible = [d for d in range(4) if d != old_dist]
+                neighbor[dist_idx] = np.random.choice(possible) if possible else 0
+
+        # ── DISPERSION FLIP ───────────────────────────────────────
+        elif move == "dispersion":
+            disp_idx = 2 * D
+            neighbor[disp_idx] = 1 - int(neighbor[disp_idx])
+
+        # ── LATENT CLASS STEP ─────────────────────────────────────
+        elif move == "lc_step" and has_lc:
+            lc_idx = 2 * D + 1
+            max_code = self.evaluator.max_latent_classes - 1
+            step = np.random.choice([-1, 1])
+            neighbor[lc_idx] = int(np.clip(int(neighbor[lc_idx]) + step, 0, max_code))
+            # When stepping to LC=1, clear membership roles (7,8)
+            if neighbor[lc_idx] == 0:
+                for i in range(D):
+                    if int(neighbor[i]) in (7, 8):
+                        neighbor[i] = 0
+            # When stepping from LC=1 to LC>=2, also randomise class masks
+            if neighbor[lc_idx] > 0 and has_lc and len(neighbor) > 2 * D + 2:
+                for idx in range(2 * D + 2, min(3 * D + 2, len(neighbor))):
+                    neighbor[idx] = np.random.randint(0, 3)
+
+        # ── RANDOM EXPLORATION (classic behavior) ─────────────────
         else:
-            mut_rate = self.mutation_rate
-        mut_rate = float(np.clip(mut_rate, 0.0, 1.0))
+            n_changes = np.random.randint(self.min_changes, self.max_changes + 1)
+            indices   = list(np.random.choice(self.dim, size=n_changes, replace=False))
 
-        n_changes = np.random.randint(self.min_changes, self.max_changes + 1)
-        indices   = list(np.random.choice(self.dim, size=n_changes, replace=False))
+            # Force at least one class_mask mutation when LC is enabled
+            if has_lc:
+                mask_start = 2 * D + 2
+                mask_end   = 3 * D + 1
+                mask_ii = list(range(mask_start, min(mask_end + 1, self.dim)))
+                if mask_ii and not any(i in indices for i in mask_ii):
+                    ri = np.random.choice(range(len(indices)))
+                    indices[ri] = int(np.random.choice(mask_ii))
+                if mask_ii and np.random.rand() < 0.8:
+                    extra = int(np.random.choice(mask_ii))
+                    if extra not in indices:
+                        indices.append(extra)
+            indices = np.asarray(indices, dtype=int)
 
-        D = self.dim_core  # number of role/dist pairs (must be defined before LC block)
-
-        # ── Always include at least one class_mask mutation when LC is enabled ──
-        # The class_mask genes (2D+2 … 3D+1) govern per-class variable
-        # assignments.  Without forced mutation here the SA spends most
-        # of its budget mutating role genes and rarely explores different
-        # class-specific variable configurations, leading to collapsed
-        # (identical) class specifications.
-        if self.evaluator.max_latent_classes > 1:
-            mask_start = 2 * D + 2
-            mask_end   = 3 * D + 1
-            mask_indices = list(range(mask_start, min(mask_end + 1, self.dim)))
-            if mask_indices and not any(i in indices for i in mask_indices):
-                # Replace 1 randomly selected index with a mask gene
-                replace_ix = np.random.choice(range(len(indices)))
-                indices[replace_ix] = int(np.random.choice(mask_indices))
-            # Also add an extra mask mutation ~80% of the time
-            if len(mask_indices) > 0 and np.random.rand() < 0.8:
-                extra = int(np.random.choice(mask_indices))
-                if extra not in indices:
-                    indices.append(extra)
-        indices = np.asarray(indices, dtype=int)
-
-        changed = False
-
-        for idx in indices:
-            if np.random.rand() < mut_rate:
-
-                if idx < D:
-                    # Role gene
-                    neighbor[idx] = self.sample_allowed_role(idx)
-                    changed = True
-
-                elif idx < 2 * D:
-                    # Distribution gene
-                    neighbor[idx] = np.random.randint(0, 6)
-                    changed = True
-
-                else:
-                    # Tail genes  — indices >= 2*D
-                    tail_pos = idx - 2 * D
-
-                    if tail_pos == 0:
-                        # Dispersion bit: flip
-                        neighbor[idx] = 1 - int(neighbor[idx])
-                    elif tail_pos == 1:
-                        # Latent-class code: step ±1 within bounds
-                        max_code      = self.evaluator.max_latent_classes - 1
-                        step          = np.random.choice([-1, 1])
-                        neighbor[idx] = int(np.clip(neighbor[idx] + step,
-                                                    0, max_code))
+            for idx in indices:
+                if np.random.rand() < mut_rate:
+                    if idx < D:
+                        neighbor[idx] = self.sample_allowed_role(idx)
+                    elif idx < 2 * D:
+                        neighbor[idx] = np.random.randint(0, 6)
                     else:
-                        # Class-specific variable masks (indices 2D+2 … 3D+1):
-                        #   0 = both classes  1 = class 1 only  2 = class 2 only
-                        # Cycle through the three possible values or pick random.
-                        old_val = int(neighbor[idx])
-                        choices = [v for v in (0, 1, 2) if v != old_val]
-                        neighbor[idx] = int(np.random.choice(choices))
-                    changed = True
+                        tail_pos = idx - 2 * D
+                        if tail_pos == 0:
+                            neighbor[idx] = 1 - int(neighbor[idx])
+                        elif tail_pos == 1:
+                            max_code = self.evaluator.max_latent_classes - 1
+                            step = np.random.choice([-1, 1])
+                            neighbor[idx] = int(np.clip(int(neighbor[idx]) + step, 0, max_code))
+                        else:
+                            old_val = int(neighbor[idx])
+                            choices = [v for v in (0, 1, 2) if v != old_val]
+                            neighbor[idx] = int(np.random.choice(choices))
 
-        # Enforce min-active constraint
-        active = np.sum(neighbor[:D] != 0)
-        if active < min_active:
-            zeros = np.where(neighbor[:D] == 0)[0]
+        # ── Enforce min-active ────────────────────────────────────────
+        n_roles = neighbor[:D]
+        active_now = np.sum(n_roles != 0)
+        if active_now < min_active:
+            zeros = np.where(n_roles == 0)[0]
             if len(zeros) > 0:
                 activate = np.random.choice(
-                    zeros, size=min_active - active, replace=False
+                    zeros, size=min_active - active_now, replace=False
                 )
                 for j in activate:
                     neighbor[j] = self.sample_allowed_role(j, force_active=True)
 
+        # ── Verify LC consistency: if LC=1, strip membership roles ────
+        if has_lc and len(neighbor) > 2 * D + 1:
+            if int(neighbor[2 * D + 1]) == 0:
+                for i in range(D):
+                    if int(neighbor[i]) in (7, 8):
+                        neighbor[i] = 0
+
         neighbor = self.repair(neighbor)
-        if changed and not self.is_same(neighbor, solution):
-            return neighbor
+        if self.is_same(neighbor, solution):
+            continue
+        return neighbor
 
-    # Fallback
-    neighbor     = solution.copy()
-    active_count = np.sum(neighbor[:self.dim_core] != 0)
-
-    if active_count < min_active:
-        zero_idx = np.where(neighbor[:self.dim_core] == 0)[0]
-        activate = np.random.choice(
-            zero_idx, size=min_active - active_count, replace=False
-        )
-        neighbor[activate] = np.random.randint(1, 9, size=len(activate))
+    # Fallback — always return something different
+    neighbor = solution.copy()
+    if len(active_idx) > 0 and len(excluded_idx) > 0:
+        # Swap one active for one excluded
+        neighbor[np.random.choice(active_idx)] = 0
+        in_idx = np.random.choice(excluded_idx)
+        allowed = allowed_map.get(var_names[in_idx], [0])
+        non_zero = [r for r in allowed if r != 0]
+        neighbor[in_idx] = np.random.choice(non_zero) if non_zero else 1
+    elif len(active_idx) >= 2:
+        # Toggle the role of one active variable
+        i = np.random.choice(active_idx)
+        allowed = allowed_map.get(var_names[i], range(9))
+        old = int(neighbor[i])
+        possible = [r for r in allowed if r != old]
+        neighbor[i] = np.random.choice(possible) if possible else 0
     else:
-        idx      = np.random.randint(0, self.dim_core)
-        var_name = self.evaluator.vars[idx]
-        allowed  = self.evaluator.allowed_roles[var_name]
-        old      = neighbor[idx]
-        possible = [v for v in allowed if v != old]
-        if possible:
-            neighbor[idx] = np.random.choice(possible)
-
-    # Also randomize class masks in the fallback when LC is enabled
-    has_lc = getattr(self.evaluator, "max_latent_classes", 1) > 1
-    if has_lc and len(neighbor) > 2 * D + 2:
-        for idx in range(2 * D + 2, min(3 * D + 2, len(neighbor))):
-            neighbor[idx] = np.random.randint(0, 3)
-
-    if self.is_same(solution, neighbor):
-        return self.generate_neighbor(solution, T,
-                                      min_active=min_active + 1)
+        # Activate at least min_active
+        zero_idx = np.where(neighbor[:D] == 0)[0]
+        activate = np.random.choice(zero_idx, size=min_active, replace=False)
+        neighbor[activate] = np.random.randint(1, 9, size=len(activate))
     return neighbor
 
 
