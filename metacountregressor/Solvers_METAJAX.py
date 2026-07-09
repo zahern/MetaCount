@@ -263,6 +263,12 @@ class AdvancedSimulatedAnnealing:
         var_name = self.evaluator.vars[var_index]
         allowed = self.evaluator.allowed_roles[var_name]
 
+        # ── Ban check: if variable is banned and not force-included, only role 0 ──
+        banned = getattr(self.evaluator, "_banned_variables", set())
+        force_inc = getattr(self.evaluator, "_force_included_vars", set())
+        if var_name in banned and var_name not in force_inc:
+            return 0  # permanently excluded unless analyst forced-included it
+
         # If we require non-zero role
         if force_active:
             allowed = [r for r in allowed if r != 0]
@@ -1375,6 +1381,12 @@ class NSGA2Engine:
     def sample_allowed_role(self, var_index, force_active=False):
         var_name = self.evaluator.vars[var_index]
         allowed = self.evaluator.allowed_roles[var_name]
+
+        # ── Ban check: if variable is banned and not force-included, only role 0 ──
+        banned = getattr(self.evaluator, "_banned_variables", set())
+        force_inc = getattr(self.evaluator, "_force_included_vars", set())
+        if var_name in banned and var_name not in force_inc:
+            return 0
 
         # If we require non-zero role
         if force_active:

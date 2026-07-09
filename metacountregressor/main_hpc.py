@@ -4094,6 +4094,8 @@ class StructureEvaluator:
 
         self.cache = {}
         self.structure_cache = set()
+        self._failed_structures = set()  # structural signatures that failed to converge
+        self._last_successful_decision = None   # for progressive variable-ban
 
     # ----------------------------------------
     # Build Spec
@@ -4271,8 +4273,12 @@ class StructureEvaluator:
 
         spec_dict = self.build_spec(decision)
         if spec_dict is None:
+            self.cache[key] = np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
             return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
         sig = self.structural_signature(spec_dict)
+
+        if sig in self._failed_structures:
+            return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
 
         if sig in self.structure_cache:
             return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
@@ -4298,6 +4304,7 @@ class StructureEvaluator:
             if self.mode == "single":
                 value = float(bic)
                 self.cache[key] = value
+                self._last_successful_decision = decision.copy()
                 return value
 
             # ✅ TEST
@@ -4317,11 +4324,49 @@ class StructureEvaluator:
             value = np.array([float(bic), float(rmse)])
 
             self.cache[key] = value
+            self._last_successful_decision = decision.copy()
             return value
 
         except Exception as e:
             print("Fitness error:", e)
-            return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
+            # Only count newly-activated variables (role 0→non-zero
+            # vs the last successful fit) as culprits of this failure.
+            if (sig is not None and self._last_successful_decision is not None
+                    and len(decision) >= len(self.vars)
+                    and len(self._last_successful_decision) >= len(self.vars)):
+                for i in range(len(self.vars)):
+                    if (int(self._last_successful_decision[i]) == 0
+                            and int(decision[i]) != 0):
+                        var = self.vars[i]
+                        if not hasattr(self, "_variable_failure_counts"):
+                            self._variable_failure_counts = {}
+                        if not hasattr(self, "_banned_variables"):
+                            self._banned_variables = set()
+                        if not hasattr(self, "_force_included_vars"):
+                            self._force_included_vars = {
+                                v for v, a in self.allowed_roles.items() if 0 not in a
+                            }
+                        if not hasattr(self, "_BAN_THRESHOLD"):
+                            self._BAN_THRESHOLD = 10
+                        if var not in self._force_included_vars:
+                            cnt = self._variable_failure_counts.get(var, 0) + 1
+                            self._variable_failure_counts[var] = cnt
+                            if cnt >= self._BAN_THRESHOLD and var not in self._banned_variables:
+                                self._banned_variables.add(var)
+                                print(f"  [ban] '{var}' excluded from future"
+                                      f" candidates ({cnt} failure{'' if cnt == 1 else 's'}"
+                                      f" when newly added); threshold = {self._BAN_THRESHOLD}")
+                if len(getattr(self, "_banned_variables", set())) > 50:
+                    self._banned_variables.clear()
+                    if hasattr(self, "_variable_failure_counts"):
+                        self._variable_failure_counts.clear()
+            if sig is not None:
+                self._failed_structures.add(sig)
+                if len(self._failed_structures) > 2000:
+                    self._failed_structures.clear()
+            fail_val = np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
+            self.cache[key] = fail_val
+            return fail_val
 
 
 

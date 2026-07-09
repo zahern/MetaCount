@@ -261,6 +261,20 @@ class StructureEvaluatorLC(StructureEvaluator):
         # Populated after every fitness() call; read by BanditGuidedSA
         # to avoid a second fit call for identifiability diagnostics.
         self._last_fit_cache: Optional[dict] = None
+        # Progressive variable-ban: track how many times each variable
+        # was NEWLY activated in a model that subsequently failed to
+        # converge.  Only variables whose role changed from 0 → non-zero
+        # relative to the last successful fit get counted — established
+        # features are never blamed for failures they didn't cause.
+        self._variable_failure_counts: Dict[str, int] = {}
+        self._banned_variables: set[str] = set()
+        self._last_successful_decision: Optional[np.ndarray] = None
+        self._BAN_THRESHOLD = 10
+        # Variables that MUST appear (role 0 forbidden).  Never banned.
+        self._force_included_vars: set[str] = set()
+        for var_name, allowed in self.allowed_roles.items():
+            if 0 not in allowed:
+                self._force_included_vars.add(var_name)
 
     # ── build_spec ──────────────────────────────────────────────────
 
@@ -599,10 +613,14 @@ class StructureEvaluatorLC(StructureEvaluator):
 
         spec_dict = self.build_spec(decision)
         if spec_dict is None:
+            self.cache[key] = np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
             return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
         sig = self.structural_signature(spec_dict)
         if sig is None:
+            return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+
+        if sig in self._failed_structures:
             return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
         if sig in self.structure_cache:
@@ -724,6 +742,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             if self.mode == "single":
                 value = float(bic)
                 self.cache[key] = value
+                self._last_successful_decision = decision.copy()
                 return value
 
             # ── Multi-objective return (BIC + test RMSE) ──────────
@@ -738,10 +757,52 @@ class StructureEvaluatorLC(StructureEvaluator):
 
             value = np.array([float(bic), float(rmse)])
             self.cache[key] = value
+            self._last_successful_decision = decision.copy()
             return value
 
         except Exception as e:
             print(f"  [fitness error] {e}")
+            if sig is not None:
+                self._failed_structures.add(sig)
+                # Cap at 2000 entries to prevent unbounded growth during
+                # long searches (the older structures are re-tested).
+                if len(self._failed_structures) > 2000:
+                    self._failed_structures.clear()
+                    print("  [fitness] cleared convergence-failure cache"
+                          " (2000 entries); will re-test previously"
+                          " failed structures.")
+            # ── Progressive variable ban ──────────────────────────
+            # Only increment failure counts for variables that were
+            # NEWLY activated in this iteration (role went from 0 in
+            # the last successful fit to non-zero now).  Variables
+            # that were already active and working should not be
+            # blamed for a failure they didn't cause.
+            D = len(self.vars)
+            if (self._last_successful_decision is not None
+                    and len(decision) >= D
+                    and len(self._last_successful_decision) >= D):
+                for i in range(min(D, len(decision))):
+                    new_role = int(decision[i])
+                    old_role = int(self._last_successful_decision[i])
+                    # Only count if this variable was just added (0→non-zero)
+                    if old_role == 0 and new_role != 0:
+                        var = self.vars[i]
+                        if var not in self._force_included_vars:
+                            cnt = self._variable_failure_counts.get(var, 0) + 1
+                            self._variable_failure_counts[var] = cnt
+                            if cnt >= self._BAN_THRESHOLD and var not in self._banned_variables:
+                                self._banned_variables.add(var)
+                                print(f"  [ban] '{var}' excluded from future"
+                                      f" candidates ({cnt} failure{'' if cnt == 1 else 's'}"
+                                      f" when newly added); threshold = {self._BAN_THRESHOLD}")
+                # Cap and clear if too many bans
+                if len(self._banned_variables) > 50:
+                    self._banned_variables.clear()
+                    self._variable_failure_counts.clear()
+                    print("  [ban] cleared variable-ban cache (50+ variables);"
+                          " will re-test previously banned variables.")
+            fail_val = np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+            self.cache[key] = fail_val
             if _is_oom_error(e):
                 # A GPU OOM here means the device is at/near capacity. Free
                 # whatever JAX can free immediately so the *next* candidate
@@ -752,7 +813,7 @@ class StructureEvaluatorLC(StructureEvaluator):
                       "clearing JAX caches before continuing search.")
                 jax.clear_caches()
                 gc.collect()
-            return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+            return fail_val
 
     # ── Adaptive identifiability helper ─────────────────────────────
 
@@ -861,9 +922,14 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
     mut_rate = float(np.clip(mut_rate, 0.0, 1.0))
 
     # ── Build helper maps ─────────────────────────────────────────────
-    active_idx   = [i for i in range(D) if roles[i] != 0]
-    excluded_idx = [i for i in range(D) if roles[i] == 0]
     var_names    = self.evaluator.vars
+    active_idx   = [i for i in range(D) if roles[i] != 0]
+    banned_vars  = getattr(self.evaluator, "_banned_variables", set())
+    force_inc    = getattr(self.evaluator, "_force_included_vars", set())
+    excluded_idx = [
+        i for i in range(D)
+        if roles[i] == 0 and var_names[i] not in (banned_vars - force_inc)
+    ]
     allowed_map  = self.evaluator.allowed_roles
     has_lc       = getattr(self.evaluator, "max_latent_classes", 1) > 1
 
