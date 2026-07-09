@@ -85,6 +85,7 @@ c = (
     .no_zi('LENGTH', 'CURVES', 'WIDTH', 'SLOPE')
     .no_random('URB')
     .allow_random('CURVES', distributions=['lognormal'])
+    .mutual_exclusion(['SPEED', 'CURVES'])   # at most one active at a time
 )
 
 # ── 3. Create the experiment ──────────────────────────────────────────────────
@@ -237,11 +238,22 @@ c = (
     .allow_membership('SPEED')                        # may also enter membership
     .outcome_only('AADT')                             # no membership role
     .exclude('YEAR', 'ID')                            # removed from search
+    .mutual_exclusion(['SPEED', 'SPEED_50'])          # never both in the model
     .set_roles('WIDTH', [0, 1, 2])                    # low-level override
 )
 
 print(c)           # display all constraints
 c.summary()        # same as print(c)
+```
+
+`mutual_exclusion` prevents multicollinearity or redundancy by ensuring at most one variable per group is active.  Pass multiple groups for multiple exclusivity rules:
+
+```python
+c = ModelConstraints().mutual_exclusion(
+    ['SPEED', 'SPEED_50'],        # speed definitions
+    ['AADT', 'ADTLANE'],          # traffic volume measures
+    ['TANGENT', 'CURVES'],        # alignment descriptors
+)
 ```
 
 Get detailed API documentation:

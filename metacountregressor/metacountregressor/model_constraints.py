@@ -74,6 +74,8 @@ class ModelConstraints:
         self._dists: dict[str, list[str]] = {}
         # variables to exclude entirely
         self._excluded: list[str] = []
+        # mutual-exclusion groups: list of frozensets of variable names
+        self._mutual_exclusion: list[frozenset[str]] = []
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -204,6 +206,42 @@ class ModelConstraints:
                 self._excluded.append(v)
         return self
 
+    def mutual_exclusion(self, *groups: Sequence[str]) -> "ModelConstraints":
+        """
+        Prevent two or more variables in the same *group* from being
+        simultaneously active (role != 0) in the same model.
+
+        Parameters
+        ----------
+        *groups
+            Each argument is a sequence of variable names that must be
+            mutually exclusive.  You may pass multiple groups.
+
+        Returns
+        -------
+        ModelConstraints
+            Self, for chaining.
+
+        Example
+        -------
+        >>> c = ModelConstraints()
+        >>> c.mutual_exclusion(['SPEED', 'SPEED_50'], ['AADT', 'ADTLANE'])
+        >>> # Now SPEED and SPEED_50 will never both appear in a model,
+        >>> # and ADTLANE cannot appear alongside AADT.
+
+        Notes
+        -----
+        Only the first active variable in a group is kept during repair;
+        all others are forced to role 0.  The constraint is enforced inside
+        ``build_spec()``, ``is_feasible()``, and ``repair()``.
+        """
+        for group in groups:
+            if len(group) < 2:
+                raise ValueError(f"Mutual-exclusion group must have at least "
+                                 f"2 variables, got {len(group)}: {group}")
+            self._mutual_exclusion.append(frozenset(group))
+        return self
+
     def set_roles(self, variable: str, roles: list[int]) -> "ModelConstraints":
         """
         Directly set the allowed role codes for *variable*.
@@ -287,6 +325,8 @@ class ModelConstraints:
             result["exclude"] = list(self._excluded)
         if self._dists:
             result["dist_override"] = dict(self._dists)
+        if self._mutual_exclusion:
+            result["mutual_exclusion"] = [sorted(g) for g in self._mutual_exclusion]
         return result
 
     # ------------------------------------------------------------------
@@ -311,6 +351,8 @@ class ModelConstraints:
             if var in self._dists:
                 dist_str = f"  dists={self._dists[var]}"
             lines.append(f"  {var!r}: [{role_str}]{dist_str}")
+        if self._mutual_exclusion:
+            lines.append(f"  mutual_exclusion={[sorted(g) for g in self._mutual_exclusion]}")
         lines.append(")")
         return "\n".join(lines)
 

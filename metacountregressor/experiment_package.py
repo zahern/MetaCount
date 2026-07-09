@@ -254,9 +254,10 @@ class StructureEvaluatorLC(StructureEvaluator):
       • warm-started LC estimation in fitness()
     """
 
-    def __init__(self, *args, max_latent_classes: int = 3, **kwargs):
+    def __init__(self, *args, max_latent_classes: int = 3, mutual_exclusion=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_latent_classes = max(1, int(max_latent_classes))
+        self.mutual_exclusion = mutual_exclusion or []
         # Populated after every fitness() call; read by BanditGuidedSA
         # to avoid a second fit call for identifiability diagnostics.
         self._last_fit_cache: Optional[dict] = None
@@ -311,6 +312,17 @@ class StructureEvaluatorLC(StructureEvaluator):
         class_fixed   = [[] for _ in range(struct_lc)]
         class_rdm_ind = [[] for _ in range(struct_lc)]
         class_rdm_cor = [[] for _ in range(struct_lc)]
+
+        # ── Mutual-exclusion check ────────────────────────────────────
+        if self.mutual_exclusion:
+            for group in self.mutual_exclusion:
+                # Count how many variables in this group have role != 0
+                active_in_group = 0
+                for i, var in enumerate(self.vars):
+                    if var in group and int(roles[i]) != 0:
+                        active_in_group += 1
+                        if active_in_group > 1:
+                            return None  # more than one active → invalid
 
         for i, var in enumerate(self.vars):
             role = int(roles[i])
@@ -2580,6 +2592,7 @@ class ExperimentBuilder:
         fixed_override:      Optional[Dict[str, list]] = None,
         membership_override: Optional[Dict[str, list]] = None,
         exclude:             Optional[List[str]]       = None,
+        mutual_exclusion:    Optional[List[List[str]]] = None,
         mode:                str                       = "single",
         max_latent_classes:  int                       = 1,
         R:                   int                       = 200,
@@ -2656,6 +2669,10 @@ class ExperimentBuilder:
             }
             _c_exclude = _ckw.get("exclude", [])
             exclude = list(dict.fromkeys(list(_c_exclude) + list(exclude or [])))
+            # Mutual exclusion groups from constraints (merged, explicit wins)
+            _c_mutex = _ckw.get("mutual_exclusion", [])
+            if _c_mutex:
+                mutual_exclusion = (_c_mutex + (mutual_exclusion or [])) if mutual_exclusion else _c_mutex
             # Distribution overrides from constraints (merged, explicit wins)
             if "dist_override" in _ckw:
                 family_kwargs.setdefault("dist_override", {})
@@ -2690,6 +2707,7 @@ class ExperimentBuilder:
             all_variables         = variables,
             allowed_roles         = allowed_roles,
             allowed_distributions = allowed_dists,
+            mutual_exclusion      = mutual_exclusion,
             group_id_col          = self.group_id_col,
             mode                  = mode,
             R                     = R,

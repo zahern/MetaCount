@@ -66,6 +66,39 @@ ROLE_PROBS = np.array([
 ROLE_PROBS = ROLE_PROBS / ROLE_PROBS.sum()
 
 
+# ── Mutual-exclusion helpers ──────────────────────────────────────────
+
+def _count_mutex_violations(roles, vars_list, mutex_groups):
+    """Return number of mutual-exclusion groups with >1 active variable."""
+    violations = 0
+    for group in mutex_groups:
+        active = 0
+        for i, v in enumerate(vars_list):
+            if v in group and int(roles[i]) != 0:
+                active += 1
+        if active > 1:
+            violations += 1
+    return violations
+
+
+def _repair_mutex(roles, vars_list, mutex_groups, rng=None):
+    """Force at most one active variable per mutual-exclusion group.
+
+    If multiple variables in a group have role != 0, keep only the
+    first one and set the rest to 0.
+    """
+    if rng is None:
+        rng = np.random
+    for group in mutex_groups:
+        kept = False
+        for i, v in enumerate(vars_list):
+            if v in group and int(roles[i]) != 0:
+                if not kept:
+                    kept = True
+                else:
+                    roles[i] = 0
+    return roles
+
 
 class AdvancedSimulatedAnnealing:
 
@@ -187,11 +220,17 @@ class AdvancedSimulatedAnnealing:
             if not (2 in roles or 3 in roles):
                 return False
 
+        # Rule 2: mutual exclusion – at most one active per group
+        mutex = getattr(self.evaluator, "mutual_exclusion", None)
+        if mutex:
+            if _count_mutex_violations(roles, self.evaluator.vars, mutex) > 0:
+                return False
+
         return True
     
     
     def repair(self, solution):
-                                              
+                                               
         D = self.dim_core
         roles = solution[:D]
 
@@ -209,8 +248,13 @@ class AdvancedSimulatedAnnealing:
                 idx = np.random.randint(D)
                 roles[idx] = np.random.choice([2, 3])
 
+        # Mutual-exclusion repair: keep only the first active in each group
+        mutex = getattr(self.evaluator, "mutual_exclusion", None)
+        if mutex:
+            roles = _repair_mutex(roles, self.evaluator.vars, mutex, rng=np.random)
+
         solution[:D] = roles
-           
+            
         return solution
     
     
@@ -1593,6 +1637,11 @@ class NSGA2Engine:
         if 5 in roles and not (2 in roles or 3 in roles):
             violation += 1.0   # magnitude of violation
 
+        # Mutual exclusion violation penalty
+        mutex = getattr(self.evaluator, "mutual_exclusion", None)
+        if mutex:
+            violation += _count_mutex_violations(roles, self.evaluator.vars, mutex)
+
         return violation
     
     
@@ -1611,6 +1660,11 @@ class NSGA2Engine:
                 # force convert one variable
                 idx = np.random.randint(D)
                 roles[idx] = np.random.choice([2,3])
+
+        # Mutual-exclusion repair
+        mutex = getattr(self.evaluator, "mutual_exclusion", None)
+        if mutex:
+            roles = _repair_mutex(roles, self.evaluator.vars, mutex, rng=np.random)
 
         solution[:D] = roles
         return solution
