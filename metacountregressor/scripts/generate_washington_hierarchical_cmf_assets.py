@@ -97,6 +97,58 @@ VARIABLE_LABELS: dict[str, str] = {
     # ── Derived / auxiliary ──────────────────────────────────────────────
     "EXPOSE":   "Exposure Index",
     "INTPM":    "Intersection Density (intersections per mile)",
+
+    # ── Maine rural intersections: geometry / segment ──────────────────────
+    "segment_length":       "Segment Length (mi)",
+    "curve":                "Curvature Indicator",
+    "speed":                "Posted Speed (mph)",
+    "paved_shoulder":       "Paved Shoulder Indicator",
+    "num_lanes":            "Number of Lanes",
+    "left_shoulder_width":  "Left Shoulder Width (ft)",
+    "right_shoulder_width": "Right Shoulder Width (ft)",
+    "has_rumble":           "Rumble Strip Present",
+    "dummy_winter":         "Winter Season Indicator",
+    # ── Maine rural intersections: NOAA GHCN monthly climate normals ───────
+    # Standard NOAA element codes (see NOAA GHCN-Daily/Normals documentation).
+    "PRCP":  "Monthly Total Precipitation (in)",
+    "SNOW":  "Monthly Total Snowfall (in)",
+    "TAVG":  "Average Monthly Temperature (°F)",
+    "TMAX":  "Average Monthly Maximum Temperature (°F)",
+    "TMIN":  "Average Monthly Minimum Temperature (°F)",
+    "DP01":  "Days with ≥ 0.01in Precipitation (count/month)",
+    "DP10":  "Days with ≥ 0.10in Precipitation (count/month)",
+    "DX32":  "Days with Max Temp ≤ 32°F (freezing days/month)",
+    "DSNW":  "Days with Snowfall ≥ 1.0in (count/month)",
+    "DSND":  "Days with Snow Depth ≥ 1in on Ground (count/month)",
+    "max_prcp": "Maximum Single-Day Precipitation in Month (in)",
+    "max_snow": "Maximum Single-Day Snowfall in Month (in)",
+
+    # ── Queensland heavy vehicles: roadway / traffic ────────────────────────
+    # Labels below follow the variable descriptions given in the paper text
+    # (hierarchical_cmf_paper.tex, Data and Methods / Table tab:qld_coefs).
+    # WC_P, S_B, SS_B, and ATLM are intentionally NOT labelled here: their
+    # exact definitions could not be confirmed against the paper text or a
+    # data dictionary, and a wrong guess would be worse than the raw code.
+    "SP":     "Speed Limit 100 km/h Indicator",
+    "HSP":    "High Speed-Limit Indicator",
+    "MSP":    "Medium Speed-Limit Indicator",
+    "LSP":    "Low Speed-Limit Indicator",
+    "Nlanes": "Number of Lanes",
+    "F_W":    "Formation Width (m)",
+    "MCV":    "Multi-Combination Vehicle Traffic Volume",
+    "US":     "Urban Single Carriageway Indicator",
+    "UD":     "Urban Dual Carriageway Indicator",
+    "RS":     "Rural Single Carriageway Indicator",
+    "RD":     "Rural Dual Carriageway Indicator",
+    "RSHS":   "Rural Single Carriageway × High Speed Limit",
+    "RSMS":   "Rural Single Carriageway × Medium Speed Limit",
+    "Curve50": "Curve Radius < 50m Indicator",
+    "Median": "Median Present Indicator",
+    "L_Ter":  "Level Terrain Indicator",
+    "Roll_Ter": "Rolling Terrain Indicator",
+    "Mt_Ter": "Mountainous Terrain Indicator",
+    "INT_NO_R": "Intersection Without Roundabout (count/density)",
+    "INT_R":  "Intersection With Roundabout (count/density)",
 }
 
 # Tooltip descriptions shown in the dashboard on hover
