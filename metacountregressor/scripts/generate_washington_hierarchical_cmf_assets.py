@@ -528,9 +528,17 @@ def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
         spec  = _make_spec(Kf, [f"_x{i}" for i in range(Kf)], family)
         K     = Kf + (1 if family == "nb" else 0)
 
-        # Warm start: intercept ≈ log(mean(y)), log_alpha ≈ 0
+        # Warm start: intercept ≈ log(mean(y)) - mean(offset), log_alpha ≈ 0.
+        # Subtracting the offset matters whenever it is large (e.g. a
+        # log(length * AADT) exposure term of magnitude ~10): starting the
+        # intercept at log(mean(y)) alone implies an initial fitted mean of
+        # exp(log(mean(y)) + offset), off by a factor of e^offset from the
+        # data -- an enormous initial loss/gradient that can send LBFGS to a
+        # divergent optimum (huge intercept + huge dispersion) instead of
+        # converging near the true, well-identified solution.
         p0    = np.zeros(K)
-        p0[0] = float(np.log(np.clip(float(np.mean(y_np)), 1e-8, None)))
+        mean_offset = float(np.mean(offset_np)) if offset_np is not None else 0.0
+        p0[0] = float(np.log(np.clip(float(np.mean(y_np)), 1e-8, None))) - mean_offset
 
         col_sd = np.std(X_np, axis=0)
         col_sd = np.where(col_sd > 1e-12, col_sd, 1.0)
