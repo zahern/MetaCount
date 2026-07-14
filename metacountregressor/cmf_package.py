@@ -192,35 +192,44 @@ class CMFExperimentBuilder:
         print(cmf_table)
         """
         import math
-        
-        summary = fit_result.get("summary", {})
+
+        summary_df = fit_result.get("summary")
         aadt_median = self.df[self.aadt_col].median()
-        
+
         cmf_rows = []
-        
-        # Extract baseline coefficients
-        if "baseline" in summary:
-            baseline_vars = summary.get("baseline", {})
-            for param_name, param_info in baseline_vars.items():
-                if isinstance(param_info, dict):
-                    coef_value = param_info.get("coef", np.nan)
-                else:
-                    coef_value = float(param_info)
-                
-                if np.isfinite(coef_value):
+
+        # summary_df is the DataFrame produced by build_summary_table(): columns
+        # Parameter/Estimate/Std.Err/z/p-value, with parameter names of the form
+        # alpha0, alpha[VAR], sigma_alpha[VAR], beta0, beta[VAR], sigma_beta[VAR]
+        # (see GA_CMF_AADT_JAX._param_labels). Intercepts and heterogeneity-sigma
+        # rows aren't per-variable CMFs, so they're skipped here.
+        if summary_df is not None and hasattr(summary_df, "iterrows"):
+            for _, row in summary_df.iterrows():
+                param_name = str(row["Parameter"])
+                coef_value = float(row["Estimate"])
+                if not np.isfinite(coef_value):
+                    continue
+                if param_name.startswith("sigma_") or param_name in ("alpha0", "beta0", "log_theta"):
+                    continue
+
+                baseline_match = re.fullmatch(r"alpha\[(.+)\]", param_name)
+                local_match = re.fullmatch(r"beta\[(.+)\]", param_name)
+
+                if baseline_match:
+                    var_name = baseline_match.group(1)
                     try:
                         cmf_one_unit = math.exp(coef_value)
                         percent_change = 100.0 * (cmf_one_unit - 1.0)
-                        
+
                         if percent_change < 0:
-                            interpretation = f"{param_name} +1 → {percent_change:.2f}% crashes"
+                            interpretation = f"{var_name} +1 → {percent_change:.2f}% crashes"
                         elif percent_change > 0:
-                            interpretation = f"{param_name} +1 → +{percent_change:.2f}% crashes"
+                            interpretation = f"{var_name} +1 → +{percent_change:.2f}% crashes"
                         else:
-                            interpretation = f"{param_name} +1 → No change"
-                        
+                            interpretation = f"{var_name} +1 → No change"
+
                         cmf_rows.append({
-                            "Parameter": param_name,
+                            "Parameter": var_name,
                             "Component": "Baseline (Inherent Risk)",
                             "Coefficient": coef_value,
                             "CMF(+1)": cmf_one_unit,
@@ -229,39 +238,30 @@ class CMFExperimentBuilder:
                         })
                     except (ValueError, OverflowError):
                         pass
-        
-        # Extract local (AADT-dependent) coefficients
-        if "local" in summary:
-            local_vars = summary.get("local", {})
-            for param_name, param_info in local_vars.items():
-                if isinstance(param_info, dict):
-                    coef_value = param_info.get("coef", np.nan)
-                else:
-                    coef_value = float(param_info)
-                
-                if np.isfinite(coef_value):
+                elif local_match:
+                    var_name = local_match.group(1)
                     try:
                         # For AADT-dependent terms, compute effect at median AADT
                         if aadt_median and aadt_median > 0:
                             cmf_at_median = math.exp(coef_value * math.log(aadt_median))
                             percent_change = 100.0 * (cmf_at_median - 1.0)
-                            interpretation = (f"{param_name} +1 → Reduces AADT elasticity; "
+                            interpretation = (f"{var_name} +1 → Reduces AADT elasticity; "
                                             f"at median AADT ({aadt_median:,.0f}): {percent_change:.2f}% crashes")
                         else:
                             percent_change = 100.0 * (math.exp(coef_value) - 1.0)
-                            interpretation = f"{param_name} +1 → {percent_change:+.2f}% (AADT-dependent)"
-                        
+                            interpretation = f"{var_name} +1 → {percent_change:+.2f}% (AADT-dependent)"
+
                         cmf_rows.append({
-                            "Parameter": param_name,
+                            "Parameter": var_name,
                             "Component": "AADT Response (Traffic Sensitivity)",
                             "Coefficient": coef_value,
-                            "CMF(+1)": math.exp(coef_value) if percent_change is not None else np.nan,
+                            "CMF(+1)": math.exp(coef_value),
                             "Percent Change": percent_change,
                             "Interpretation": interpretation,
                         })
                     except (ValueError, OverflowError):
                         pass
-        
+
         cmf_df = pd.DataFrame(cmf_rows)
         
         print("\n" + "=" * 110)

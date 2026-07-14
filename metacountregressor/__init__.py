@@ -69,6 +69,14 @@ __all__ = [
     "plot_cmf_search_convergence",
     "plot_cmf_obs_vs_pred",
     "plot_cmf_model_comparison",
+    # Pavement deterioration (clusterwise log-log regression search)
+    "PavementCLROptimizer",
+    "PavementTemporalComparison",
+    "log_transform_pavement",
+    "fit_cluster_ols",
+    "fit_cluster_ar1",
+    "fit_cluster_random_walk",
+    "fit_cluster_nur",
 ]
 
 _EXPORTS = {
@@ -128,6 +136,14 @@ _EXPORTS = {
     "fit_famoye_nb": ("bivariate_copula", "fit_famoye_nb"),
     "fit_marshall_olkin_nb": ("bivariate_copula", "fit_marshall_olkin_nb"),
     "compare_bivariate_copulas": ("bivariate_copula", "compare_bivariate_copulas"),
+    # Pavement deterioration
+    "PavementCLROptimizer": ("pavement_clr", "PavementCLROptimizer"),
+    "PavementTemporalComparison": ("pavement_clr", "PavementTemporalComparison"),
+    "log_transform_pavement": ("pavement_clr", "log_transform_pavement"),
+    "fit_cluster_ols": ("pavement_clr", "fit_cluster_ols"),
+    "fit_cluster_ar1": ("pavement_clr", "fit_cluster_ar1"),
+    "fit_cluster_random_walk": ("pavement_clr", "fit_cluster_random_walk"),
+    "fit_cluster_nur": ("pavement_clr", "fit_cluster_nur"),
 }
 
 _LEGACY_EXPORTS = {
