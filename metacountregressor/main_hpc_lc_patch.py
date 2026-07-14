@@ -932,6 +932,17 @@ def fit_em(init_params, data, spec: ModelSpec,
         best_ll = -np.inf
 
     prev_ll = best_ll
+    prev_params = params.copy()
+    # A per-class M-step LBFGS call has no bound on how far theta can move
+    # and occasionally wanders to a numerically extreme point (e.g. an
+    # overflowing linear predictor), producing a params update that is
+    # drastically worse than the previous iterate. Since that divergent
+    # update otherwise becomes the *next* iteration's warm start, it
+    # propagates forward and derails several subsequent iterations --
+    # visible as large spikes in the objective trace. DIVERGENCE_TOL bounds
+    # how much the LL is allowed to drop in one iteration before that
+    # iterate is discarded in favour of the last good one.
+    DIVERGENCE_TOL = 50.0
     trace = []  # (iteration, T, m_iters, LL, delta_LL, class_shares)
 
     for iteration in range(max_iter):
@@ -1069,6 +1080,16 @@ def fit_em(init_params, data, spec: ModelSpec,
         if np.isfinite(current_ll) and current_ll > best_ll:
             best_ll     = current_ll
             best_params = params.copy()
+
+        # Divergence guard: discard this iteration's update if it is
+        # non-finite or drops the LL by more than DIVERGENCE_TOL, reverting
+        # to the last good iterate instead of carrying a diverged M-step
+        # forward as the next E-step's warm start (see note above the loop).
+        if not np.isfinite(current_ll) or current_ll < prev_ll - DIVERGENCE_TOL:
+            params = prev_params.copy()
+            current_ll = prev_ll
+        else:
+            prev_params = params.copy()
 
         ll_delta = abs(current_ll - prev_ll) if np.isfinite(current_ll) else np.inf
         prev_ll  = current_ll

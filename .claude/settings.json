@@ -37,7 +37,8 @@
       "PowerShell(Import-Csv \"C:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\\\\metacountregressor\\\\Re_ CMF\\\\washington_predictions.csv\")",
       "PowerShell(Import-Csv \"C:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\\\\metacountregressor\\\\Re_ CMF\\\\maine_predictions.csv\")",
       "PowerShell(Import-Csv \"C:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\\\\metacountregressor\\\\Re_ CMF\\\\queensland_predictions.csv\")",
-      "PowerShell(Import-Csv \"C:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\\\\metacountregressor\\\\Re_ CMF\\\\Parameters_hierarchical_models.csv\" -Delimiter \";\")"
+      "PowerShell(Import-Csv \"C:\\\\Users\\\\ahernz\\\\source\\\\MetaCount\\\\metacountregressor\\\\Re_ CMF\\\\Parameters_hierarchical_models.csv\" -Delimiter \";\")",
+      "Read(//z/test_runs_tours/demand_/paper/Unofficial_Transportation_Research_Board__TRB__LaTeX_template/**)"
     ],
     "additionalDirectories": [
       "Z:\\latent_class_metacount\\metacountregressor",
