@@ -29,6 +29,8 @@ __all__ = [
     "fit_cluster_random_walk",
     "fit_cluster_nur",
     "log_transform_pavement",
+    "forecast_deterioration",
+    "forecast_to_threshold",
     # Data loaders
     "load_example16_3_model_data",
     "load_example16_3_raw_data",
@@ -67,6 +69,8 @@ _EXPORTS = {
     "fit_cluster_random_walk": ("pavement_clr", "fit_cluster_random_walk"),
     "fit_cluster_nur": ("pavement_clr", "fit_cluster_nur"),
     "log_transform_pavement": ("pavement_clr", "log_transform_pavement"),
+    "forecast_deterioration": ("pavement_clr", "forecast_deterioration"),
+    "forecast_to_threshold": ("pavement_clr", "forecast_to_threshold"),
     "CMFFamilySearchProblem": ("family_search", "CMFFamilySearchProblem"),
     "DurationSearchProblem": ("family_search", "DurationSearchProblem"),
     "ExperimentBuilder": ("experiment_package", "ExperimentBuilder"),

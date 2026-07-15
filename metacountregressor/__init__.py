@@ -77,6 +77,8 @@ __all__ = [
     "fit_cluster_ar1",
     "fit_cluster_random_walk",
     "fit_cluster_nur",
+    "forecast_deterioration",
+    "forecast_to_threshold",
 ]
 
 _EXPORTS = {
@@ -144,6 +146,8 @@ _EXPORTS = {
     "fit_cluster_ar1": ("pavement_clr", "fit_cluster_ar1"),
     "fit_cluster_random_walk": ("pavement_clr", "fit_cluster_random_walk"),
     "fit_cluster_nur": ("pavement_clr", "fit_cluster_nur"),
+    "forecast_deterioration": ("pavement_clr", "forecast_deterioration"),
+    "forecast_to_threshold": ("pavement_clr", "forecast_to_threshold"),
 }
 
 _LEGACY_EXPORTS = {

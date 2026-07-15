@@ -35,6 +35,15 @@ import pandas as pd
 from scipy.optimize import minimize as _scipy_minimize
 from scipy.stats import t as _tdist
 
+try:
+    import jax
+    import jax.numpy as jnp
+    JAX_PRESENT = True
+except ImportError:
+    jax = None
+    jnp = np
+    JAX_PRESENT = False
+
 __all__ = [
     "PavementCLROptimizer",
     "PavementTemporalComparison",
@@ -43,10 +52,76 @@ __all__ = [
     "fit_cluster_random_walk",
     "fit_cluster_nur",
     "log_transform_pavement",
+    "forecast_deterioration",
+    "forecast_to_threshold",
 ]
 
 
 # ============================================================
+# JAX helpers — JIT-compiled log-likelihoods for temporal models
+# (same pattern as bivariate_copula.py: jit + grad, scipy as solver)
+# ============================================================
+
+if JAX_PRESENT:
+
+    @jax.jit
+    def _jax_ar1_neg_ll(beta, rho_raw, log_sig, X, y, seg_delta_idx):
+        rho = jnp.clip(rho_raw, -0.999, 0.999)
+        sigma2 = jnp.exp(2.0 * log_sig)
+        resid = y - X @ beta
+        r_next = resid[seg_delta_idx[1]]
+        r_prev = resid[seg_delta_idx[0]]
+        innov = r_next - rho * r_prev
+        n_transitions = seg_delta_idx.shape[1]
+        ll_transitions = (
+            0.5 * n_transitions * jnp.log(2.0 * jnp.pi * sigma2)
+            + 0.5 * jnp.sum(innov * innov) / sigma2
+        )
+        seps = jnp.concatenate([jnp.array([0]), seg_delta_idx[2], jnp.array([len(resid)])])
+        var_init = sigma2 / jnp.maximum(1.0 - rho * rho, 1e-10)
+        r_first = resid[seps[:-2]]
+        ll_init = jnp.sum(
+            0.5 * jnp.log(2.0 * jnp.pi * var_init) + 0.5 * r_first * r_first / var_init
+        )
+        return ll_transitions + ll_init
+
+    @jax.jit
+    def _jax_nur_neg_ll(beta, rho, log_sig, mu, X, y, seg_starts, seg_ends):
+        sigma2 = jnp.exp(2.0 * log_sig)
+        n = y.shape[0]
+        resid = y - mu - X @ beta
+        rho_clip = jnp.clip(rho, 0.85, 1.0)
+        lagged = jnp.where(jnp.arange(n) > 0, y[jnp.maximum(jnp.arange(n) - 1, 0)], mu)
+        lagged = jnp.where(jnp.isin(jnp.arange(n), seg_starts), mu, lagged)
+        innov = y - rho_clip * lagged - (1.0 - rho_clip) * mu - X @ beta
+        ll_main = 0.5 * n * jnp.log(2.0 * jnp.pi * sigma2) + 0.5 * jnp.sum(innov * innov) / sigma2
+        var_init = sigma2 / jnp.maximum(1.0 - rho_clip * rho_clip, 1e-10)
+        r_init = y[seg_starts] - mu - X[seg_starts] @ beta
+        ll_init = jnp.sum(
+            0.5 * jnp.log(2.0 * jnp.pi * var_init) + 0.5 * r_init * r_init / var_init
+        )
+        return ll_main + ll_init
+
+
+def _build_ar1_seg_indices(seg_ids: np.ndarray) -> tuple:
+    n = len(seg_ids)
+    next_idx = []; prev_idx = []; seg_start_idx = []
+    for i in range(n - 1):
+        if seg_ids[i] == seg_ids[i + 1]:
+            next_idx.append(i + 1); prev_idx.append(i)
+    for i in range(n):
+        if i == 0 or seg_ids[i] != seg_ids[i - 1]:
+            seg_start_idx.append(i)
+    return (np.array(prev_idx, dtype=np.int32),
+            np.array(next_idx, dtype=np.int32),
+            np.array(seg_start_idx, dtype=np.int32))
+
+
+# ============================================================
+# Data transformation
+# ============================================================
+
+
 # Data transformation
 # ============================================================
 
@@ -331,44 +406,69 @@ def fit_cluster_ar1(
     sigma0 = sqrt(max(ols["rss"] / (n - p), 1e-8))
 
     seg_ids = df_log[segment_col].values.astype(int)
-    unique_segs = np.unique(seg_ids)
-    seg_idx = {s: np.where(seg_ids == s)[0] for s in unique_segs}
-
-    def neg_ll(params):
-        beta = params[:p]
-        rho = np.clip(params[p], -0.999, 0.999)
-        log_sig = params[p + 1]
-        sigma2 = np.exp(2 * log_sig)
-        resid = y - X @ beta
-        total = 0.0
-        for s, idx in seg_idx.items():
-            r = resid[idx]
-            T = len(r)
-            if T < 2:
-                continue
-            innovations = r[1:] - rho * r[:-1]
-            total += 0.5 * (T - 1) * log(2 * pi * sigma2)
-            total += 0.5 * np.sum(innovations ** 2) / sigma2
-            # Stationary initial condition
-            var_init = sigma2 / max(1.0 - rho ** 2, 1e-10)
-            total += 0.5 * log(2 * pi * var_init) + 0.5 * r[0] ** 2 / var_init
-        return total
-
     x0 = np.zeros(p + 2)
     x0[:p] = beta0
     x0[p] = 0.5
     x0[p + 1] = log(max(sigma0, 1e-4))
-    try:
-        res = _scipy_minimize(neg_ll, x0, method="L-BFGS-B",
-                              bounds=[(-np.inf, np.inf)] * p + [(-0.999, 0.999), (-10, 10)],
-                              options={"maxiter": 300, "ftol": 1e-7})
-        params = res.x
-    except Exception:
-        return None
 
-    beta = params[:p]
-    rho = float(np.clip(params[p], -0.999, 0.999))
-    sigma = float(np.exp(params[p + 1]))
+    if JAX_PRESENT:
+        prev_idx, next_idx, seg_start_idx = _build_ar1_seg_indices(seg_ids)
+        delta_idx = jnp.array([prev_idx, next_idx, seg_start_idx], dtype=jnp.int32)
+        X_j = jnp.asarray(X); y_j = jnp.asarray(y)
+
+        def neg_ll_jax(params):
+            return _jax_ar1_neg_ll(
+                params[:p], params[p], params[p + 1], X_j, y_j, delta_idx)
+
+        jax_ok = False
+        try:
+            g = jax.jit(jax.grad(neg_ll_jax))
+            def obj(par):
+                return float(neg_ll_jax(jnp.asarray(par))), np.asarray(g(jnp.asarray(par)))
+            res = _scipy_minimize(obj, x0, jac=True, method="L-BFGS-B",
+                                   bounds=[(None, None)] * p + [(-0.999, 0.999), (-10, 10)],
+                                   options={"maxiter": 300, "ftol": 1e-7})
+            params = res.x
+            beta, rho_raw, log_sig = params[:p], params[p], params[p + 1]
+            rho = float(np.clip(rho_raw, -0.999, 0.999))
+            sigma = float(np.exp(log_sig))
+            jax_ok = True
+        except Exception:
+            pass
+
+    if not JAX_PRESENT or not jax_ok:
+        unique_segs = np.unique(seg_ids)
+        seg_idx = {s: np.where(seg_ids == s)[0] for s in unique_segs}
+
+        def neg_ll(params):
+            beta_p = params[:p]
+            rho_p = np.clip(params[p], -0.999, 0.999)
+            log_sig_p = params[p + 1]
+            sigma2 = np.exp(2 * log_sig_p)
+            resid = y - X @ beta_p
+            total = 0.0
+            for s, idx in seg_idx.items():
+                r = resid[idx]
+                T = len(r)
+                if T < 2:
+                    continue
+                innovations = r[1:] - rho_p * r[:-1]
+                total += 0.5 * (T - 1) * log(2 * pi * sigma2)
+                total += 0.5 * np.sum(innovations ** 2) / sigma2
+                var_init = sigma2 / max(1.0 - rho_p ** 2, 1e-10)
+                total += 0.5 * log(2 * pi * var_init) + 0.5 * r[0] ** 2 / var_init
+            return total
+
+        try:
+            res = _scipy_minimize(neg_ll, x0, method="L-BFGS-B",
+                                   bounds=[(None, None)] * p + [(-0.999, 0.999), (-10, 10)],
+                                   options={"maxiter": 300, "ftol": 1e-7})
+            params = res.x
+        except Exception:
+            return None
+        beta, rho_raw, log_sig = params[:p], params[p], params[p + 1]
+        rho = float(np.clip(rho_raw, -0.999, 0.999))
+        sigma = float(np.exp(log_sig))
 
     resid = y - X @ beta
     rss = float(np.sum(resid ** 2))
@@ -630,6 +730,114 @@ def fit_cluster_nur(
 
 
 # ============================================================
+# Standalone forecasting utilities
+# ============================================================
+
+def forecast_deterioration(
+    fit: dict,
+    df_segment: pd.DataFrame,
+    n_years: int = 20,
+    future_aadt_growth: float = 0.0,
+) -> pd.DataFrame:
+    """
+    Project single-segment PSI forward from a fitted temporal model.
+
+    Uses the most compatible forward-projection rule for the fitted model type:
+    - OLS / AR(1): deterministic prediction from covariates.
+    - Random Walk: drift-based drift-forward projection.
+    - Near-Unit-Root: recursive NUR projection using fitted rho.
+
+    Parameters
+    ----------
+    fit : dict
+        Fitted model dict from fit_cluster_ols / fit_cluster_ar1 /
+        fit_cluster_random_walk / fit_cluster_nur.
+    df_segment : DataFrame
+        Single-segment data (one row per year), sorted by time.
+    n_years : int
+        Number of years to project forward.
+    future_aadt_growth : float
+        Fractional annual AADT growth applied to future years.
+
+    Returns
+    -------
+    DataFrame with columns: year, PSI_pred.
+    """
+    mt = fit.get("model_type", "OLS")
+    last_row = df_segment.iloc[-1:].copy()
+    psi_col = "psi" if "psi" in df_segment.columns else None
+
+    if mt in ("Random_Walk", "Near_Unit_Root"):
+        drift = fit.get("drift_rw", fit.get("drift_nur", 0.0))
+        rho_nur = fit.get("rho_nur", 1.0) if mt == "Near_Unit_Root" else 1.0
+        last_psi = float(last_row[psi_col].values[0]) if psi_col else 0.0
+        rows = []
+        psi_val = last_psi
+        for t in range(1, n_years + 1):
+            if mt == "Near_Unit_Root":
+                psi_val = rho_nur * psi_val + (1 - rho_nur) * drift
+            else:
+                psi_val = psi_val + drift
+            rows.append({"year": int(t), "PSI_pred": exp(psi_val) if psi_col else psi_val})
+        return pd.DataFrame(rows)
+
+    # OLS / AR(1): deterministic
+    coeffs = fit.get("coeff_dict", {})
+    rows = []
+    for t in range(1, n_years + 1):
+        row = last_row.copy()
+        if "age" in row.columns:
+            row["age"] = row["age"].values + t
+        if future_aadt_growth > 0:
+            for tc in ["aadt", "AADT"]:
+                if tc in row.columns:
+                    row[tc] = row[tc].values * ((1 + future_aadt_growth) ** t)
+        val = coeffs.get("Intercept", 0.0)
+        for vname in coeffs:
+            if vname == "Intercept" or vname.startswith("_"):
+                continue
+            raw = float(row[vname].values[0]) if vname in row.columns else 0.0
+            if raw > 0:
+                val += coeffs[vname] * log(raw)
+            else:
+                val += coeffs[vname] * raw
+        rows.append({"year": int(t), "PSI_pred": exp(val)})
+    return pd.DataFrame(rows)
+
+
+def forecast_to_threshold(
+    fit: dict,
+    df_segment: pd.DataFrame,
+    psi_threshold: float = 2.0,
+    max_years: int = 50,
+    future_aadt_growth: float = 0.0,
+) -> int:
+    """
+    Estimate remaining years until PSI drops below a threshold.
+
+    Parameters
+    ----------
+    fit : dict
+        Fitted model dict.
+    df_segment : DataFrame
+        Single-segment data, sorted by time.
+    psi_threshold : float
+        Critical PSI value.
+    max_years : int
+        Horizon to search (returns max_years if threshold never reached).
+    future_aadt_growth : float
+        Fractional annual AADT growth.
+
+    Returns
+    -------
+    int : number of years until threshold is crossed.
+    """
+    fore = forecast_deterioration(fit, df_segment, n_years=max_years,
+                                   future_aadt_growth=future_aadt_growth)
+    below = fore[fore["PSI_pred"] <= psi_threshold]
+    if len(below) == 0:
+        return max_years
+    return int(below["year"].min())
 # PavementCLROptimizer — SA-based cluster + variable search
 # ============================================================
 
@@ -643,7 +851,7 @@ class PavementCLROptimizer:
     - Per-cluster variable inclusion masks
 
     This implements the methodology in Khadka & Paz (2017/2018) extended with
-    the joint variable–cluster SA state and BIC objective.
+    the joint variable--cluster SA state and BIC objective.
 
     Parameters
     ----------
@@ -669,6 +877,8 @@ class PavementCLROptimizer:
         BIC scaling constant in the acceptance criterion.
     n_changes : int
         Number of segment reassignments per SA neighbour.
+    n_jobs : int
+        Number of parallel workers for cluster fitting (-1 = all cores).
 
     Examples
     --------
@@ -695,6 +905,7 @@ class PavementCLROptimizer:
         boltzmann: float = 80.0,
         n_changes: int = 80,
         n_neighbors: int = 3,
+        n_jobs: int = 1,
     ):
         self.variable_names = list(variable_names)
         self.categorical_vars = set(categorical_vars)
@@ -708,6 +919,7 @@ class PavementCLROptimizer:
         self.boltzmann = boltzmann
         self.n_changes = n_changes
         self.n_neighbors = n_neighbors
+        self.n_jobs = n_jobs
 
     # ----------------------------------------------------------
     # Public interface
@@ -862,6 +1074,126 @@ class PavementCLROptimizer:
             est[i] = val
         return est
 
+    def predict_psi(
+        self,
+        df_orig: pd.DataFrame,
+        fits: list[dict],
+        clusters: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Predict original-scale PSI (not ln(PSI)) for each row.
+
+        Parameters
+        ----------
+        df_orig : DataFrame
+            Original (untransformed) data.
+        fits : list[dict]
+            Per-cluster model fits from `fit`.
+        clusters : ndarray
+            Cluster assignment array, indexed by segment_id.
+
+        Returns
+        -------
+        ndarray of predicted PSI values (NaN for unassigned observations).
+        """
+        log_pred = self.predict(df_orig, fits, clusters)
+        return np.exp(log_pred)
+
+    def forecast(
+        self,
+        df_orig: pd.DataFrame,
+        fits: list[dict],
+        clusters: np.ndarray,
+        future_years: int,
+        age_col: str = "age",
+        annual_traffic_growth: float = 0.0,
+    ) -> pd.DataFrame:
+        """
+        Project pavement deterioration into future years.
+
+        Increments `age_col` by 1..future_years, updates AADT via growth rate,
+        and re-predicts PSI at each horizon. Assumes all other covariates stay
+        constant.
+
+        Parameters
+        ----------
+        df_orig : DataFrame
+            Original (untransformed) data, with one row per segment (snapshot).
+        fits : list[dict]
+            Per-cluster model fits from `fit`.
+        clusters : ndarray
+            Cluster assignment array, indexed by segment_id.
+        future_years : int
+            Number of years to project forward.
+        age_col : str
+            Column name for pavement age (will be incremented).
+        annual_traffic_growth : float
+            Fractional annual AADT growth (e.g. 0.02 = 2% per year).
+
+        Returns
+        -------
+        DataFrame with columns: segment_id, year, PSI_pred, cluster.
+        """
+        seg_ids = np.unique(df_orig[self.segment_col].values)
+        rows = []
+        for t in range(future_years + 1):
+            df_future = df_orig.copy()
+            if age_col in df_future.columns:
+                df_future[age_col] = df_future[age_col].values + t
+            if annual_traffic_growth > 0:
+                for tc in ["aadt", "AADT", "traffic", "traffic_volume"]:
+                    if tc in df_future.columns:
+                        df_future[tc] = df_future[tc].values * ((1 + annual_traffic_growth) ** t)
+            psi = self.predict_psi(df_future, fits, clusters)
+            for sid, p_val in zip(df_future[self.segment_col], psi):
+                rows.append({"segment_id": int(sid), "year": int(t), "PSI_pred": p_val})
+        return pd.DataFrame(rows)
+
+    def forecast_to_threshold(
+        self,
+        df_orig: pd.DataFrame,
+        fits: list[dict],
+        clusters: np.ndarray,
+        psi_threshold: float = 2.0,
+        max_years: int = 50,
+        age_col: str = "age",
+        annual_traffic_growth: float = 0.0,
+    ) -> pd.DataFrame:
+        """
+        Estimate remaining life until each segment reaches a PSI threshold.
+
+        Projects forward year-by-year until each segment drops below
+        `psi_threshold` (or `max_years` is reached).
+
+        Returns
+        -------
+        DataFrame with columns: segment_id, years_to_threshold, PSI_at_threshold.
+        """
+        seg_ids = np.unique(df_orig[self.segment_col].values)
+        remaining = {int(s): -1 for s in seg_ids}
+        psi_at_end = {int(s): np.nan for s in seg_ids}
+
+        for t in range(max_years + 1):
+            df_future = df_orig.copy()
+            if age_col in df_future.columns:
+                df_future[age_col] = df_future[age_col].values + t
+            if annual_traffic_growth > 0:
+                for tc in ["aadt", "AADT", "traffic", "traffic_volume"]:
+                    if tc in df_future.columns:
+                        df_future[tc] = df_future[tc].values * ((1 + annual_traffic_growth) ** t)
+            psi = self.predict_psi(df_future, fits, clusters)
+            for sid, p_val in zip(df_future[self.segment_col], psi):
+                sid_i = int(sid)
+                if remaining[sid_i] == -1 and np.isfinite(p_val) and p_val <= psi_threshold:
+                    remaining[sid_i] = t
+                    psi_at_end[sid_i] = float(p_val)
+
+        rows = [{"segment_id": sid, "years_to_threshold": remaining[sid],
+                   "PSI_at_threshold": psi_at_end[sid]} for sid in seg_ids]
+        result = pd.DataFrame(rows)
+        result.loc[result["years_to_threshold"] == -1, "years_to_threshold"] = max_years
+        return result
+
     # ----------------------------------------------------------
     # Private helpers
     # ----------------------------------------------------------
@@ -917,7 +1249,16 @@ class PavementCLROptimizer:
                                self.level_of_significance, self.max_vif)
 
     def _fit_all_clusters(self, df_log, clusters, n_cl):
-        return [self._fit_cluster(df_log, ci, clusters) for ci in range(1, n_cl + 1)]
+        if self.n_jobs == 1 or n_cl < 2:
+            return [self._fit_cluster(df_log, ci, clusters) for ci in range(1, n_cl + 1)]
+        try:
+            from joblib import Parallel, delayed
+            return Parallel(n_jobs=self.n_jobs, prefer="threads")(
+                delayed(self._fit_cluster)(df_log, ci, clusters)
+                for ci in range(1, n_cl + 1)
+            )
+        except ImportError:
+            return [self._fit_cluster(df_log, ci, clusters) for ci in range(1, n_cl + 1)]
 
     def _total_bic(self, fits):
         total = 0.0
