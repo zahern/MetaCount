@@ -73,8 +73,8 @@ if os.path.exists(SPEC_PATH):
     import json as _json
     with open(SPEC_PATH) as f:
         manual_spec = _json.load(f)
-    manual_spec["latent_classes"] = 2  # enforce 2-class
-    manual_spec.setdefault("min_class_proportion", 0.20)
+    manual_spec["latent_classes"] = manual_spec.get("latent_classes", 2)  # read from spec, default 2
+    manual_spec.setdefault("min_class_proportion", 0.15)
     print(f"\n  Loaded best model spec from Phase 1 search:  {SPEC_PATH}")
     print(f"    fixed_terms:      {manual_spec.get('fixed_terms', [])}")
     print(f"    membership_terms: {manual_spec.get('membership_terms', [])}")
@@ -100,7 +100,7 @@ else:
         "group_id_col":      None,
         "dispersion":        1,
         "latent_classes":    2,
-        "min_class_proportion": 0.20,
+        "min_class_proportion": 0.15,
     }
 
 

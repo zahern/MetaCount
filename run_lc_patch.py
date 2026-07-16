@@ -204,7 +204,7 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
     DE_ABS_SPAN: float = 1.0
     MAX_ABS_COEF: float = 30.0       # reject fits with |coef| above this
     MIN_DISPERSION: float = 0.01     # dispersion must be positive
-    MIN_CLASS_PROP: float = 0.20     # minimum posterior-mean proportion per class
+    MIN_CLASS_PROP: float = 0.15     # base value; EM engine scales internally by C
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -225,8 +225,8 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
         if spec_dict is None:
             return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
-        # ── ALWAYS 2 latent classes ──────────────────────────────
-        spec_dict["latent_classes"] = 2
+        # ── Use LC code from decision vector (no hardcoded class count) ──
+        spec_dict["latent_classes"] = spec_dict.get("latent_classes", 2)
 
         sig = self.structural_signature(spec_dict)
         if sig is None:
@@ -238,7 +238,7 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
         self.structure_cache.clear()
         self.structure_cache.add(sig)
 
-        C = 2
+        C = int(spec_dict.get("latent_classes", 2))
 
         try:
             data_train, spec = self.build_data(
@@ -688,7 +688,7 @@ if __name__ == "__main__":
 
     spec_dict = evaluator.build_spec(best_sol)
     if spec_dict:
-        spec_dict["latent_classes"] = 2
+        spec_dict["latent_classes"] = spec_dict.get("latent_classes", 2)
         # ── Save best spec for Phase 2 ─────────────────────────────
         import json as _json
         spec_path = os.path.join(REPO_ROOT, "results", "best_model_spec.json")
@@ -720,8 +720,8 @@ if __name__ == "__main__":
             offset_col="OFFSET",
             R=200,
         )
-        C = 2
-        spec_best = replace(spec_best, min_class_proportion=0.20)
+        C = int(spec_dict.get("latent_classes", 2))
+        spec_best = replace(spec_best, min_class_proportion=0.15)
         K_mem = spec_best.K_membership
         base_spec = replace(spec_best, latent_classes=1)
         pindex = build_param_index(spec_best)

@@ -215,7 +215,7 @@ class ModelSpec:
     membership_names:    tuple = ()   # variables in class-prob equation
     K_membership:        int   = 0    # len(membership_names)
     class_models:        tuple = ()   # per-class model strings (eg ("poisson","nb"))
-    min_class_proportion: float = 0.20  # minimum posterior-mean proportion per class
+    min_class_proportion: float = 0.15  # minimum posterior-mean proportion per class (will be scaled by C internally)
     # ── PER-CLASS COVARIATE SELECTION ─────────────────────────────────
     class_fixed_idx:     tuple = ()   # per-class column indices into Xf (tuple of tuples)
     class_rdm_ind_idx:   tuple = ()   # per-class column indices into Xr_ind
@@ -930,19 +930,22 @@ def fit_em(init_params, data, spec: ModelSpec,
 
         # Collapse guard: deferred past iter 3 so classes can separate first.
         mean_w = w.mean(axis=0)                                 # (C,)
-        min_prop = getattr(spec, 'min_class_proportion', 0.15)
+        _raw_prop = getattr(spec, 'min_class_proportion', 0.15)
+        # Scale min_prop by C: with 5 classes ~0.03 floor, 2 classes ~0.15
+        min_prop = max(0.02, _raw_prop / max(1, C * 0.5))
 
         # Class balance Dirichlet-prior penalty: adds pseudocounts to
         # prevent extreme class imbalance (e.g. 85%/15% split).
         # When mean_w[c] < min_prop, the penalty ramps up.
         # prior_weight = 0 when balanced; grows as classes shrink below threshold.
         below_thresh = np.maximum(0.0, min_prop - mean_w)
-        prior_weight = float(np.sum(below_thresh) * 5.0)  # scale factor
+        prior_weight = float(np.sum(below_thresh) * max(5.0, C * 2.0))
 
-        if iteration >= 3 and np.any(mean_w < 0.01):
+        _collapse_cutoff = max(0.005, 0.02 / C)
+        if iteration >= 3 and np.any(mean_w < _collapse_cutoff):
             if verbose:
                 print(f"  [EM] class collapse at iter {iteration} "
-                      f"(min mean weight {mean_w.min():.4f}) — stopping early")
+                      f"(min mean weight {mean_w.min():.4f} < {_collapse_cutoff:.4f}) — stopping early")
             break
 
         # ==========================================================

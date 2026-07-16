@@ -377,10 +377,10 @@ class AdvancedSimulatedAnnealing:
                             neighbor[idx] = np.random.randint(0, max_lc)
                     else:
                         # class_mask genes (per-class variable assignments)
-                        # 0=both, 1=class1 only, 2=class2 only
+                        # 0=all classes, 1=class1 only, ..., C=class C only
                         max_lc2 = getattr(self.evaluator, 'max_latent_classes', 1)
                         if max_lc2 > 1:
-                            neighbor[idx] = np.random.randint(0, 3)
+                            neighbor[idx] = np.random.randint(0, max_lc2 + 1)
 
                     changed = True
 
@@ -761,10 +761,11 @@ class AdvancedSimulatedAnnealing:
                     max_lc = getattr(self.evaluator, "max_latent_classes", 2)
                     solution[2 * D + 1] = np.random.randint(0, max_lc)
 
-                # Class masks (2D+2 … 3D+1): randomise 0/1/2 per variable
+                # Class masks (2D+2 … 3D+1): randomise 0..max_latent_classes per variable
                 if has_lc and self.dim > 2 * D + 2:
+                    _max_lc = getattr(self.evaluator, "max_latent_classes", 2)
                     for j in range(2 * D + 2, min(3 * D + 2, self.dim)):
-                        solution[j] = np.random.randint(0, 3)
+                        solution[j] = np.random.randint(0, _max_lc + 1)
 
                 solution = self.repair(solution)
                 score    = self.evaluator.fitness(solution)
@@ -1007,8 +1008,8 @@ class AdvancedSimulatedAnnealing:
                 # lc_code gene (0 when single-class, [0,max_lc) otherwise)
                 max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
                 lc_code = np.random.randint(0, max(max_lc, 1), size=1) if max_lc > 1 else np.zeros(1, dtype=int)
-                # class_mask genes (per-class variable assignments)
-                class_mask = np.random.randint(0, 3, size=D) if max_lc > 1 else np.zeros(D, dtype=int)
+                # class_mask genes (per-class variable assignments, 0..max_lc)
+                class_mask = np.random.randint(0, max_lc + 1, size=D) if max_lc > 1 else np.zeros(D, dtype=int)
 
                 current = np.concatenate([roles, dists, disp, lc_code, class_mask])
                 current_score = self.evaluator.fitness(current)
@@ -1431,8 +1432,8 @@ class NSGA2Engine:
             # lc_code gene (0 when single-class, [0,max_lc) otherwise)
             max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
             lc_code = np.random.randint(0, max(max_lc, 1), size=1) if max_lc > 1 else np.zeros(1, dtype=int)
-            # class_mask genes
-            class_mask = np.random.randint(0, 3, size=D) if max_lc > 1 else np.zeros(D, dtype=int)
+            # class_mask genes (per-class variable assignments, 0..max_lc)
+            class_mask = np.random.randint(0, max_lc + 1, size=D) if max_lc > 1 else np.zeros(D, dtype=int)
 
             candidate = np.hstack((roles, dists, disp, lc_code, class_mask))
             candidate = self.repair(candidate)
