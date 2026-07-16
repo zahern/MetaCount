@@ -348,14 +348,14 @@ class StructureEvaluatorLC(StructureEvaluator):
 
             cm = class_mask[i] if struct_lc > 1 else 0
             # Map class_mask to per-class inclusion
+            # 0 = all classes, 1 = class 1 only, 2 = class 2 only, ..., C = class C only
             in_class = []
             if struct_lc <= 1:
                 in_class = [True]
             else:
                 in_class = [
-                    cm in (0, 1),   # class 1
-                    cm in (0, 2),   # class 2
-                ][:struct_lc]
+                    (cm == 0 or cm == c + 1) for c in range(struct_lc)
+                ]
 
             if role == 0:
                 pass  # excluded
@@ -1049,8 +1049,9 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
                         neighbor[i] = 0
             # When stepping from LC=1 to LC>=2, also randomise class masks
             if neighbor[lc_idx] > 0 and has_lc and len(neighbor) > 2 * D + 2:
+                max_lc = getattr(self.evaluator, "max_latent_classes", 2)
                 for idx in range(2 * D + 2, min(3 * D + 2, len(neighbor))):
-                    neighbor[idx] = np.random.randint(0, 3)
+                    neighbor[idx] = np.random.randint(0, max_lc + 1)
 
         # ── RANDOM EXPLORATION (classic behavior) ─────────────────
         else:
@@ -1086,9 +1087,11 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
                             step = np.random.choice([-1, 1])
                             neighbor[idx] = int(np.clip(int(neighbor[idx]) + step, 0, max_code))
                         else:
+                            max_lc2 = getattr(self.evaluator, "max_latent_classes", 2)
                             old_val = int(neighbor[idx])
-                            choices = [v for v in (0, 1, 2) if v != old_val]
-                            neighbor[idx] = int(np.random.choice(choices))
+                            choices = [v for v in range(max_lc2 + 1) if v != old_val]
+                            if choices:
+                                neighbor[idx] = int(np.random.choice(choices))
 
         # ── Enforce min-active ────────────────────────────────────────
         n_roles = neighbor[:D]
