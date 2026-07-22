@@ -3248,6 +3248,48 @@ class ExperimentBuilder:
             result = run_nsga(evaluator=evaluator, operator=op,
                               seed=seed, pop_size=pop,
                               max_iter=max_iter, n_jobs=n_jobs)
+
+            # run_nsga()/NSGA2Engine.optimize() return "solutions"/"scores"
+            # but never "best_solution"/"best_score" -- the sa/hc branch
+            # above sets those, but this branch didn't, so callers using
+            # extract_search_best() got best_bic=None / best_decision=None
+            # even after a fully successful search (e.g. a clean 1750-gen,
+            # 5+ hour HS run whose own per-generation log showed a
+            # converged best BIC of 2722.5 the whole time). Downstream code
+            # that does build_spec(best["best_decision"]) then crashes with
+            # "TypeError: 'NoneType' object is not subscriptable" right
+            # after the expensive search finished -- losing the run's
+            # result was purely a missing-key bug, not a search failure.
+            solutions = np.asarray(result.get("solutions"))
+            scores    = np.asarray(result.get("scores"))
+            if solutions.size and scores.size:
+                if solutions.ndim == 1:
+                    # Single-objective: optimize() already reduced to one
+                    # best (decision, score) pair.
+                    best_solution = solutions
+                    best_score    = float(scores)
+                else:
+                    # Multi-objective: solutions/scores are the Pareto
+                    # front. Pick the point minimising the primary
+                    # objective (column 0, e.g. BIC) as "the" best.
+                    best_idx      = int(np.argmin(scores[:, 0]))
+                    best_solution = solutions[best_idx]
+                    best_score    = float(scores[best_idx, 0])
+
+                result["best_solution"] = best_solution
+                result["best_score"]    = best_score
+
+                print("\n  Best structure:")
+                decode_best_solution(best_solution, evaluator)
+                print(f"  Best BIC              : {best_score:.4f}")
+
+                refit_and_print(evaluator, best_solution)
+                save_run_summary_to_txt(evaluator, best_solution,
+                                        algo, seed, config_id)
+            else:
+                print("  [warn] Harmony/DE search returned no solutions; "
+                      "best_solution/best_score left unset.")
+
             if output_config is not None:
                 result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo))
             return result
