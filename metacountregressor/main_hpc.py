@@ -4773,6 +4773,11 @@ def run_nsga(evaluator, operator, seed, pop_size=30, max_iter=40, n_jobs=1):
     seed=seed,
     config_id=seed
     )
+    stats_csv = engine.save_search_stats_csv(
+    algo=operator.__class__.__name__,
+    seed=seed,
+    config_id=seed
+    )
     engine.finalize_plots(
     algo=operator.__class__.__name__,
     seed=seed
@@ -4784,7 +4789,9 @@ def run_nsga(evaluator, operator, seed, pop_size=30, max_iter=40, n_jobs=1):
         "scores": scores,
         "fitness_history": engine.fitness_history,
         "hypervolume_history": engine.hypervolume_history,
-        "pareto_history": engine.pareto_history
+        "pareto_history": engine.pareto_history,
+        "search_stats": engine.search_stats,
+        "stats_csv": [stats_csv],   # list, for consistency with the sa/hc branch's one-per-restart shape
     }
 
 

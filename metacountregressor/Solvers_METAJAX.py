@@ -893,8 +893,29 @@ class AdvancedSimulatedAnnealing:
                     )
 
         print(f"[OK] SA search stats saved to {filepath}")
-    
-    
+
+    def save_search_stats_csv(
+        self,
+        algo="sa",
+        seed=0,
+        config_id=0,
+        folder="results"
+    ):
+        """Same per-iteration data as save_search_stats_txt(), as a CSV --
+        one row per generation, columns depend on single- vs multi-objective
+        (see search_stats' 'best'/'archive_size' vs 'hypervolume'/
+        'pareto_size'/'best_obj1'/'best_obj2' keys, set in optimize())."""
+        import pandas as pd
+
+        os.makedirs(folder, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{algo}_search_stats_seed{seed}_config{config_id}_{timestamp}.csv"
+        filepath = os.path.join(folder, filename)
+
+        pd.DataFrame(self.search_stats).to_csv(filepath, index=False)
+        print(f"[OK] SA search stats CSV saved to {filepath}")
+        return filepath
+
     # =========================================================
     # Optimize
     # =========================================================
@@ -1118,16 +1139,24 @@ class MultiStartSA:
                 seed=seed,
                 config_id=0
         )
+        stats_csv = sa.save_search_stats_csv(
+                algo='sa',
+                seed=seed,
+                config_id=0
+        )
 
         sa.finalize_plots(
             algo="sa",
             seed=seed
         )
-        
+
         return {
         "archive": archive,
         "scores": scores,
-        "convergence": sa.convergence
+        "convergence": sa.convergence,
+        "search_stats": sa.search_stats,
+        "stats_csv": stats_csv,
+        "runtime": sa.runtime,
         }
 
     def optimize(self):
@@ -1637,7 +1666,28 @@ class NSGA2Engine:
                     )
 
         print(f"[OK] Search stats saved to {filepath}")
-    
+
+    def save_search_stats_csv(
+        self,
+        algo="nsga2",
+        seed=0,
+        config_id=0,
+        folder="results"
+    ):
+        """CSV counterpart to save_search_stats_txt() -- one row per
+        generation (columns: gen/best/mean/std, or gen/hypervolume/
+        pareto_size/best_obj1/best_obj2 for multi-objective runs)."""
+        import pandas as pd
+
+        os.makedirs(folder, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{algo}_search_stats_seed{seed}_config{config_id}_{timestamp}.csv"
+        filepath = os.path.join(folder, filename)
+
+        pd.DataFrame(self.search_stats).to_csv(filepath, index=False)
+        print(f"[OK] Search stats CSV saved to {filepath}")
+        return filepath
+
     def constraint_violation(self, solution):
 
         D = self.dim_core

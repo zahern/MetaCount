@@ -3157,6 +3157,9 @@ class ExperimentBuilder:
                "de"  Differential Evolution NSGA2 (multi mode)
                "hs"  Harmony Search NSGA2 (multi mode)
         """
+        import time as _time
+        _t0 = _time.time()
+
         evaluator = evaluator or self._evaluator
         if evaluator is None:
             raise RuntimeError("Call build_evaluator() first.")
@@ -3178,6 +3181,20 @@ class ExperimentBuilder:
                 n_starts=1, alpha=0.995,
             )
             defaults.update(algo_kwargs)
+            # Run metadata for save_search_result() -- variables considered,
+            # the fully-resolved hyperparameters (defaults + any overrides,
+            # not just the raw overrides), and wall-clock timing. Addresses
+            # the JSON output previously carrying none of this (just
+            # solutions/scores/best_solution/best_score).
+            metadata = {
+                "variables": [str(v) for v in evaluator.vars],
+                "n_variables": len(evaluator.vars),
+                "algorithm": algo,
+                "max_iter": max_iter,
+                "seed": seed,
+                "hyperparameters": dict(defaults),
+                "objective": "bic",   # ExperimentBuilder.run() always optimises BIC internally
+            }
 
             solver = MultiStartSA(
                 evaluator=evaluator,
@@ -3218,6 +3235,7 @@ class ExperimentBuilder:
             save_run_summary_to_txt(evaluator, best_solution,
                                     algo, seed, config_id)
 
+            metadata["elapsed_seconds"] = _time.time() - _t0
             result = {
                 "algorithm":     algo,
                 "seed":          seed,
@@ -3225,9 +3243,15 @@ class ExperimentBuilder:
                 "scores":        scores,
                 "best_solution": best_solution,
                 "best_score":    best_score,
+                # search_stats/stats_csv: one entry per restart (n_starts),
+                # each a per-iteration trace (iter/temperature/best/
+                # archive_size, or the multi-objective columns) -- see
+                # AdvancedSimulatedAnnealing.save_search_stats_csv().
+                "search_stats":  [r.get("search_stats") for r in solver.results],
+                "stats_csv":     [r.get("stats_csv") for r in solver.results],
             }
             if output_config is not None:
-                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo))
+                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo, metadata=metadata))
             return result
 
         elif algo in ("de", "hs"):
@@ -3239,15 +3263,29 @@ class ExperimentBuilder:
                 de_def.update(algo_kwargs)
                 op  = AdaptiveDE(F=de_def["F"], CR=de_def["CR"])
                 pop = de_def["population_size"]
+                resolved_hyperparams = dict(de_def)
             else:
                 hs_def.update(algo_kwargs)
                 op  = DynamicHarmony(**{k: v for k, v in hs_def.items()
                                         if k != "population_size"})
                 pop = hs_def["population_size"]
+                resolved_hyperparams = dict(hs_def)
+
+            metadata = {
+                "variables": [str(v) for v in evaluator.vars],
+                "n_variables": len(evaluator.vars),
+                "algorithm": algo,
+                "max_iter": max_iter,
+                "seed": seed,
+                "hyperparameters": resolved_hyperparams,
+                "objective": "bic",   # multi-objective NSGA2 also ranks its Pareto "best" by BIC (column 0)
+            }
 
             result = run_nsga(evaluator=evaluator, operator=op,
                               seed=seed, pop_size=pop,
                               max_iter=max_iter, n_jobs=n_jobs)
+            # run_nsga()'s own result dict already carries search_stats/
+            # stats_csv (see main_hpc.py's run_nsga()).
 
             # run_nsga()/NSGA2Engine.optimize() return "solutions"/"scores"
             # but never "best_solution"/"best_score" -- the sa/hc branch
@@ -3290,8 +3328,9 @@ class ExperimentBuilder:
                 print("  [warn] Harmony/DE search returned no solutions; "
                       "best_solution/best_score left unset.")
 
+            metadata["elapsed_seconds"] = _time.time() - _t0
             if output_config is not None:
-                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo))
+                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo, metadata=metadata))
             return result
 
         else:
