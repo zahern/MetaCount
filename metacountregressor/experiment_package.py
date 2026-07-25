@@ -101,6 +101,7 @@ try:
         CMFFamilySearchProblem,
         DurationSearchProblem,
         LinearSearchProblem,
+        MultivariateSearchProblem,
         UnifiedCMFSearchProblem,
     )
 
@@ -139,6 +140,7 @@ except ImportError:
         CMFFamilySearchProblem,
         DurationSearchProblem,
         LinearSearchProblem,
+        MultivariateSearchProblem,
         UnifiedCMFSearchProblem,
     )
 
@@ -3130,7 +3132,51 @@ class ExperimentBuilder:
                 group_id_col=self.group_id_col,
             )
 
-        raise ValueError("model_family must be one of: count, cmf, linear, duration")
+        if model_family == "multivariate":
+            try:
+                from .family_search import MultivariateSearchProblem
+            except ImportError:
+                from family_search import MultivariateSearchProblem
+
+            activity_cols = kwargs.pop("activity_cols", None)
+            if activity_cols is None:
+                raise ValueError(
+                    "multivariate search requires activity_cols=<list of outcome columns>."
+                )
+            # All activity columns must be present in the dataframe
+            self._ensure_columns_exist(activity_cols, "multivariate activity_cols")
+
+            offset_col_mv   = kwargs.pop("offset_col",            self.offset_col)
+            maxiter         = kwargs.pop("maxiter",                500)
+            verbose         = kwargs.pop("verbose",                False)
+            search_copula   = kwargs.pop("search_copula",          False)
+            search_marginal = kwargs.pop("search_marginal",        False)
+            fixed_copula    = kwargs.pop("fixed_copula",           "gaussian")
+            fixed_marginal  = kwargs.pop("fixed_marginal",         "nb")
+            min_vars        = kwargs.pop("min_vars_per_activity",  1)
+            add_intercept   = kwargs.pop("add_intercept",          True)
+            self._raise_on_unused_kwargs(kwargs, "multivariate search")
+
+            return MultivariateSearchProblem(
+                df=self.df,
+                activity_cols=activity_cols,
+                covariate_cols=variables,          # variables already normalised above
+                offset_col=offset_col_mv,
+                maxiter=maxiter,
+                verbose=verbose,
+                search_copula=search_copula,
+                search_marginal=search_marginal,
+                fixed_copula=fixed_copula,
+                fixed_marginal=fixed_marginal,
+                min_vars_per_activity=min_vars,
+                add_intercept=add_intercept,
+                metadata={
+                    "activity_cols":  activity_cols,
+                    "covariate_cols": variables,
+                },
+            )
+
+        raise ValueError("model_family must be one of: count, cmf, linear, duration, multivariate")
 
     def build_count_evaluator(self, **kwargs):
         kwargs.setdefault("model_family", "count")

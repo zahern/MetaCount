@@ -18,6 +18,7 @@ __all__ = [
     "CMFFamilySearchProblem",
     "DurationSearchProblem",
     "LinearSearchProblem",
+    "MultivariateSearchProblem",
     # Data loaders
     "load_example16_3_model_data",
     "load_example16_3_raw_data",
@@ -59,6 +60,13 @@ __all__ = [
     "fit_famoye_nb",
     "fit_marshall_olkin_nb",
     "compare_bivariate_copulas",
+    # Multivariate count regression – jointly predict M activity counts
+    # per person using NB (or Poisson) marginals + Gaussian / vine-Frank copula.
+    "MultivariateCountRegressor",
+    "MultivariateCountFit",
+    "gaussian_copula_loglik",
+    "vine_frank_copula_loglik",
+    "fit_multivariate_activity_model",
     # Plotting & figures
     "generate_all_lc_figures",
     "plot_search_convergence",
@@ -87,6 +95,7 @@ _EXPORTS = {
     "DurationSearchProblem": ("family_search", "DurationSearchProblem"),
     "ExperimentBuilder": ("experiment_package", "ExperimentBuilder"),
     "LinearSearchProblem": ("family_search", "LinearSearchProblem"),
+    "MultivariateSearchProblem": ("family_search", "MultivariateSearchProblem"),
     "ModelConstraints": ("model_constraints", "ModelConstraints"),
     "SearchOutputConfig": ("output_config", "SearchOutputConfig"),
     "StructureEvaluatorLC": ("experiment_package", "StructureEvaluatorLC"),
@@ -125,6 +134,12 @@ _EXPORTS = {
     "plot_cmf_search_convergence": ("cmf_plotting", "plot_cmf_search_convergence"),
     "plot_cmf_obs_vs_pred": ("cmf_plotting", "plot_cmf_obs_vs_pred"),
     "plot_cmf_model_comparison": ("cmf_plotting", "plot_cmf_model_comparison"),
+    # Multivariate count regression
+    "MultivariateCountRegressor": ("multivariate_count_regressor", "MultivariateCountRegressor"),
+    "MultivariateCountFit": ("multivariate_count_regressor", "MultivariateCountFit"),
+    "gaussian_copula_loglik": ("multivariate_count_regressor", "gaussian_copula_loglik"),
+    "vine_frank_copula_loglik": ("multivariate_count_regressor", "vine_frank_copula_loglik"),
+    "fit_multivariate_activity_model": ("multivariate_count_regressor", "fit_multivariate_activity_model"),
     # Bivariate copula NB
     "BivariateCopulaNB": ("bivariate_copula", "BivariateCopulaNB"),
     "BivariateCopulaFit": ("bivariate_copula", "BivariateCopulaFit"),

@@ -1,0 +1,589 @@
+[pkg] Checking MetaCount...
+[pkg] MetaCount already installed — skipping
+[pkg] Checking jax/jaxlib/jaxopt...
+[pkg] jax/jaxlib/jaxopt already installed — skipping
+[pkg] Checking SearchLibrium...
+No id applied to SA algorithm, creating random run ID
+Current version: 0.0.151
+
+              .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .. .. .. .. .. .. ..  .  .  .. .. 
+               .. ..  .  .  .. .. .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .. .. .. .. ..
+              .............................................................................
+              .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .. .. .. .. .. .. ..  .  .  .. .. 
+               .. ..  .  .  .. .. .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .. .. .. .. ..
+              .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .. .*@:. .. .. .. ..  .  .  .. .. 
+              .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .:@@@@@@ .. .. .. ..  .  .  .. .. 
+               .. ..  .  .  .. .. .. .. .. .. .. .. .. .@@@@  .+@@  .. .. .. .. .. .. .. ..
+              .. .. .. .. .. .. .. ..  .  .  .  .. *@@@@@=. .. .@@=. .. .. ..  .  .  .. .. 
+              ...................................@@@@@@%........@@@........................
+               .. ..  .  .  .. .. .. .. .. .. ..@@@%@@...  .  . *@@ .. .. .. .. .. .. .. ..
+              .. .. .. .. .. .. .. ..  .  .  ..@@%-@@... .. .. .+@@. .. .. ..  .  .  .. .. 
+               .. ..  .  .  .. .. .. .. .. .. @@@.@@.. ..  .  . @%. .. .. .. .. .. .. .. ..
+               .. ..  .  .  .. .. .. .. .. ..#@@ =@@.. ..  .  .:@@  .. .. .. .. .. .. .. ..
+              .. .. .. .. .. :%*@@@@@@@.  .  @@*.@@-. .. .. .. @@-.. .. .. ..  .  .  .. .. 
+               .. ..  .  .  .#@@. .. @@@-. ..@@. @@:.. ..  .  @@%.  .. .. .. .. .. .. .. ..
+               .. ..  .  .  .. ..-@@@@@@@@@@:@@+@@@@@@-..  .%@@# .  .. .. .. .. .. .. .. ..
+              .. .. .. .. ..@@@@@@@@-  .  :@@@@@@@....@@@@@@@@... .. .. .. ..  .  .  .. .. 
+               .. ..  .  .  @@..@@@@@@@ .. .*@@: .. .. .@@@@%@@@@@# .. .. .. .. .. .. .. ..
+              .................-@@@@:@@:.....@@..........@@@@%.=@@@@@*.....................
+              .. .. .. .. .. ..@@@@@@@@.  . %@@ .. .. .. @@@.. %@@..%@@=.. ..  .  .  .. .. 
+               .. ..  .  .  .. @@*=@@.. ...@@@.. .. .. ..@@:  .@@.  .@@@@... .. .. .. .. ..
+              .. .. .. .. .. ..#@@ ..  .%@@@@*  .. .. ..@@@ ..@@+ ..-@@.@@#..  .  .  .. .. 
+              .. .. .. .. .. .. #@@@@@@@@#.:@%  .. .. %@@=. .@@#. ..@@- .@@#.  .  .  .. .. 
+               .. ..  .  .  .. .. .-=:. .. .-@@# ..*@@@@.  .@@=  ..@@+ ..@@@ .. .. .. .. ..
+              .. .. .. .. .. .. .. ..  .  .  . *%@@@@@@@ .@@@. ..-@@:.. %@@@@  .  .  .. .. 
+              .. .. .. .. .. .. .. ..  .  .  .  .. .. @@@@@ .. .@@@. ..@@@.%@. .  .  .. .. 
+               .. ..  .  .  .. .. .. .. .. .. .. .. .. *@@#.  -@@#  .#@@@ .@@:. .. .. .. ..
+              .. .. .. .. .. .. .. ..  .  .  .  .. .. .. @@@@@@@. ..@@%....@@. .  .  .. .. 
+              .............................................%@@@@*#@@@#..=%@@-..............
+               .. ..  .  .  .. .. .. .. .. .. .. .. .. ..  .  .%@@@@@@@@@@@@ .. .. .. .. ..
+              .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .. .. .. .. .. ..@@.  .  .  .. .. 
+               .. ..  .  .  .. .. .. .. .. .. .. .. .. ..  .  .  .  .. .. @@ .. .. .. .. ..
+               .. ..  .  .  .. .. .. .. .. .. .. .. .. ..  .  .  .  .. .. *. .. .. .. .. ..
+              .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .. .. .. .. .. .. ..  .  .  .. .. 
+               .. ..  .  .  .. .. .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .. .. .. .. ..
+              .............................................................................
+              .. .. .. .. .. .. .. ..  .  .  .  .. .. .. .. .. .. .. .. .. ..  .  .  .. .. 
+
+Welcome to SearchLibrium
+
+           ADDICTY DICT FUNCTION
+           ---------------------
+           Defines pre-specified constraints used in this package.
+
+           Returns:
+               Dict with keys:
+                   ps_nest_vars: variables always included in nests
+                   ps_alt_vars: alternative optional variables
+                   force_include -> variables that must always be included
+                   force_exclude -> variables that must never be included
+                   force_random -> dict of variables that must have random parameters with distributions
+                   never_random -> variables that must never have random parameters
+                   latent_class_constraints -> constraints for latent class models
+                   mixed_model_constraints -> constraints for mixed models
+
+           Example usage:
+               from yourpackage import new_features
+               constraints = new_features()
+               print(constraints.force_include)
+           
+[pkg] SearchLibrium already installed — skipping
+[pkg] Package versions:
+  Name: metacountregressor
+  Version: 1.0.85
+  Name: SearchLibrium
+  Version: 0.0.151
+==========================================
+PBS job     : 24004929.aqua
+Working dir : /mnt/hpccs01/home/mahendr3/CMF_Multilevel/Trying/Washington_data_hs_cmf_hpc_job
+Started     : Tue Jul 21 04:26:30 PM AEST 2026
+==========================================
+======================================================================
+CMF (JAX flexible search) run: CMF_Washington
+======================================================================
+Loaded data: 275 rows x 39 cols
+ModelConstraints(
+)
+
+  Evaluator ready:
+    Variables          : 24
+    Decision dimension : 49  (2×24 + 1  (roles+dists+dispersion))
+    Max latent classes : 1
+    Mode               : single
+    Draws (R)          : 200
+CMF term map (baseline/local -> internal names): {'AADT': '__cmf_log_aadt', 'EXPOSE': '__cmf_local__EXPOSE', 'WIDTH': '__cmf_local__WIDTH', 'CURVES': '__cmf_local__CURVES', 'GRADEBR': '__cmf_local__GRADEBR', 'MEDWIDTH': '__cmf_local__MEDWIDTH'}
+
+Running search (algo='sa')...
+
+  Running HS | dim=49 | max_iter=1750 | seed=42
+[Gen 0/1750] Elapsed: 00:14:47 | ETA: 21:11:28
+Gen 000 | Best: 2856.5696 | Mean: 2990.3234 | Std: 150.0115
+[MEMORY] end gen before gc 0 RSS: 10936.88 MB
+[MEMORY] end gen 0 RSS: 10184.84 MB
+cool
+[Gen 1/1750] Elapsed: 00:20:41 | ETA: 14:39:14
+Gen 001 | Best: 2848.3540 | Mean: 2911.5744 | Std: 31.4694
+[MEMORY] end gen before gc 1 RSS: 10143.24 MB
+[MEMORY] end gen 1 RSS: 10083.44 MB
+cool
+[Gen 2/1750] Elapsed: 00:28:37 | ETA: 13:21:22
+Gen 002 | Best: 2848.3540 | Mean: 2891.9758 | Std: 18.9934
+[MEMORY] end gen before gc 2 RSS: 10141.00 MB
+[MEMORY] end gen 2 RSS: 10086.48 MB
+cool
+[Gen 3/1750] Elapsed: 00:40:53 | ETA: 14:08:32
+Gen 003 | Best: 2846.7715 | Mean: 2869.9472 | Std: 16.1186
+[MEMORY] end gen before gc 3 RSS: 10218.63 MB
+[MEMORY] end gen 3 RSS: 10089.85 MB
+cool
+[Gen 4/1750] Elapsed: 00:47:47 | ETA: 13:03:51
+Gen 004 | Best: 2839.4435 | Mean: 2862.5908 | Std: 13.0482
+[MEMORY] end gen before gc 4 RSS: 10132.79 MB
+[MEMORY] end gen 4 RSS: 10074.85 MB
+cool
+[Gen 5/1750] Elapsed: 00:56:02 | ETA: 12:36:30
+Gen 005 | Best: 2831.2226 | Mean: 2857.1715 | Std: 12.4751
+[MEMORY] end gen before gc 5 RSS: 10091.30 MB
+[MEMORY] end gen 5 RSS: 10043.05 MB
+cool
+[Gen 6/1750] Elapsed: 01:05:19 | ETA: 12:26:37
+Gen 006 | Best: 2800.6329 | Mean: 2851.3163 | Std: 15.1543
+[MEMORY] end gen before gc 6 RSS: 10123.77 MB
+[MEMORY] end gen 6 RSS: 10058.23 MB
+cool
+[Gen 7/1750] Elapsed: 01:13:01 | ETA: 12:01:10
+Gen 007 | Best: 2800.6329 | Mean: 2847.1412 | Std: 14.3462
+[MEMORY] end gen before gc 7 RSS: 10104.30 MB
+[MEMORY] end gen 7 RSS: 10045.79 MB
+cool
+[Gen 8/1750] Elapsed: 01:20:08 | ETA: 11:34:30
+Gen 008 | Best: 2760.0690 | Mean: 2838.2082 | Std: 22.1628
+[MEMORY] end gen before gc 8 RSS: 10127.98 MB
+[MEMORY] end gen 8 RSS: 10053.90 MB
+cool
+[Gen 9/1750] Elapsed: 01:24:45 | ETA: 10:52:39
+Gen 009 | Best: 2760.0690 | Mean: 2834.3333 | Std: 20.3318
+[MEMORY] end gen before gc 9 RSS: 10118.46 MB
+[MEMORY] end gen 9 RSS: 10056.52 MB
+cool
+[Gen 10/1750] Elapsed: 01:31:29 | ETA: 10:32:08
+Gen 010 | Best: 2760.0690 | Mean: 2829.5383 | Std: 21.6375
+[MEMORY] end gen before gc 10 RSS: 10132.51 MB
+[MEMORY] end gen 10 RSS: 10057.37 MB
+cool
+[Gen 11/1750] Elapsed: 01:38:25 | ETA: 10:15:12
+Gen 011 | Best: 2760.0690 | Mean: 2818.6072 | Std: 21.9092
+[MEMORY] end gen before gc 11 RSS: 10113.46 MB
+[MEMORY] end gen 11 RSS: 10046.40 MB
+cool
+[Gen 12/1750] Elapsed: 01:44:51 | ETA: 09:56:52
+Gen 012 | Best: 2760.0690 | Mean: 2814.1545 | Std: 20.8577
+[MEMORY] end gen before gc 12 RSS: 10104.98 MB
+[MEMORY] end gen 12 RSS: 10046.16 MB
+cool
+[Gen 13/1750] Elapsed: 01:50:23 | ETA: 09:35:36
+Gen 013 | Best: 2760.0690 | Mean: 2813.3063 | Std: 20.0436
+[MEMORY] end gen before gc 13 RSS: 10100.43 MB
+[MEMORY] end gen 13 RSS: 10046.45 MB
+cool
+[Gen 14/1750] Elapsed: 01:56:54 | ETA: 09:21:11
+Gen 014 | Best: 2760.0690 | Mean: 2806.1678 | Std: 17.7747
+[MEMORY] end gen before gc 14 RSS: 10083.54 MB
+[MEMORY] end gen 14 RSS: 10045.51 MB
+cool
+[Gen 15/1750] Elapsed: 01:59:47 | ETA: 08:51:35
+Gen 015 | Best: 2760.0690 | Mean: 2800.8948 | Std: 15.9498
+[MEMORY] end gen before gc 15 RSS: 10076.05 MB
+[MEMORY] end gen 15 RSS: 10044.63 MB
+cool
+[Gen 16/1750] Elapsed: 02:01:53 | ETA: 08:21:56
+Gen 016 | Best: 2758.4936 | Mean: 2797.2426 | Std: 17.2333
+[MEMORY] end gen before gc 16 RSS: 10095.62 MB
+[MEMORY] end gen 16 RSS: 10047.95 MB
+cool
+[Gen 17/1750] Elapsed: 02:05:08 | ETA: 07:59:41
+Gen 017 | Best: 2748.0870 | Mean: 2785.3275 | Std: 18.6962
+[MEMORY] end gen before gc 17 RSS: 10106.03 MB
+[MEMORY] end gen 17 RSS: 10053.93 MB
+cool
+[Gen 18/1750] Elapsed: 02:09:45 | ETA: 07:44:23
+Gen 018 | Best: 2748.0870 | Mean: 2778.7831 | Std: 16.6491
+[MEMORY] end gen before gc 18 RSS: 10105.10 MB
+[MEMORY] end gen 18 RSS: 10054.93 MB
+cool
+[Gen 19/1750] Elapsed: 02:13:07 | ETA: 07:25:58
+Gen 019 | Best: 2748.0870 | Mean: 2773.7481 | Std: 14.2925
+[MEMORY] end gen before gc 19 RSS: 10101.25 MB
+[MEMORY] end gen 19 RSS: 10056.05 MB
+cool
+[Gen 20/1750] Elapsed: 02:16:15 | ETA: 07:08:15
+Gen 020 | Best: 2748.0870 | Mean: 2771.2524 | Std: 12.0411
+[MEMORY] end gen before gc 20 RSS: 10096.90 MB
+[MEMORY] end gen 20 RSS: 10055.46 MB
+cool
+[Gen 21/1750] Elapsed: 02:22:03 | ETA: 06:59:43
+Gen 021 | Best: 2748.0870 | Mean: 2767.5329 | Std: 9.2342
+[MEMORY] end gen before gc 21 RSS: 10083.30 MB
+[MEMORY] end gen 21 RSS: 10055.32 MB
+cool
+[Gen 22/1750] Elapsed: 02:24:01 | ETA: 06:40:46
+Gen 022 | Best: 2748.0870 | Mean: 2765.2888 | Std: 8.5225
+[MEMORY] end gen before gc 22 RSS: 10101.98 MB
+[MEMORY] end gen 22 RSS: 10055.47 MB
+cool
+[Gen 23/1750] Elapsed: 02:27:11 | ETA: 06:26:22
+Gen 023 | Best: 2748.0870 | Mean: 2762.7643 | Std: 7.2578
+[MEMORY] end gen before gc 23 RSS: 10087.86 MB
+[MEMORY] end gen 23 RSS: 10055.43 MB
+cool
+[Gen 24/1750] Elapsed: 02:29:44 | ETA: 06:11:21
+Gen 024 | Best: 2748.0870 | Mean: 2759.3525 | Std: 6.1582
+[MEMORY] end gen before gc 24 RSS: 10092.24 MB
+[MEMORY] end gen 24 RSS: 10054.27 MB
+cool
+[Gen 25/1750] Elapsed: 02:34:19 | ETA: 06:02:03
+Gen 025 | Best: 2748.0870 | Mean: 2758.4759 | Std: 5.3954
+[MEMORY] end gen before gc 25 RSS: 10093.68 MB
+[MEMORY] end gen 25 RSS: 10056.30 MB
+cool
+[Gen 26/1750] Elapsed: 02:37:16 | ETA: 05:49:28
+Gen 026 | Best: 2745.3232 | Mean: 2756.5831 | Std: 4.8731
+[MEMORY] end gen before gc 26 RSS: 10095.46 MB
+[MEMORY] end gen 26 RSS: 10056.46 MB
+cool
+[Gen 27/1750] Elapsed: 02:44:28 | ETA: 05:46:35
+Gen 027 | Best: 2745.3232 | Mean: 2756.0933 | Std: 4.3382
+[MEMORY] end gen before gc 27 RSS: 10089.05 MB
+[MEMORY] end gen 27 RSS: 10056.93 MB
+cool
+[Gen 28/1750] Elapsed: 02:46:29 | ETA: 05:32:59
+Gen 028 | Best: 2740.0254 | Mean: 2754.4921 | Std: 5.1610
+[MEMORY] end gen before gc 28 RSS: 10089.12 MB
+[MEMORY] end gen 28 RSS: 10057.21 MB
+cool
+[Gen 29/1750] Elapsed: 02:48:54 | ETA: 05:20:56
+Gen 029 | Best: 2736.8516 | Mean: 2751.5541 | Std: 6.9765
+[MEMORY] end gen before gc 29 RSS: 10092.89 MB
+[MEMORY] end gen 29 RSS: 10058.13 MB
+cool
+[Gen 30/1750] Elapsed: 02:52:24 | ETA: 05:11:27
+Gen 030 | Best: 2736.8516 | Mean: 2750.1327 | Std: 7.0322
+[MEMORY] end gen before gc 30 RSS: 10080.84 MB
+[MEMORY] end gen 30 RSS: 10056.38 MB
+cool
+[Gen 31/1750] Elapsed: 02:54:29 | ETA: 04:59:54
+Gen 031 | Best: 2736.8516 | Mean: 2747.4564 | Std: 6.5330
+[MEMORY] end gen before gc 31 RSS: 10074.98 MB
+[MEMORY] end gen 31 RSS: 10056.33 MB
+cool
+[Gen 32/1750] Elapsed: 02:55:54 | ETA: 04:47:50
+Gen 032 | Best: 2735.5032 | Mean: 2746.1608 | Std: 6.3596
+[MEMORY] end gen before gc 32 RSS: 10086.68 MB
+[MEMORY] end gen 32 RSS: 10057.09 MB
+cool
+[Gen 33/1750] Elapsed: 03:00:07 | ETA: 04:40:46
+Gen 033 | Best: 2735.5032 | Mean: 2745.5698 | Std: 5.9037
+[MEMORY] end gen before gc 33 RSS: 10093.22 MB
+[MEMORY] end gen 33 RSS: 10057.67 MB
+cool
+[Gen 34/1750] Elapsed: 03:02:54 | ETA: 04:31:45
+Gen 034 | Best: 2732.7955 | Mean: 2744.4168 | Std: 6.0327
+[MEMORY] end gen before gc 34 RSS: 10087.04 MB
+[MEMORY] end gen 34 RSS: 10057.55 MB
+cool
+[Gen 35/1750] Elapsed: 03:05:07 | ETA: 04:22:15
+Gen 035 | Best: 2732.7955 | Mean: 2743.5439 | Std: 5.5807
+[MEMORY] end gen before gc 35 RSS: 10083.90 MB
+[MEMORY] end gen 35 RSS: 10056.55 MB
+cool
+[Gen 36/1750] Elapsed: 03:06:46 | ETA: 04:12:24
+Gen 036 | Best: 2732.7955 | Mean: 2742.5509 | Std: 5.2246
+[MEMORY] end gen before gc 36 RSS: 10098.46 MB
+[MEMORY] end gen 36 RSS: 10055.68 MB
+cool
+[Gen 37/1750] Elapsed: 03:09:53 | ETA: 04:04:51
+Gen 037 | Best: 2732.7955 | Mean: 2742.4770 | Std: 5.1170
+[MEMORY] end gen before gc 37 RSS: 10090.59 MB
+[MEMORY] end gen 37 RSS: 10058.02 MB
+cool
+[Gen 38/1750] Elapsed: 03:14:15 | ETA: 03:59:05
+Gen 038 | Best: 2732.7955 | Mean: 2742.4770 | Std: 5.1170
+[MEMORY] end gen before gc 38 RSS: 10095.42 MB
+[MEMORY] end gen 38 RSS: 10060.40 MB
+cool
+[Gen 39/1750] Elapsed: 03:16:54 | ETA: 03:51:21
+Gen 039 | Best: 2732.7955 | Mean: 2741.6567 | Std: 4.9429
+[MEMORY] end gen before gc 39 RSS: 10086.36 MB
+[MEMORY] end gen 39 RSS: 10059.93 MB
+cool
+[Gen 40/1750] Elapsed: 03:18:43 | ETA: 03:42:57
+Gen 040 | Best: 2732.7955 | Mean: 2740.8474 | Std: 4.9491
+[MEMORY] end gen before gc 40 RSS: 10097.60 MB
+[MEMORY] end gen 40 RSS: 10060.98 MB
+cool
+[Gen 41/1750] Elapsed: 03:22:19 | ETA: 03:36:47
+Gen 041 | Best: 2732.7955 | Mean: 2740.3568 | Std: 4.4109
+[MEMORY] end gen before gc 41 RSS: 10088.73 MB
+[MEMORY] end gen 41 RSS: 10060.73 MB
+cool
+[Gen 42/1750] Elapsed: 03:24:25 | ETA: 03:29:10
+Gen 042 | Best: 2732.7955 | Mean: 2740.3418 | Std: 4.3866
+[MEMORY] end gen before gc 42 RSS: 10089.57 MB
+[MEMORY] end gen 42 RSS: 10061.00 MB
+cool
+[Gen 43/1750] Elapsed: 03:26:15 | ETA: 03:21:33
+Gen 043 | Best: 2730.6516 | Mean: 2738.9974 | Std: 4.2984
+[MEMORY] end gen before gc 43 RSS: 10095.02 MB
+[MEMORY] end gen 43 RSS: 10059.74 MB
+cool
+[Gen 44/1750] Elapsed: 03:28:36 | ETA: 03:14:42
+Gen 044 | Best: 2730.6516 | Mean: 2738.8866 | Std: 4.1563
+[MEMORY] end gen before gc 44 RSS: 10091.82 MB
+[MEMORY] end gen 44 RSS: 10059.82 MB
+cool
+[Gen 45/1750] Elapsed: 03:30:43 | ETA: 03:07:49
+Gen 045 | Best: 2728.9312 | Mean: 2737.3373 | Std: 3.9288
+[MEMORY] end gen before gc 45 RSS: 10087.70 MB
+[MEMORY] end gen 45 RSS: 10059.05 MB
+cool
+[Gen 46/1750] Elapsed: 03:34:20 | ETA: 03:02:24
+Gen 046 | Best: 2728.9312 | Mean: 2736.8764 | Std: 3.7426
+[MEMORY] end gen before gc 46 RSS: 10096.47 MB
+[MEMORY] end gen 46 RSS: 10061.13 MB
+cool
+[Gen 47/1750] Elapsed: 03:37:08 | ETA: 02:56:25
+Gen 047 | Best: 2728.9312 | Mean: 2736.4032 | Std: 3.2117
+[MEMORY] end gen before gc 47 RSS: 10106.03 MB
+[MEMORY] end gen 47 RSS: 10060.84 MB
+cool
+[Gen 48/1750] Elapsed: 03:40:36 | ETA: 02:51:05
+Gen 048 | Best: 2728.9312 | Mean: 2735.9735 | Std: 3.1183
+[MEMORY] end gen before gc 48 RSS: 10092.46 MB
+[MEMORY] end gen 48 RSS: 10060.21 MB
+cool
+[Gen 49/1750] Elapsed: 03:43:07 | ETA: 02:45:06
+Gen 049 | Best: 2726.8253 | Mean: 2734.8041 | Std: 3.1108
+[MEMORY] end gen before gc 49 RSS: 10093.92 MB
+[MEMORY] end gen 49 RSS: 10061.33 MB
+cool
+[Gen 50/1750] Elapsed: 03:45:41 | ETA: 02:39:18
+Gen 050 | Best: 2726.8253 | Mean: 2733.8544 | Std: 3.1739
+[MEMORY] end gen before gc 50 RSS: 10092.50 MB
+[MEMORY] end gen 50 RSS: 10061.58 MB
+cool
+[Gen 51/1750] Elapsed: 03:48:19 | ETA: 02:33:41
+Gen 051 | Best: 2726.8253 | Mean: 2733.6907 | Std: 3.0572
+[MEMORY] end gen before gc 51 RSS: 10086.73 MB
+[MEMORY] end gen 51 RSS: 10060.15 MB
+cool
+[Gen 52/1750] Elapsed: 03:50:24 | ETA: 02:27:48
+Gen 052 | Best: 2726.8253 | Mean: 2733.3166 | Std: 2.8430
+[MEMORY] end gen before gc 52 RSS: 10087.72 MB
+[MEMORY] end gen 52 RSS: 10062.09 MB
+cool
+[Gen 53/1750] Elapsed: 03:55:16 | ETA: 02:23:46
+Gen 053 | Best: 2726.8253 | Mean: 2732.8331 | Std: 2.6571
+[MEMORY] end gen before gc 53 RSS: 10087.16 MB
+[MEMORY] end gen 53 RSS: 10063.36 MB
+cool
+[Gen 54/1750] Elapsed: 03:57:03 | ETA: 02:17:55
+Gen 054 | Best: 2726.8253 | Mean: 2732.4724 | Std: 2.4809
+[MEMORY] end gen before gc 54 RSS: 10089.98 MB
+[MEMORY] end gen 54 RSS: 10063.69 MB
+cool
+[Gen 55/1750] Elapsed: 03:59:05 | ETA: 02:12:21
+Gen 055 | Best: 2726.8253 | Mean: 2732.4724 | Std: 2.4809
+[MEMORY] end gen before gc 55 RSS: 10093.73 MB
+[MEMORY] end gen 55 RSS: 10064.33 MB
+cool
+[Gen 56/1750] Elapsed: 04:01:29 | ETA: 02:07:06
+Gen 056 | Best: 2726.8253 | Mean: 2732.4684 | Std: 2.4763
+[MEMORY] end gen before gc 56 RSS: 10088.56 MB
+[MEMORY] end gen 56 RSS: 10063.85 MB
+cool
+[Gen 57/1750] Elapsed: 04:03:36 | ETA: 02:01:48
+Gen 057 | Best: 2726.8253 | Mean: 2732.2585 | Std: 2.3190
+[MEMORY] end gen before gc 57 RSS: 10079.48 MB
+[MEMORY] end gen 57 RSS: 10064.28 MB
+cool
+[Gen 58/1750] Elapsed: 04:05:17 | ETA: 01:56:24
+Gen 058 | Best: 2726.8253 | Mean: 2731.9246 | Std: 2.4056
+[MEMORY] end gen before gc 58 RSS: 10088.68 MB
+[MEMORY] end gen 58 RSS: 10063.51 MB
+cool
+[Gen 59/1750] Elapsed: 04:07:14 | ETA: 01:51:15
+Gen 059 | Best: 2726.8253 | Mean: 2731.7401 | Std: 2.3155
+[MEMORY] end gen before gc 59 RSS: 10086.20 MB
+[MEMORY] end gen 59 RSS: 10063.16 MB
+cool
+[Gen 60/1750] Elapsed: 04:09:52 | ETA: 01:46:30
+Gen 060 | Best: 2726.8253 | Mean: 2731.6743 | Std: 2.2543
+[MEMORY] end gen before gc 60 RSS: 10084.94 MB
+[MEMORY] end gen 60 RSS: 10063.34 MB
+cool
+[Gen 61/1750] Elapsed: 04:11:52 | ETA: 01:41:33
+Gen 061 | Best: 2725.8410 | Mean: 2731.0765 | Std: 2.4029
+[MEMORY] end gen before gc 61 RSS: 10101.81 MB
+[MEMORY] end gen 61 RSS: 10065.98 MB
+cool
+[Gen 62/1750] Elapsed: 04:15:08 | ETA: 01:37:11
+Gen 062 | Best: 2725.8410 | Mean: 2730.7729 | Std: 2.2695
+[MEMORY] end gen before gc 62 RSS: 10097.04 MB
+[MEMORY] end gen 62 RSS: 10065.30 MB
+cool
+[Gen 63/1750] Elapsed: 04:17:33 | ETA: 01:32:33
+Gen 063 | Best: 2725.8410 | Mean: 2730.6734 | Std: 2.1943
+[MEMORY] end gen before gc 63 RSS: 10090.07 MB
+[MEMORY] end gen 63 RSS: 10066.48 MB
+cool
+[Gen 64/1750] Elapsed: 04:19:34 | ETA: 01:27:51
+Gen 064 | Best: 2725.8410 | Mean: 2730.6734 | Std: 2.1943
+[MEMORY] end gen before gc 64 RSS: 10095.22 MB
+[MEMORY] end gen 64 RSS: 10067.93 MB
+cool
+[Gen 65/1750] Elapsed: 04:21:55 | ETA: 01:23:20
+Gen 065 | Best: 2725.8410 | Mean: 2730.6195 | Std: 2.1463
+[MEMORY] end gen before gc 65 RSS: 10091.48 MB
+[MEMORY] end gen 65 RSS: 10067.09 MB
+cool
+[Gen 66/1750] Elapsed: 04:23:42 | ETA: 01:18:42
+Gen 066 | Best: 2722.5263 | Mean: 2729.8647 | Std: 2.6666
+[MEMORY] end gen before gc 66 RSS: 10087.72 MB
+[MEMORY] end gen 66 RSS: 10068.81 MB
+cool
+[Gen 67/1750] Elapsed: 04:25:14 | ETA: 01:14:06
+Gen 067 | Best: 2722.5263 | Mean: 2729.8647 | Std: 2.6666
+[MEMORY] end gen before gc 67 RSS: 10109.46 MB
+[MEMORY] end gen 67 RSS: 10069.40 MB
+cool
+[Gen 68/1750] Elapsed: 04:28:11 | ETA: 01:09:57
+Gen 068 | Best: 2722.5263 | Mean: 2729.7044 | Std: 2.5806
+[MEMORY] end gen before gc 68 RSS: 10105.43 MB
+[MEMORY] end gen 68 RSS: 10068.92 MB
+cool
+[Gen 69/1750] Elapsed: 04:30:59 | ETA: 01:05:48
+Gen 069 | Best: 2722.5263 | Mean: 2729.5496 | Std: 2.4884
+[MEMORY] end gen before gc 69 RSS: 10096.82 MB
+[MEMORY] end gen 69 RSS: 10068.77 MB
+cool
+[Gen 70/1750] Elapsed: 04:33:35 | ETA: 01:01:39
+Gen 070 | Best: 2722.5263 | Mean: 2729.5496 | Std: 2.4884
+[MEMORY] end gen before gc 70 RSS: 10101.83 MB
+[MEMORY] end gen 70 RSS: 10069.11 MB
+cool
+[Gen 71/1750] Elapsed: 04:36:03 | ETA: 00:57:30
+Gen 071 | Best: 2722.5263 | Mean: 2729.2938 | Std: 2.4513
+[MEMORY] end gen before gc 71 RSS: 10094.32 MB
+[MEMORY] end gen 71 RSS: 10069.95 MB
+cool
+[Gen 72/1750] Elapsed: 04:38:00 | ETA: 00:53:19
+Gen 072 | Best: 2722.5263 | Mean: 2729.2938 | Std: 2.4513
+[MEMORY] end gen before gc 72 RSS: 10103.73 MB
+[MEMORY] end gen 72 RSS: 10069.03 MB
+cool
+[Gen 73/1750] Elapsed: 04:42:22 | ETA: 00:49:36
+Gen 073 | Best: 2722.5263 | Mean: 2728.0806 | Std: 2.7099
+[MEMORY] end gen before gc 73 RSS: 10095.91 MB
+[MEMORY] end gen 73 RSS: 10069.96 MB
+cool
+[Gen 74/1750] Elapsed: 04:44:25 | ETA: 00:45:30
+Gen 074 | Best: 2722.5263 | Mean: 2727.4518 | Std: 2.5495
+[MEMORY] end gen before gc 74 RSS: 10086.46 MB
+[MEMORY] end gen 74 RSS: 10069.63 MB
+cool
+[Gen 75/1750] Elapsed: 04:45:47 | ETA: 00:41:21
+Gen 075 | Best: 2722.5263 | Mean: 2727.1950 | Std: 2.4558
+[MEMORY] end gen before gc 75 RSS: 10091.55 MB
+[MEMORY] end gen 75 RSS: 10069.29 MB
+cool
+[Gen 76/1750] Elapsed: 04:48:15 | ETA: 00:37:26
+Gen 076 | Best: 2722.5263 | Mean: 2726.9469 | Std: 2.3421
+[MEMORY] end gen before gc 76 RSS: 10100.32 MB
+[MEMORY] end gen 76 RSS: 10068.41 MB
+cool
+[Gen 77/1750] Elapsed: 04:51:41 | ETA: 00:33:39
+Gen 077 | Best: 2722.5263 | Mean: 2726.6149 | Std: 2.3125
+[MEMORY] end gen before gc 77 RSS: 10084.86 MB
+[MEMORY] end gen 77 RSS: 10068.93 MB
+cool
+[Gen 78/1750] Elapsed: 04:54:13 | ETA: 00:29:47
+Gen 078 | Best: 2722.5263 | Mean: 2726.3791 | Std: 2.1409
+[MEMORY] end gen before gc 78 RSS: 10098.98 MB
+[MEMORY] end gen 78 RSS: 10068.79 MB
+cool
+[Gen 79/1750] Elapsed: 04:57:48 | ETA: 00:26:03
+Gen 079 | Best: 2722.5263 | Mean: 2726.2514 | Std: 2.0315
+[MEMORY] end gen before gc 79 RSS: 10091.71 MB
+[MEMORY] end gen 79 RSS: 10071.71 MB
+cool
+[Gen 80/1750] Elapsed: 04:59:38 | ETA: 00:22:11
+Gen 080 | Best: 2722.5263 | Mean: 2726.0853 | Std: 1.9194
+[MEMORY] end gen before gc 80 RSS: 10094.86 MB
+[MEMORY] end gen 80 RSS: 10071.42 MB
+cool
+[Gen 81/1750] Elapsed: 05:01:59 | ETA: 00:18:24
+Gen 081 | Best: 2722.5263 | Mean: 2725.7909 | Std: 1.7154
+[MEMORY] end gen before gc 81 RSS: 10096.67 MB
+[MEMORY] end gen 81 RSS: 10072.25 MB
+cool
+[Gen 82/1750] Elapsed: 05:03:55 | ETA: 00:14:38
+Gen 082 | Best: 2722.5263 | Mean: 2725.7909 | Std: 1.7154
+[MEMORY] end gen before gc 82 RSS: 10102.23 MB
+[MEMORY] end gen 82 RSS: 10070.74 MB
+cool
+[Gen 83/1750] Elapsed: 05:06:43 | ETA: 00:10:57
+Gen 083 | Best: 2722.5263 | Mean: 2725.5041 | Std: 1.7572
+[MEMORY] end gen before gc 83 RSS: 10087.17 MB
+[MEMORY] end gen 83 RSS: 10072.71 MB
+cool
+[Gen 84/1750] Elapsed: 05:07:50 | ETA: 00:07:14
+Gen 084 | Best: 2722.5263 | Mean: 2725.3809 | Std: 1.6512
+[MEMORY] end gen before gc 84 RSS: 10090.72 MB
+[MEMORY] end gen 84 RSS: 10073.80 MB
+cool
+[Gen 85/1750] Elapsed: 05:10:58 | ETA: 00:03:36
+Gen 085 | Best: 2722.5263 | Mean: 2725.1577 | Std: 1.5636
+[MEMORY] end gen before gc 85 RSS: 10098.67 MB
+[MEMORY] end gen 85 RSS: 10072.57 MB
+cool
+[Gen 86/1750] Elapsed: 05:13:00 | ETA: 00:00:00
+Gen 086 | Best: 2722.5263 | Mean: 2725.0867 | Std: 1.4992
+[MEMORY] end gen before gc 86 RSS: 10096.37 MB
+[MEMORY] end gen 86 RSS: 10073.79 MB
+cool
+[OK] Search stats saved to results/DynamicHarmony_search_stats_seed42_config42_20260721_214122.txt
+[OK] Saved plot: results/DynamicHarmony_convergence_seed42_20260721_214130.png
+
+Search finished in 18898.1s
+Best BIC: None
+Saved to: results/CMF_Washington_count_hs_20260721_214131.json
+Traceback (most recent call last):
+  File "/mnt/hpccs01/home/mahendr3/CMF_Multilevel/Trying/Washington_data_hs_cmf_hpc_job/hs_run_cmf.py", line 84, in <module>
+    best_spec = evaluator.build_spec(best["best_decision"])
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mahendr3/.local/lib/python3.11/site-packages/metacountregressor/experiment_package.py", line 258, in build_spec
+    roles          = decision[:D]
+                     ~~~~~~~~^^^^
+TypeError: 'NoneType' object is not subscriptable
+==========================================
+Finished : Tue Jul 21 09:41:32 PM AEST 2026  exit_code=1
+==========================================
+
+PBS Job 24004929.aqua
+CPU time         : 06:42:02
+Wall time        : 05:15:52
+Mem usage        : 11113956kb
+
+--- Job Runtime Information at 2026-07-21T21:41:32.909172---
+id               : 24004929.aqua
+Job_Name         : hs_CMF_Washington
+Job_Owner        : mahendr3@aquarius01.ib0.hpc.qut.edu.au
+resources_used   : cput=06:42:02,mem=11113956kb,walltime=05:15:52,ncpus=2,cpupercent=128,vmem=12226492kb,cpus="4,6",ngpus=0
+job_state        : 5
+queue            : cpu_batch_exec
+server           : aqua
+Checkpoint       : u
+Error_Path       : aquarius01.ib0.hpc.qut.edu.au:/mnt/hpccs01/home/mahendr3/CMF_Multilevel/Trying/Washington_data_hs_cmf_hpc_job/hs_CMF_Washington.e24004929
+exec_host2       : cpu1n049.ib0.hpc.qut.edu.au:15002/1*2
+exec_vnode       : (cpu1n049[0]:ncpus=2:mem=32gb:ngpus=0:nfpgas=0)
+Join_Path        : oe
+Keep_Files       : n
+mtime            : 2026-07-21T16:25:41
+Output_Path      : aquarius01.ib0.hpc.qut.edu.au:/mnt/hpccs01/home/mahendr3/CMF_Multilevel/Trying/Washington_data_hs_cmf_hpc_job/hs_CMF_Washington.o24004929
+Resource_List    : mem=32gb,walltime=47:58:00,ncpus=2,place=free
+schedselect      : 1:ncpus=2:mem=32GB:ngpus=0:nfpgas=0:cpu_id=any:qlist=cpu_batch_exec
+stime            : 2026-07-21T16:25:40
+session_id       : 2026024
+substate         : 50
+Variable_List    : PBS_O_HOME=/home/mahendr3,PBS_O_LANG=en_US.UTF-8,PBS_O_LOGNAME=mahendr3,PBS_O_PATH=/mnt/weka/pkg/rhel94/AuthenticAMD-25/software/Anaconda3/2024.02-1:/mnt/weka/pkg/rhel94/AuthenticAMD-25/software/Anaconda3/2024.02-1/sbin:/mnt/weka/pkg/rhel94/AuthenticAMD-25/software/Anaconda3/2024.02-1/bin:/mnt/weka/pkg/rhel94/AuthenticAMD-25/software/Anaconda3/2024.02-1/condabin:/home/mahendr3/.local/bin:/home/mahendr3/bin:/opt/clmgr/sbin:/opt/clmgr/bin:/opt/sgi/sbin:/opt/sgi/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/c3/bin:/opt/pbs/bin:/sbin:/bin,PBS_O_MAIL=/var/spool/mail/mahendr3,PBS_O_SHELL=/usr/local/qutsh/bin/qutsh,PBS_O_INTERACTIVE_AUTH_METHOD=resvport,PBS_O_HOST=aquarius01.ib0.hpc.qut.edu.au,PBS_O_WORKDIR=/mnt/hpccs01/home/mahendr3/CMF_Multilevel/Trying/Washington_data_hs_cmf_hpc_job,PBS_O_SYSTEM=Linux,PBS_O_QUEUE=cpu_batch
+euser            : mahendr3
+egroup           : default
+hashname         : 24004929.aqua
+run_count        : 1
+job_kill_delay   : 10
+Exit_status      : 1
+project          : _pbs_project_default
+run_version      : 1
+Submit_Host      : aquarius01.ib0.hpc.qut.edu.au
+Submit_arguments : hs_CMF_Washington.pbs 
+ctime            : 2026-07-21T16:22:05

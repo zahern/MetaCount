@@ -31,11 +31,18 @@ except ImportError:
 def _run_metaheuristic(algo: str, objective_function, **kwargs):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
-        from metaheuristics import (
-            differential_evolution,
-            harmony_search,
-            simulated_annealing,
-        )
+        try:
+            from .metaheuristics import (
+                differential_evolution,
+                harmony_search,
+                simulated_annealing,
+            )
+        except ImportError:
+            from metaheuristics import (
+                differential_evolution,
+                harmony_search,
+                simulated_annealing,
+            )
     algo = algo.lower()
     if algo == "hs":
         return harmony_search(objective_function, **kwargs)
@@ -471,3 +478,450 @@ class UnifiedCMFSearchProblem:
         result["driver"] = "jax_count"
         result["cmf_metadata"] = self.metadata
         return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Multivariate count model – ABM activity-generation variable-selection search
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MultivariateCountObjective:
+    """
+    Binary variable-selection objective for a jointly-fitted multivariate
+    NB/Poisson copula count model (ABM activity-generation stage).
+
+    Decision vector layout  (all binary 0/1):
+        indices  0 … D-1           : covariates included for activity_cols[0]
+        indices  D … 2D-1          : covariates included for activity_cols[1]
+        …
+        indices  (M-1)*D … M*D-1   : covariates included for activity_cols[M-1]
+        index    M*D               : copula flag   (0=gaussian, 1=vine-frank)
+        index    M*D+1             : marginal flag (0=nb,       1=poisson)
+
+    Total dimension = M * D + 2.
+
+    The ``search_copula`` and ``search_marginal`` flags control whether those
+    two trailing bits are actually searched or held fixed at ``fixed_copula``
+    and ``fixed_marginal`` respectively.
+    """
+
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        activity_cols: list[str],
+        covariate_cols: list[str],
+        offset_col: Optional[str] = None,
+        maxiter: int = 500,
+        verbose: bool = False,
+        search_copula: bool = False,
+        search_marginal: bool = False,
+        fixed_copula: str = "gaussian",
+        fixed_marginal: str = "nb",
+        min_vars_per_activity: int = 1,
+        add_intercept: bool = True,
+        # HS / SA hyper-params forwarded from MultivariateSearchProblem.run()
+        max_time: float = 3600.0,
+        max_imp: int = 500,
+        hms: int = 20,
+        hmcr: float = 0.9,
+        par: float = 0.3,
+        mpai: int = 1,
+        termination_iter: int = 200,
+    ):
+        self.df = df
+        self.activity_cols = list(activity_cols)
+        self.covariate_cols = list(covariate_cols)
+        self.offset_col = offset_col
+        self.maxiter = maxiter
+        self.verbose = verbose
+        self.search_copula = search_copula
+        self.search_marginal = search_marginal
+        self.fixed_copula = fixed_copula
+        self.fixed_marginal = fixed_marginal
+        self.min_vars_per_activity = max(1, int(min_vars_per_activity))
+        self.add_intercept = add_intercept
+
+        self._max_time = max_time
+        self._max_imp = max_imp
+        self._hms = hms
+        self._hmcr = hmcr
+        self._par = par
+        self._mpai = mpai
+        self._mpap = 0.1
+        self._max_iterations_improvement = termination_iter
+
+        self.M = len(activity_cols)
+        self.D = len(covariate_cols)
+        # Always reserve 2 flag bits (copula + marginal) for a stable vector layout
+        self._dim = self.M * self.D + 2
+        self._discrete_values = [[0, 1]] * self._dim
+        self._cache: dict[tuple[int, ...], dict[str, Any]] = {}
+
+        # Legacy interface slots expected by some metaheuristic drivers
+        self.is_multi = False
+        self.algorithm = "sa"
+        self._obj_1 = "bic"
+        self._obj_2 = "bic"
+        # SA driver reads this after every get_fitness() call
+        self.Last_Sol: Optional[dict] = None
+
+        # Additional attributes/methods required by the SA/HS/DE drivers
+        self.instance_name = "multivariate_search"
+        self.complexity_level = "multivariate"
+        self.solution_analyst = None          # None  → driver uses best initial sln
+        self._characteristics = self._dim     # full vector length (for neighbour slicing)
+        self._max_characteristics = self._dim # no hard upper bound on active bits
+        self._min_characteristics = self.M   # at least 1 covariate per activity
+
+    # ── Dimension / alphabet ─────────────────────────────────────────────────
+
+    def get_num_parameters(self) -> int:
+        return self._dim
+
+    def get_num_discrete_values(self, i: int) -> int:
+        return 2
+
+    def get_value(self, i: int, j=None):
+        if j is None:
+            return int(np.random.randint(0, 2))
+        return int(j % 2)
+
+    def get_index(self, i: int, v) -> int:
+        return int(v)
+
+    def get_indexes_of_ints(self) -> list[int]:
+        return list(range(self._dim))
+
+    # ── HS / SA accessor shims ────────────────────────────────────────────────
+
+    def get_max_imp(self):        return self._max_imp
+    def get_max_time(self):       return self._max_time
+    def get_hmcr(self):           return self._hmcr
+    def get_par(self):            return self._par
+    def get_hms(self):            return self._hms
+    def get_mpai(self):           return self._mpai
+    def get_mpap(self):           return self._mpap
+    def get_termination_iter(self): return self._max_iterations_improvement
+    def _get_obj1(self):          return self._obj_1
+    def _get_obj2(self):          return self._obj_2
+
+    # ── SA / HS compatibility stubs ───────────────────────────────────────────
+    # These mirror the contract of ObjectiveFunction in solution.py so the
+    # generic metaheuristic drivers can call them without branching.
+
+    def use_random_seed(self) -> bool:
+        """Binary-variable search never requires a fixed seed."""
+        return False
+
+    def set_random_seed(self) -> None:          # pragma: no cover
+        pass
+
+    def maximize(self) -> bool:
+        """We minimise BIC."""
+        return False
+
+    def nbr_routine(self, vector) -> None:
+        """Called by SA driver after accepting a neighbour; no-op here."""
+        pass
+
+    def modulo_or_divisor(self, dividend: int, divisor: int) -> int:
+        """Wrap-around helper used by DE/HS mutation."""
+        result = dividend % divisor
+        return divisor if result == 0 else result
+
+    def get_param_num(self, dispersion: int = 0) -> int:
+        """Return the number of *active* (=1) bits in the last evaluated solution."""
+        if self.Last_Sol is not None:
+            layout = self.Last_Sol.get("layout", [])
+            return int(np.sum(layout[:self.M * self.D]))
+        return self.M  # fallback: one per activity
+
+    def reconstruct_vector(self, data_dict):
+        """
+        Called by SA ``_initialize`` when ``mod_init`` is supplied.
+        For a pure binary search the vector IS the encoding; return it as-is.
+        """
+        if isinstance(data_dict, (list, np.ndarray)):
+            return list(data_dict)
+        if isinstance(data_dict, dict) and "layout" in data_dict:
+            return list(data_dict["layout"])
+        return list(data_dict) if data_dict is not None else [0] * self._dim
+
+    def modify_initial_fit(self, data):
+        """
+        Called by SA ``_initialize`` when a warm-start solution is injected.
+        The multivariate objective doesn't require special post-processing.
+        """
+        return data
+
+    # ── Solution codec ────────────────────────────────────────────────────────
+
+    def decode_solution(self, vector) -> dict[str, Any]:
+        """Decode a binary decision vector into model specification."""
+        vec = np.asarray(vector, dtype=int).ravel()
+        M, D = self.M, self.D
+
+        selected: list[list[str]] = []
+        for m in range(M):
+            mask = vec[m * D: (m + 1) * D].astype(bool).copy()
+            # Enforce minimum inclusion
+            if int(mask.sum()) < self.min_vars_per_activity:
+                for k in range(min(self.min_vars_per_activity, D)):
+                    mask[k] = True
+            selected.append(
+                [v for v, inc in zip(self.covariate_cols, mask) if inc]
+            )
+
+        copula_flag   = int(vec[M * D])
+        marginal_flag = int(vec[M * D + 1])
+
+        copula   = ("vine-frank" if (self.search_copula   and copula_flag   == 1)
+                    else self.fixed_copula)
+        marginal = ("poisson"   if (self.search_marginal  and marginal_flag == 1)
+                    else self.fixed_marginal)
+
+        return {
+            "selected_per_activity": selected,
+            "copula":       copula,
+            "marginal":     marginal,
+            "copula_flag":  copula_flag,
+            "marginal_flag": marginal_flag,
+        }
+
+    # ── Fitness ───────────────────────────────────────────────────────────────
+
+    def get_fitness(self, vector, **_kwargs) -> dict[str, Any]:
+        """Fit the multivariate model for the given binary decision vector."""
+        vec = np.asarray(vector, dtype=int).ravel()
+        key = tuple(int(v) for v in vec.tolist())
+
+        if key in self._cache:
+            # SA driver reads Last_Sol immediately after get_fitness() returns;
+            # keep it updated (must be the full fitness dict) so pareto_run can
+            # index it with string keys like "bic".
+            self.Last_Sol = self._cache[key]
+            return self._cache[key]
+
+        decoded = self.decode_solution(vec)
+        covariate_dict = {
+            act: cols
+            for act, cols in zip(self.activity_cols, decoded["selected_per_activity"])
+        }
+
+        bic = 1e20
+        aic = 1e20
+        try:
+            try:
+                from .multivariate_count_regressor import fit_multivariate_activity_model
+            except ImportError:
+                from multivariate_count_regressor import fit_multivariate_activity_model
+
+            fit = fit_multivariate_activity_model(
+                df=self.df,
+                activity_cols=self.activity_cols,
+                covariate_cols=covariate_dict,
+                offset_col=self.offset_col,
+                copula=decoded["copula"],
+                marginal=decoded["marginal"],
+                add_intercept=self.add_intercept,
+                maxiter=self.maxiter,
+                verbose=self.verbose,
+            )
+            bic = float(fit.bic)
+            aic = float(fit.aic)
+        except Exception as exc:
+            if self.verbose:
+                warnings.warn(
+                    f"MultivariateCountObjective: fit failed for key={key}: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+        import json as _json
+        result: dict[str, Any] = {
+            "bic":           bic,
+            "aic":           aic,
+            "layout":        vec.tolist(),
+            "family":        "multivariate",
+            # Stub keys expected by the shared logger() helper in metaheuristics.py
+            "fixed_fit":     None,
+            "rdm_fit":       None,
+            "rdm_cor_fit":   None,
+            "zi_fit":        None,
+            "pvalues":       None,
+            # Scalar / string fields safe for a single-row pandas DataFrame
+            "copula":        decoded["copula"],
+            "marginal":      decoded["marginal"],
+            "copula_flag":   decoded["copula_flag"],
+            "marginal_flag": decoded["marginal_flag"],
+            # Store as JSON string so pandas logger never sees a list-of-lists
+            "selected_per_activity": _json.dumps(decoded["selected_per_activity"]),
+        }
+        self._cache[key] = result
+        # SA driver reads Last_Sol immediately after get_fitness() returns;
+        # must be the full fitness dict so pareto_run can index by string key.
+        self.Last_Sol = result
+        return result
+
+
+@dataclass
+class MultivariateSearchProblem:
+    """
+    Variable-selection search problem for jointly-fitted multivariate
+    NB/Poisson copula count models (ABM activity-generation stage).
+
+    Construct via::
+
+        problem = ExperimentBuilder(...).build_search(
+            model_family='multivariate',
+            activity_cols=['n_work', 'n_shop', 'n_rec', 'n_eat'],
+            variables=['age', 'income', 'cars', 'hhsize', ...],
+        )
+        result = problem.run(algo='sa')
+
+    Or instantiate directly for full control::
+
+        problem = MultivariateSearchProblem(
+            df=df,
+            activity_cols=['n_work', 'n_shop', 'n_rec'],
+            covariate_cols=['age', 'income', 'cars'],
+        )
+        result = problem.run(algo='hs', max_imp=300, hms=15)
+    """
+
+    df: pd.DataFrame
+    activity_cols: list[str]
+    covariate_cols: list[str]
+    offset_col: Optional[str] = None
+    maxiter: int = 500
+    verbose: bool = False
+    search_copula: bool = False
+    search_marginal: bool = False
+    fixed_copula: str = "gaussian"
+    fixed_marginal: str = "nb"
+    min_vars_per_activity: int = 1
+    add_intercept: bool = True
+    metadata: Optional[dict[str, Any]] = None
+
+    family: str = "multivariate"
+
+    @property
+    def dim(self) -> int:
+        """Total dimension of the binary decision vector (M*D + 2)."""
+        return len(self.activity_cols) * len(self.covariate_cols) + 2
+
+    def _build_objective_dim(self, D: int = None, M: int = None) -> int:
+        """Return the decision-vector dimension.
+
+        Convenience method used by scripts / notebooks.  If *D* and *M* are
+        supplied they override the dataclass attributes so the method can be
+        called with explicit values without needing a fully-populated instance.
+        """
+        _D = D if D is not None else len(self.covariate_cols)
+        _M = M if M is not None else len(self.activity_cols)
+        return _M * _D + 2
+
+    def run(
+        self,
+        algo: str = "sa",
+        **kwargs,
+    ) -> dict[str, Any]:
+        """
+        Run the variable-selection metaheuristic search.
+
+        Parameters
+        ----------
+        algo : str
+            'sa' (simulated annealing, default), 'hs' (harmony search),
+            'de' (differential evolution), or 'hc' (hill climb).
+        max_time : float
+            Wall-clock budget in seconds (default 3600).
+        max_imp : int
+            Maximum number of improving iterations before stopping (default 500).
+        hms : int
+            Harmony-memory size for HS (default 20).
+        hmcr : float
+            Harmony-memory consideration rate for HS (default 0.9).
+        par : float
+            Pitch-adjustment rate for HS (default 0.3).
+        termination_iter : int
+            Iterations without improvement before early termination (default 200).
+
+        Returns
+        -------
+        dict
+            Keys: ``best_solution``, ``best_decoded``, ``best_bic``,
+            ``driver``, ``family``, ``algorithm``, ``raw_result``,
+            ``multivariate_metadata``.
+        """
+        objective = MultivariateCountObjective(
+            df=self.df,
+            activity_cols=self.activity_cols,
+            covariate_cols=self.covariate_cols,
+            offset_col=self.offset_col,
+            maxiter=self.maxiter,
+            verbose=self.verbose,
+            search_copula=self.search_copula,
+            search_marginal=self.search_marginal,
+            fixed_copula=self.fixed_copula,
+            fixed_marginal=self.fixed_marginal,
+            min_vars_per_activity=self.min_vars_per_activity,
+            add_intercept=self.add_intercept,
+            max_time=float(kwargs.pop("max_time", 3600.0)),
+            max_imp=int(kwargs.pop("max_imp", 500)),
+            hms=int(kwargs.pop("hms", 20)),
+            hmcr=float(kwargs.pop("hmcr", 0.9)),
+            par=float(kwargs.pop("par", 0.3)),
+            mpai=int(kwargs.pop("mpai", 1)),
+            termination_iter=int(kwargs.pop("termination_iter", 200)),
+        )
+
+        raw = _run_metaheuristic(algo, objective, **kwargs)
+
+        # ── Recover best solution from the objective cache (most reliable) ──
+        # The SA driver stores the best layout on `sa.best_struct` (an instance
+        # attribute), then returns a plain dict  {elapsed_time, Iteration}
+        # rather than a SimulatedAnnealingResults namedtuple.  We therefore
+        # first try driver-specific result attributes, then fall back to
+        # scanning the cache for the layout with the minimum BIC.
+        best_layout = None
+
+        # (a) namedtuple / object attribute styles
+        if hasattr(raw, "best_struct") and raw.best_struct is not None:
+            best_layout = raw.best_struct
+        elif hasattr(raw, "best_harmony") and raw.best_harmony is not None:
+            best_layout = raw.best_harmony
+        elif hasattr(raw, "best_solutions") and raw.best_solutions:
+            best_layout = raw.best_solutions[-1]
+        elif isinstance(raw, dict):
+            best_layout = raw.get("best_solution") or raw.get("best_harmony")
+
+        # (b) SA driver stores best_struct on the objective via Last_Sol;
+        #     if still None, scan the cache for the minimum-BIC entry
+        if best_layout is None and objective._cache:
+            best_key = min(objective._cache, key=lambda k: objective._cache[k].get("bic", 1e20))
+            best_layout = list(best_key)
+
+        decoded = (
+            objective.decode_solution(best_layout) if best_layout is not None else None
+        )
+        best_bic: Optional[float] = None
+        if best_layout is not None:
+            cached = objective._cache.get(
+                tuple(int(v) for v in np.asarray(best_layout, dtype=int).tolist())
+            )
+            if cached is not None:
+                best_bic = float(cached.get("bic", 1e20))
+
+        return {
+            "driver":              "metaheuristic",
+            "algorithm":           algo,
+            "family":              "multivariate",
+            "raw_result":          raw,
+            "best_solution":       best_layout,
+            "best_decoded":        decoded,
+            "best_bic":            best_bic,
+            "multivariate_metadata": self.metadata or {
+                "activity_cols":  self.activity_cols,
+                "covariate_cols": self.covariate_cols,
+            },
+        }
