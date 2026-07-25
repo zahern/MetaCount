@@ -689,7 +689,7 @@ class MultivariateCountObjective:
 
     # ── Fitness ───────────────────────────────────────────────────────────────
 
-    def get_fitness(self, vector, **_kwargs) -> dict[str, Any]:
+    def get_fitness(self, vector, multi=False, **_kwargs) -> dict[str, Any]:
         """Fit the multivariate model for the given binary decision vector."""
         vec = np.asarray(vector, dtype=int).ravel()
         key = tuple(int(v) for v in vec.tolist())

@@ -1,0 +1,324 @@
+#!/bin/bash -l
+# =============================================================================
+#  test_metacount_multivariate_compare.pbs
+#
+#  PURPOSE:
+#    Compare the metacount_multivariate count process against the standard
+#    GA parallel-chain approach (GA_PROFILE=1, GA_BUDGET=standard, NEW_POP=1).
+#
+#    Two arms are run sequentially in the same job:
+#      ARM A – current baseline  : SA (simulated annealing), single-outcome
+#                                   univariate count search
+#      ARM B – new approach      : multivariate_count_regressor search
+#                                   (joint NB/Poisson copula model)
+#
+#    Results are written to $SCRATCH_DIR and a short comparison summary is
+#    printed at the end of the log.
+#
+#  Equivalent to the production call:
+#    qsub -v RUN_TAG=prof,GA_PROFILE=1,GA_BUDGET=standard,NEW_POP=1 \
+#         job_submit_ga_parallel_chain.pbs
+#  but uses a short budget to validate correctness quickly.
+#
+#  Submission:
+#    qsub test_metacount_multivariate_compare.pbs
+#
+#  Optional overrides:
+#    qsub -v TEST_TIME=600,TEST_IMP=50  test_metacount_multivariate_compare.pbs
+# =============================================================================
+
+# ── PBS resource directives ───────────────────────────────────────────────
+#PBS -N test_mc_mv_compare
+#PBS -l walltime=04:00:00
+#PBS -l mem=32GB
+#PBS -l ncpus=8
+#PBS -l ngpus=0
+#PBS -j eo
+#PBS -m abe
+#PBS -r y
+
+# ── Test parameters (short budget for comparison/validation) ─────────────
+# Per-arm wall-clock limit in seconds (default: 30 min each)
+TEST_TIME=${TEST_TIME:-1800}
+# Max improving iterations per arm (default: 200)
+TEST_IMP=${TEST_IMP:-200}
+# Synthetic data size (default: 600 persons)
+TEST_N=${TEST_N:-600}
+# Random seed for reproducibility
+SEED=${SEED:-42}
+
+# ── Mirror the production submission variables ────────────────────────────
+RUN_TAG=prof
+GA_PROFILE=1         # SA = profile 1  (matches production call)
+GA_BUDGET=standard
+NEW_POP=1
+
+# ── Directories ──────────────────────────────────────────────────────────
+SCRIPT_DIR=$(cd "$(dirname "$0")/.." && pwd)   # MetaCount repo root
+SCRATCH_DIR=${PBS_O_WORKDIR:-$SCRIPT_DIR}/test_results_compare_$(date +%Y%m%d_%H%M%S)
+mkdir -p "$SCRATCH_DIR"
+
+echo "============================================================"
+echo "  TEST: metacount_multivariate vs current GA process"
+echo "  PBS Job ID : ${PBS_JOBID:-local}"
+echo "  Start      : $(date)"
+echo "  Repo root  : $SCRIPT_DIR"
+echo "  Output dir : $SCRATCH_DIR"
+echo "  TEST_TIME  : ${TEST_TIME}s per arm"
+echo "  TEST_IMP   : $TEST_IMP max improving iterations"
+echo "  SEED       : $SEED"
+echo ""
+echo "  [Production equivalent]"
+echo "  RUN_TAG=$RUN_TAG  GA_PROFILE=$GA_PROFILE  GA_BUDGET=$GA_BUDGET  NEW_POP=$NEW_POP"
+echo "============================================================"
+
+cd "$SCRIPT_DIR"
+
+module purge
+module load anaconda3/2019.10
+conda activate py10
+
+# ============================================================
+#  ARM A – CURRENT APPROACH
+#  Single-outcome SA search (matches production: GA_PROFILE=1)
+# ============================================================
+echo ""
+echo "------------------------------------------------------------"
+echo "  ARM A  (current): SA / single-outcome search"
+echo "  Equivalent to: qsub -v RUN_TAG=$RUN_TAG,GA_PROFILE=$GA_PROFILE,"
+echo "                       GA_BUDGET=$GA_BUDGET,NEW_POP=$NEW_POP"
+echo "------------------------------------------------------------"
+
+ARM_A_LOG="$SCRATCH_DIR/arm_a_sa_current.log"
+ARM_A_RESULT="$SCRATCH_DIR/arm_a_result.json"
+
+START_A=$(date +%s)
+
+python -u "z:/tests_runs_tours/code stage 1/run_abm_multivariate_search.py" \
+    --algo     sa                    \
+    --max_time "$TEST_TIME"          \
+    --max_imp  "$TEST_IMP"           \
+    2>&1 | tee "$ARM_A_LOG"
+
+EXIT_A=$?
+END_A=$(date +%s)
+ELAPSED_A=$(( END_A - START_A ))
+
+# Copy result JSON if it exists
+if [ -f "z:/tests_runs_tours/code stage 1/results/search_result_sa.json" ]; then
+    cp "z:/tests_runs_tours/code stage 1/results/search_result_sa.json" "$ARM_A_RESULT"
+fi
+
+echo ""
+echo "  ARM A complete — exit=$EXIT_A  elapsed=${ELAPSED_A}s"
+
+
+# ============================================================
+#  ARM B – NEW APPROACH
+#  multivariate_count_regressor search (SA over joint outcomes)
+# ============================================================
+echo ""
+echo "------------------------------------------------------------"
+echo "  ARM B  (new): SA / multivariate count search"
+echo "  Uses: multivariate_count_regressor via ExperimentBuilder"
+echo "------------------------------------------------------------"
+
+ARM_B_LOG="$SCRATCH_DIR/arm_b_mv_count.log"
+ARM_B_RESULT="$SCRATCH_DIR/arm_b_result.json"
+
+START_B=$(date +%s)
+
+python -u - <<'PYEOF' 2>&1 | tee "$ARM_B_LOG"
+"""
+Run the multivariate count search arm directly via the ExperimentBuilder API.
+Mirrors exactly what run_abm_multivariate_search.py does but writes the
+result to a fixed path for the comparison step.
+"""
+import sys, os, json, warnings, numpy as np, pandas as pd
+from pathlib import Path
+
+# ── Repo path ────────────────────────────────────────────────────────────
+REPO = Path(os.environ.get("SCRIPT_DIR", "."))
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+warnings.filterwarnings("ignore")
+
+# ── Settings (match ARM A values for a fair comparison) ──────────────────
+ALGO          = "sa"
+MAX_TIME      = int(os.environ.get("TEST_TIME", 1800))
+MAX_IMP       = int(os.environ.get("TEST_IMP",  200))
+SEED          = int(os.environ.get("SEED",      42))
+SCRATCH_DIR   = os.environ.get("SCRATCH_DIR", ".")
+
+ACTIVITY_COLS  = ["n_work", "n_shop", "n_rec", "n_eat"]
+COVARIATE_COLS = [
+    "age", "income", "cars", "hhsize", "dist_cbd",
+    "emp_density", "pop_density", "female", "employed", "student",
+]
+
+# ── Synthetic dataset (same DGP as run_abm_multivariate_search.py) ───────
+rng = np.random.default_rng(SEED)
+N   = int(os.environ.get("TEST_N", 600))
+
+df = pd.DataFrame({"person_id": range(N)})
+df["age"]         = rng.integers(18, 75, size=N).astype(float)
+df["income"]      = rng.lognormal(mean=10.5, sigma=0.6, size=N)
+df["cars"]        = rng.choice([0,1,2,3], size=N, p=[.15,.40,.35,.10]).astype(float)
+df["hhsize"]      = rng.choice([1,2,3,4,5], size=N, p=[.20,.35,.25,.15,.05]).astype(float)
+df["dist_cbd"]    = rng.exponential(scale=8.0, size=N)
+df["emp_density"] = rng.exponential(scale=2000.0, size=N)
+df["pop_density"] = rng.exponential(scale=3000.0, size=N)
+df["female"]      = rng.choice([0,1], size=N, p=[.49,.51]).astype(float)
+df["employed"]    = rng.choice([0,1], size=N, p=[.35,.65]).astype(float)
+df["student"]     = rng.choice([0,1], size=N, p=[.85,.15]).astype(float)
+
+def nb_draw(eta, alpha=1.0):
+    mu = np.exp(np.clip(eta, -5, 5))
+    p  = alpha / (alpha + mu)
+    return rng.negative_binomial(alpha, p)
+
+df["n_work"] = nb_draw(-0.5 + 0.8*df["employed"] - 0.3*df["student"])
+df["n_shop"] = nb_draw(-0.8 + 0.2*df["female"]   - 0.1*np.log1p(df["dist_cbd"]))
+df["n_rec"]  = nb_draw(-1.0 + 0.1*df["cars"]     + 0.05*df["hhsize"])
+df["n_eat"]  = nb_draw(-1.2 + 0.15*df["income"]  / df["income"].mean())
+
+print(f"  Synthetic dataset: N={N}")
+for act in ACTIVITY_COLS:
+    print(f"    {act}: mean={df[act].mean():.2f}  max={df[act].max()}")
+
+# ── Build multivariate search problem ────────────────────────────────────
+from metacountregressor import ExperimentBuilder
+
+builder = ExperimentBuilder(df=df, id_col="person_id", y_col=ACTIVITY_COLS[0])
+
+print("\n  Building MultivariateSearchProblem …")
+problem = builder.build_search(
+    model_family          = "multivariate",
+    variables             = COVARIATE_COLS,
+    activity_cols         = ACTIVITY_COLS,
+    maxiter               = 500,
+    add_intercept         = True,
+    fixed_copula          = "gaussian",
+    fixed_marginal        = "nb",
+    search_copula         = False,
+    search_marginal       = False,
+    min_vars_per_activity = 1,
+)
+
+# ── Run ───────────────────────────────────────────────────────────────────
+print(f"\n  Algorithm : {ALGO.upper()}   max_time={MAX_TIME}s   max_imp={MAX_IMP}")
+result = problem.run(
+    algo             = ALGO,
+    max_time         = MAX_TIME,
+    max_imp          = MAX_IMP,
+    termination_iter = 200,
+)
+
+# ── Report ────────────────────────────────────────────────────────────────
+best_bic     = result.get("best_bic")
+best_decoded = result.get("best_decoded")
+print(f"\n  Best BIC : {best_bic}")
+if best_decoded:
+    print("  Selected covariates per activity:")
+    for act, cols in zip(ACTIVITY_COLS, best_decoded.get("selected_per_activity", [])):
+        print(f"    {act:<15}: {cols}")
+
+# ── Save ──────────────────────────────────────────────────────────────────
+def _ser(o):
+    if isinstance(o, (np.integer,)):  return int(o)
+    if isinstance(o, (np.floating,)): return float(o)
+    if isinstance(o, np.ndarray):     return o.tolist()
+    if isinstance(o, dict):           return {k: _ser(v) for k, v in o.items()}
+    if isinstance(o, (list,tuple)):   return [_ser(v) for v in o]
+    return o
+
+out = {
+    "arm":         "B_multivariate",
+    "algorithm":   ALGO,
+    "best_bic":    float(best_bic) if best_bic is not None else None,
+    "best_decoded": _ser(best_decoded),
+    "activity_cols":  ACTIVITY_COLS,
+    "covariate_cols": COVARIATE_COLS,
+}
+out_path = Path(SCRATCH_DIR) / "arm_b_result.json"
+with open(out_path, "w") as f:
+    json.dump(out, f, indent=2)
+print(f"\n  ARM B result saved → {out_path}")
+PYEOF
+
+EXIT_B=$?
+END_B=$(date +%s)
+ELAPSED_B=$(( END_B - START_B ))
+echo ""
+echo "  ARM B complete — exit=$EXIT_B  elapsed=${ELAPSED_B}s"
+
+
+# ============================================================
+#  COMPARISON SUMMARY
+# ============================================================
+echo ""
+echo "============================================================"
+echo "  COMPARISON SUMMARY"
+echo "============================================================"
+
+python -u - <<'PYEOF'
+import json, os
+from pathlib import Path
+
+scratch = Path(os.environ.get("SCRATCH_DIR", "."))
+a_path  = scratch / "arm_a_result.json"
+b_path  = scratch / "arm_b_result.json"
+
+def load(p):
+    if p.exists():
+        with open(p) as f:
+            return json.load(f)
+    return {}
+
+a = load(a_path)
+b = load(b_path)
+
+bic_a = a.get("best_bic")
+bic_b = b.get("best_bic")
+
+print(f"  ARM A  (SA / current approach)     BIC = {bic_a}")
+print(f"  ARM B  (SA / multivariate copula)  BIC = {bic_b}")
+
+if bic_a is not None and bic_b is not None:
+    diff = bic_b - bic_a
+    pct  = 100.0 * diff / abs(bic_a) if bic_a != 0 else float("nan")
+    print(f"\n  ΔBIC (B − A) = {diff:+.4f}  ({pct:+.2f}%)")
+    if diff < 0:
+        print("  ✓ Multivariate model IMPROVES on the baseline (lower BIC).")
+    elif diff == 0:
+        print("  = No difference in BIC between approaches.")
+    else:
+        print("  ✗ Multivariate model is WORSE than baseline (higher BIC).")
+        print("    (Consider increasing search budget or checking copula spec.)")
+else:
+    print("\n  [WARNING] One or both result files missing — cannot compute ΔBIC.")
+    print(f"    arm_a exists: {a_path.exists()}")
+    print(f"    arm_b exists: {b_path.exists()}")
+
+dec_b = b.get("best_decoded")
+if dec_b:
+    print("\n  Best variable selection (ARM B – multivariate):")
+    acts  = b.get("activity_cols",  [])
+    for act, cols in zip(acts, dec_b.get("selected_per_activity", [])):
+        print(f"    {act:<15}: {cols}")
+    print(f"  Copula   : {dec_b.get('copula','?')}")
+    print(f"  Marginal : {dec_b.get('marginal','?')}")
+PYEOF
+
+echo ""
+echo "  Full logs:"
+echo "    ARM A → $SCRATCH_DIR/arm_a_sa_current.log"
+echo "    ARM B → $SCRATCH_DIR/arm_b_mv_count.log"
+echo ""
+echo "  Job finished at $(date)"
+echo "============================================================"
+
+# Return non-zero if either arm failed
+[ $EXIT_A -eq 0 ] && [ $EXIT_B -eq 0 ]
+exit $?

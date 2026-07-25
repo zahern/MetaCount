@@ -1,0 +1,99 @@
+#!/bin/bash -l
+# =============================================================================
+#  job_submit_ga_parallel_chain.pbs
+#  GA parallel-chain variable-selection job for MetaCount
+#
+#  Submission (current approach):
+#    qsub -v RUN_TAG=prof,GA_PROFILE=1,GA_BUDGET=standard,NEW_POP=1 \
+#         job_submit_ga_parallel_chain.pbs
+#
+#  Environment variables
+#  ─────────────────────
+#    RUN_TAG    : label appended to output files (e.g. prof, test, run1)
+#    GA_PROFILE : integer profile index (1=SA/standard, 2=HS/standard, 3=DE/standard)
+#    GA_BUDGET  : resource budget tier  (short | standard | large)
+#    NEW_POP    : 1 → start from a fresh random population
+#                 0 → warm-start from an existing checkpoint
+# =============================================================================
+
+# ── Defaults (overridden by -v at submission) ─────────────────────────────
+RUN_TAG=${RUN_TAG:-run}
+GA_PROFILE=${GA_PROFILE:-1}
+GA_BUDGET=${GA_BUDGET:-standard}
+NEW_POP=${NEW_POP:-1}
+
+# ── Resource selection based on GA_BUDGET ────────────────────────────────
+#   short    → quick smoke test  (2 h,  20 GB, 4 CPU)
+#   standard → production run   (24 h, 60 GB, 8 CPU)
+#   large    → deep search      (48 h,100 GB,16 CPU)
+case "$GA_BUDGET" in
+  short)
+    WALLTIME="02:00:00"
+    MEM="20GB"
+    NCPUS=4
+    ;;
+  large)
+    WALLTIME="48:00:00"
+    MEM="100GB"
+    NCPUS=16
+    ;;
+  *)    # standard (default)
+    WALLTIME="23:59:00"
+    MEM="60GB"
+    NCPUS=8
+    ;;
+esac
+
+# ── PBS directives (set via dynamic resource selection above) ────────────
+#PBS -N metacount_ga_${RUN_TAG}
+#PBS -l walltime=23:59:00
+#PBS -l mem=60GB
+#PBS -l ncpus=8
+#PBS -l ngpus=0
+#PBS -j eo
+#PBS -m abe
+#PBS -r y
+
+# ── Map GA_PROFILE integer → algorithm name ───────────────────────────────
+#   1 = Simulated Annealing (SA)   – robust, general-purpose default
+#   2 = Harmony Search (HS)        – memory-based neighbourhood search
+#   3 = Differential Evolution (DE)– population-based global search
+case "$GA_PROFILE" in
+  2) ALGO="hs" ;;
+  3) ALGO="de" ;;
+  *)  ALGO="sa" ;;   # profile 1 or unrecognised → SA
+esac
+
+echo "=========================================="
+echo "  MetaCount GA Parallel Chain"
+echo "  RUN_TAG    : $RUN_TAG"
+echo "  GA_PROFILE : $GA_PROFILE  →  algo=$ALGO"
+echo "  GA_BUDGET  : $GA_BUDGET"
+echo "  NEW_POP    : $NEW_POP"
+echo "  PBS Job ID : $PBS_JOBID"
+echo "  Start time : $(date)"
+echo "=========================================="
+
+cd $PBS_O_WORKDIR
+
+module purge
+module load anaconda3/2019.10
+conda activate py10
+conda list
+
+# ── Run the GA variable-selection search ─────────────────────────────────
+python run_abm_multivariate_search.py \
+    --algo      "$ALGO"         \
+    --max_time  86400           \
+    --max_imp   1000            \
+    --run_tag   "$RUN_TAG"      \
+    --new_pop   "$NEW_POP"
+
+EXIT_CODE=$?
+
+echo "=========================================="
+echo "  Job finished at $(date)"
+echo "  Exit code: $EXIT_CODE"
+echo "=========================================="
+
+exit $EXIT_CODE

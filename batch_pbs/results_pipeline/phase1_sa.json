@@ -1,0 +1,38 @@
+{
+  "algo": "sa",
+  "bic": 1765.3988654253137,
+  "best_decoded": {
+    "selected_per_activity": [
+      [
+        "age",
+        "cars",
+        "female",
+        "student"
+      ],
+      [
+        "income",
+        "cars",
+        "employed"
+      ],
+      [
+        "age",
+        "income",
+        "pop_density",
+        "female",
+        "employed"
+      ],
+      [
+        "age",
+        "income",
+        "hhsize",
+        "emp_density",
+        "employed"
+      ]
+    ],
+    "copula": "gaussian",
+    "marginal": "nb",
+    "copula_flag": 1,
+    "marginal_flag": 0
+  },
+  "elapsed_s": 139.4577958000009
+}

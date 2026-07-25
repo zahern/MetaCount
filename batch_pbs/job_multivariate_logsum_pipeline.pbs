@@ -1,0 +1,210 @@
+#!/bin/bash -l
+# =============================================================================
+#  job_multivariate_logsum_pipeline.pbs
+#
+#  Three-phase MetaCount multivariate count + logsum pipeline.
+#
+#  PHASE 1  Variable-selection search across ALL algorithms (SA, HS, DE)
+#           Each runs independently on the same multivariate search problem.
+#           Best BIC wins.
+#
+#  PHASE 2  Full multivariate model estimation on winning variable set.
+#           Compute per-person logsum (inclusive value):
+#               logsum_i = log( sum_m exp( x_{i,m} @ beta_m ) )
+#           This captures the total predicted activity attractiveness
+#           across all M activity types (analogous to an ABM logsum/IV).
+#
+#  PHASE 3  Re-estimation with logsum as a link covariate.
+#           Add standardised logsum_z to every activity equation and
+#           re-estimate the joint Gaussian-copula model.
+#           Compare Phase 3 vs Phase 2 via ΔBIC and LR test.
+#
+#  Equivalent production baseline:
+#    qsub -v RUN_TAG=prof,GA_PROFILE=1,GA_BUDGET=standard,NEW_POP=1 \
+#         job_submit_ga_parallel_chain.pbs
+#
+#  Submission:
+#    qsub batch_pbs/job_multivariate_logsum_pipeline.pbs
+#
+#  Quick test override (30 min per arm, 100 iterations):
+#    qsub -v TEST_TIME=1800,TEST_IMP=100 \
+#         batch_pbs/job_multivariate_logsum_pipeline.pbs
+# =============================================================================
+
+# ── PBS directives ────────────────────────────────────────────────────────
+#PBS -N mc_mv_logsum_pipeline
+#PBS -l walltime=12:00:00
+#PBS -l mem=64GB
+#PBS -l ncpus=12
+#PBS -l ngpus=0
+#PBS -j eo
+#PBS -m abe
+#PBS -r y
+
+# ── Runtime parameters (override via -v at qsub) ──────────────────────────
+# Per-algorithm search budget (seconds); 3 algos run sequentially in Phase 1
+TEST_TIME=${TEST_TIME:-3600}
+# Max improving iterations per algorithm
+TEST_IMP=${TEST_IMP:-300}
+# Synthetic dataset size  (use 0 to disable synthetic fallback and use DATA_PATH)
+TEST_N=${TEST_N:-600}
+# Random seed for synthetic data
+SEED=${SEED:-42}
+# Algorithms to run in Phase 1 (space-separated subset or 'all')
+ALGOS=${ALGOS:-"sa hs de"}
+# Path to real CSV/Parquet/Excel data (leave empty for synthetic fallback)
+DATA_PATH=${DATA_PATH:-""}
+
+# ── Mirror production submission variables (for logging) ──────────────────
+RUN_TAG=prof
+GA_PROFILE=1
+GA_BUDGET=standard
+NEW_POP=1
+
+# ── Directories ───────────────────────────────────────────────────────────
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)           # batch_pbs/
+REPO_DIR=$(cd "$SCRIPT_DIR/.." && pwd)              # MetaCount repo root
+RESULTS_DIR=${PBS_O_WORKDIR:-$REPO_DIR}/results_pipeline_$(date +%Y%m%d_%H%M%S)
+mkdir -p "$RESULTS_DIR"
+
+echo "============================================================"
+echo "  MetaCount  –  Multivariate Count + Logsum Pipeline"
+echo "============================================================"
+echo "  PBS Job ID   : ${PBS_JOBID:-local}"
+echo "  Start time   : $(date)"
+echo "  Repo root    : $REPO_DIR"
+echo "  Output dir   : $RESULTS_DIR"
+echo ""
+echo "  Phase 1 algorithms : $ALGOS"
+echo "  Per-algo budget    : ${TEST_TIME}s  /  ${TEST_IMP} improving iterations"
+echo "  Synthetic N        : $TEST_N  (seed=$SEED)"
+echo ""
+echo "  [Production equivalent]"
+echo "  RUN_TAG=$RUN_TAG  GA_PROFILE=$GA_PROFILE  GA_BUDGET=$GA_BUDGET  NEW_POP=$NEW_POP"
+echo "============================================================"
+
+# ── Environment ───────────────────────────────────────────────────────────
+cd "$REPO_DIR"
+
+module purge
+module load anaconda3/2019.10
+conda activate py10
+conda list
+
+# Export variables so the Python script can read them
+export RESULTS_DIR
+export DATA_PATH
+
+# ── Build algo list for Python argparse ───────────────────────────────────
+ALGO_ARGS=""
+for A in $ALGOS; do
+    ALGO_ARGS="$ALGO_ARGS $A"
+done
+
+# ── Run the three-phase pipeline ──────────────────────────────────────────
+echo ""
+echo "  Starting pipeline at $(date)"
+echo "------------------------------------------------------------"
+
+python -u "$SCRIPT_DIR/run_multivariate_logsum_pipeline.py" \
+    --algo     $ALGO_ARGS                 \
+    --max_time "$TEST_TIME"               \
+    --max_imp  "$TEST_IMP"                \
+    --seed     "$SEED"                    \
+    --n        "$TEST_N"                  \
+    2>&1 | tee "$RESULTS_DIR/pipeline.log"
+
+PIPELINE_EXIT=$?
+
+# ── Post-run: copy result files into the timestamped dir ──────────────────
+echo ""
+echo "------------------------------------------------------------"
+echo "  Copying result files to $RESULTS_DIR …"
+
+# The Python script writes to batch_pbs/results_pipeline/ by default
+if [ -d "$SCRIPT_DIR/results_pipeline" ]; then
+    cp -r "$SCRIPT_DIR/results_pipeline/"* "$RESULTS_DIR/" 2>/dev/null || true
+fi
+
+# ── Print final summary from pipeline_summary.md ──────────────────────────
+if [ -f "$RESULTS_DIR/pipeline_summary.md" ]; then
+    echo ""
+    echo "============================================================"
+    echo "  PIPELINE SUMMARY (from pipeline_summary.md)"
+    echo "============================================================"
+    cat "$RESULTS_DIR/pipeline_summary.md"
+fi
+
+# ── Quick JSON diff ───────────────────────────────────────────────────────
+echo ""
+echo "============================================================"
+echo "  BIC COMPARISON TABLE"
+echo "============================================================"
+
+python -u - <<'PYEOF'
+import json, os
+from pathlib import Path
+
+rdir = Path(os.environ.get("RESULTS_DIR", "."))
+
+# Phase 1 per-algo
+print(f"\n  Phase 1 – algorithm search (BIC per algo):")
+for algo in ["sa", "hs", "de"]:
+    p = rdir / f"phase1_{algo}.json"
+    if p.exists():
+        d = json.loads(p.read_text())
+        b = d.get("bic")
+        e = d.get("elapsed_s", 0)
+        bstr = f"{b:.4f}" if b is not None else "n/a"
+        print(f"    {algo.upper():<4}  BIC={bstr:>14}  elapsed={e:.0f}s")
+
+# Phase 2
+p2 = rdir / "phase2_fit_summary.json"
+if p2.exists():
+    d2 = json.loads(p2.read_text())
+    print(f"\n  Phase 2 – full model (best algo = {d2.get('best_algo','?').upper()}):")
+    print(f"    BIC     = {d2.get('phase2_bic'):.4f}")
+    print(f"    log-lik = {d2.get('phase2_loglik'):.4f}")
+    print(f"    logsum  mean={d2.get('logsum_mean',0):.4f}  std={d2.get('logsum_std',0):.4f}")
+
+# Phase 3
+p3 = rdir / "phase3_logsum_results.json"
+if p3.exists():
+    d3 = json.loads(p3.read_text())
+    print(f"\n  Phase 3 – re-estimation with logsum link:")
+    print(f"    BIC     = {d3.get('phase3_bic'):.4f}")
+    print(f"    log-lik = {d3.get('phase3_loglik'):.4f}")
+    db  = d3.get('delta_bic', 0)
+    lrt = d3.get('lrt_stat', 0)
+    lrp = d3.get('lrt_pval', 1)
+    print(f"    ΔBIC (Phase3−Phase2) = {db:+.4f}")
+    print(f"    LR-test  χ²={lrt:.4f}  p={lrp:.6f}")
+    verdict = "IMPROVES" if db < 0 else ("NEGLIGIBLE" if abs(db) < 2 else "WORSENS")
+    print(f"\n  >> Logsum link effect: {verdict}")
+    print(f"\n  Per-activity logsum coefficients:")
+    print(f"  {'Activity':<15} {'coef':>10} {'SE':>10} {'z':>8} {'p':>8}")
+    print("  " + "-" * 55)
+    for act, v in d3.get("logsum_coefs", {}).items():
+        if v:
+            stars = ("***" if v['p'] < 0.001 else "**" if v['p'] < 0.01 else
+                     "*"   if v['p'] < 0.05  else "."  if v['p'] < 0.1  else " ")
+            print(f"  {act:<15} {v['coef']:>10.4f} {v['se']:>10.4f} {v['z']:>8.3f} {v['p']:>8.4f} {stars}")
+PYEOF
+
+echo ""
+echo "------------------------------------------------------------"
+echo "  Output files:"
+echo "    $RESULTS_DIR/pipeline.log"
+echo "    $RESULTS_DIR/phase1_sa.json"
+echo "    $RESULTS_DIR/phase1_hs.json"
+echo "    $RESULTS_DIR/phase1_de.json"
+echo "    $RESULTS_DIR/phase2_fit_summary.json"
+echo "    $RESULTS_DIR/logsum_phase2.npy"
+echo "    $RESULTS_DIR/phase3_logsum_results.json"
+echo "    $RESULTS_DIR/pipeline_summary.md"
+echo ""
+echo "  Job finished at $(date)"
+echo "  Pipeline exit code: $PIPELINE_EXIT"
+echo "============================================================"
+
+exit $PIPELINE_EXIT

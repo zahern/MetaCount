@@ -1,0 +1,2 @@
+bic,aic,layout,family,fixed_fit,rdm_fit,rdm_cor_fit,zi_fit,pvalues,copula,marginal,copula_flag,marginal_flag,selected_per_activity
+1782.1005018094027,1693.0459329126056,"[1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0]",multivariate,,,,,,gaussian,nb,1,0,"[[""age"", ""income"", ""cars"", ""female""], [""income"", ""cars"", ""dist_cbd"", ""employed""], [""income""], [""age"", ""income"", ""hhsize"", ""emp_density""]]"
