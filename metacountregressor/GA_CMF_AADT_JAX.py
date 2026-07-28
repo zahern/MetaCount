@@ -344,9 +344,21 @@ def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
     p_star  = jnp.array(result.params if hasattr(result, "params") else result.x)
 
     try:
-        H   = np.array(hess_fn(p_star))
-        cov = np.linalg.inv(H)
-        se  = np.sqrt(np.maximum(np.diag(cov), 0.0))
+        H = np.array(hess_fn(p_star))
+        H = np.where(np.isfinite(H), H, 0.0)
+        eigvals, eigvecs = np.linalg.eigh(H)
+        max_ev = float(np.max(np.abs(eigvals)))
+        if max_ev > 0 and np.isfinite(max_ev):
+            ridge = float(np.clip(max_ev * 1e-6, 1e-12, 1e-4))
+            inv_eigvals = 1.0 / (eigvals + ridge)
+            cov = (eigvecs * inv_eigvals) @ eigvecs.T
+            diag_cov = np.diag(cov)
+            diag_cov = np.where(diag_cov > 0, diag_cov, 1.0 / ridge)
+            se = np.sqrt(diag_cov)
+        else:
+            n = len(p_star)
+            cov = np.full((n, n), np.nan)
+            se  = np.full(n, np.nan)
     except np.linalg.LinAlgError:
         print("  WARNING: Hessian singular — no hess_inv fallback for SLSQP; returning NaN SEs.")
         n = len(p_star)
@@ -654,13 +666,37 @@ def print_summary_table(df):
         if p < 0.10: return "*"
         return ""
 
-    df = df.copy()
-    df["Signif"] = df["p-value"].apply(stars)
-    print("\n================ MODEL SUMMARY ================\n")
-    print(df.to_string(index=False, float_format="%.4f"))
-    print("\nSignificance: *** p<0.01,  ** p<0.05,  * p<0.10")
-    print("sigma_* rows: standard deviation of the random parameter distribution")
-    print("SE computed from exact observed information matrix (JAX Hessian)\n")
+    def _pval_fmt(p):
+        if not np.isfinite(p): return "    n/a"
+        if p < 0.001: return "  <0.001"
+        return f"  {p:.4f}"
+
+    def _fmt(v, w, sign=False):
+        if not np.isfinite(v): return "n/a".rjust(w)
+        fspec = f"{{:{'+' if sign else ''}{w}.4f}}" if abs(v) < 1e4 else f"{{:{'+' if sign else ''}{w}.2f}}"
+        return fspec.format(v)
+
+    W = 78
+    print("\n" + "=" * W)
+    print("  MODEL SUMMARY")
+    print("=" * W)
+    print(f"  {'Parameter':<30}  {'Estimate':>12}  {'Std.Err':>11}  {'z-value':>10}  {'p-value':>8}  Signif")
+    print("  " + "-" * 29 + "  " + "-" * 12 + "  " + "-" * 11 + "  " + "-" * 10 + "  " + "-" * 8 + "  " + "-" * 6)
+
+    for _, row in df.iterrows():
+        param = str(row["Parameter"])[:30]
+        est   = _fmt(row["Estimate"], 12, True)
+        se    = _fmt(row["Std.Err"],   11, False)
+        z     = _fmt(row["z-value"],   10, True)
+        pv    = _pval_fmt(row["p-value"])
+        st    = stars(row["p-value"])
+        print(f"  {param:<30} {est} {se} {z} {pv}{st}")
+
+    print("")
+    print("  Signif: *** p<0.01   ** p<0.05   * p<0.10")
+    print("  sigma_* rows: standard deviation of the random parameter distribution")
+    print("  SE computed from exact observed information matrix (JAX Hessian + ridge)")
+    print("=" * W + "\n")
 
 
 # ─────────────────────────────────────────────────────────────
