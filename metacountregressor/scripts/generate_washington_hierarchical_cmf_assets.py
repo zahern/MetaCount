@@ -581,17 +581,23 @@ def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
         if not np.isfinite(ll):
             return None
 
-        # ── Hessian-based standard errors ──────────────────────────────
+        # ── Hessian-based standard errors (ridge-regularized) ──────────
         bse_arr = np.full(Kf, np.nan)
         try:
-            def _neg_ll(p):
-                return -_jax_loglik(p, data=data, spec=spec, indivi=False)
-            hess = jax.hessian(_neg_ll)(jnp.array(params_final[:Kf]))
+            _unreg_obj = _partial(_jax_loglik, data=data, spec=spec, indivi=False)
+            hess = jax.hessian(_unreg_obj)(jnp.array(params_final))
             hess_np = np.asarray(hess, dtype=float)
-            eig = np.linalg.eigvalsh(hess_np)
-            if eig[0] > 1e-8 and not np.any(np.isnan(hess_np)):
-                cov = np.linalg.inv(hess_np)
-                bse_arr = np.sqrt(np.maximum(np.diag(cov), 0.0))
+            hess_beta = hess_np[:Kf, :Kf]
+            if not np.any(np.isnan(hess_beta)):
+                eigvals, eigvecs = np.linalg.eigh(hess_beta)
+                max_ev = float(np.max(np.abs(eigvals)))
+                if max_ev > 0 and np.isfinite(max_ev):
+                    ridge = float(np.clip(max_ev * 1e-6, 1e-12, 1e-4))
+                    inv_eigvals = 1.0 / (eigvals + ridge)
+                    cov_np = (eigvecs * inv_eigvals) @ eigvecs.T
+                    diag_cov = np.diag(cov_np)
+                    diag_cov = np.where(diag_cov > 0, diag_cov, 1.0 / ridge)
+                    bse_arr = np.sqrt(diag_cov)
         except Exception:
             pass
 
@@ -1234,6 +1240,93 @@ def _pvalue_penalty_stats(fitted: FittedModel, p_threshold: float = 0.05) -> dic
             pvals[name] = float("nan")
             n_insig += 1
     return {"n_insig": n_insig, "pvals": pvals}
+
+
+def _format_coef_table_journal(df: pd.DataFrame, title: str = "MODEL SUMMARY") -> str:
+    """Format a coefficient DataFrame as a journal-ready aligned table with sections.
+
+    Expects columns: Parameter, Role, Estimate, Std.Err, z-value, p-value.
+    """
+    if df.empty:
+        return "(no coefficients)"
+
+    def _p_value_fmt(p: float) -> str:
+        if not np.isfinite(p):
+            return "    n/a "
+        if p < 0.001:
+            return "  <0.001"
+        return f"  {p:.4f}"
+
+    def _stars(p: float) -> str:
+        if not np.isfinite(p):
+            return "    "
+        if p < 0.01:
+            return " ***"
+        if p < 0.05:
+            return "  **"
+        if p < 0.10:
+            return "   *"
+        return ""
+
+    def _se_fmt(v: float) -> str:
+        if not np.isfinite(v):
+            return "     n/a "
+        return f" {v:11.4f}"
+
+    def _est_fmt(v: float) -> str:
+        if not np.isfinite(v):
+            return "     n/a "
+        return f" {v:+12.4f}"
+
+    def _z_fmt(v: float) -> str:
+        if not np.isfinite(v):
+            return "     n/a "
+        return f" {v:+10.3f}"
+
+    W = 74
+
+    lines = ["=" * W]
+    lines.append(f"  {title}")
+    lines.append("=" * W)
+
+    col_hdr = (f"  {'Parameter':<30}  {'Estimate':>12}  {'Std.Err':>11}  "
+               f"{'z-value':>10}  {'p-value':>8}  Signif")
+
+    sep = "  " + "-" * 29 + "  " + "-" * 12 + "  " + "-" * 11 + "  " + "-" * 10 + "  " + "-" * 8 + "  " + "-" * 6
+
+    roles_order = {"Fixed": 0, "Random-Ind mean": 1, "Random-Ind sd": 2, "Dispersion": 3}
+    sections = []
+    for role_label, section_title in [
+        ("Fixed", "FIXED EFFECTS"),
+        ("Random-Ind mean", "RANDOM PARAMETERS — INDEPENDENT NORMAL (MEAN)"),
+        ("Random-Ind sd", "RANDOM PARAMETERS — INDEPENDENT NORMAL (SITE SD)"),
+        ("Dispersion", "DISPERSION"),
+    ]:
+        mask = df["Role"] == role_label
+        if mask.any():
+            sub = df.loc[mask].copy()
+            sub = sub.sort_values("Role", key=lambda s: s.map(roles_order))
+            sections.append((section_title, sub))
+
+    for section_title, sub in sections:
+        lines.append("")
+        lines.append(f"  {section_title}")
+        lines.append(col_hdr)
+        lines.append(sep)
+        for _, row in sub.iterrows():
+            param = str(row["Parameter"])[:30]
+            est   = _est_fmt(float(row["Estimate"]))
+            se    = _se_fmt(float(row["Std.Err"]))
+            z     = _z_fmt(float(row["z-value"]))
+            pv    = _p_value_fmt(float(row["p-value"]))
+            st    = _stars(float(row["p-value"]))
+            lines.append(f"  {param:<30} {est} {se} {z} {pv}{st}")
+
+    lines.append("")
+    lines.append("  Signif: *** p<0.01   ** p<0.05   * p<0.10")
+    lines.append("  SE computed from exact observed information matrix (JAX Hessian + ridge)")
+    lines.append("=" * W)
+    return "\n".join(lines)
 
 
 def _norm_cdf(x: float) -> float:
@@ -2837,15 +2930,50 @@ def _jax_random_params_refit(
         binary_upper = [v for v in best_upper_raw if v in df.columns and v in binary_vars]
 
         n_random = max(0, int(max_random_terms))
-        rdm_terms = list(continuous_upper[:n_random])
-        fixed_terms = [log_aadt_col] + list(continuous_upper[n_random:]) + binary_upper
+        rdm_terms_raw = list(continuous_upper[:n_random])
+        rdm_terms = []
+        for v in rdm_terms_raw:
+            if v in scaler_stats:
+                mu_s, sd_s = scaler_stats[v]
+                if sd_s > 0:
+                    z_col = f"{v}_Z"
+                    df[z_col] = (pd.to_numeric(df[v], errors="coerce").to_numpy(dtype=float) - mu_s) / sd_s
+                    rdm_terms.append(z_col)
+                else:
+                    rdm_terms.append(v)
+            else:
+                rdm_terms.append(v)
+
+        fixed_terms_raw = [log_aadt_col] + list(continuous_upper[n_random:]) + binary_upper
+        fixed_terms = []
+        for v in fixed_terms_raw:
+            if v == log_aadt_col:
+                fixed_terms.append(v)
+            elif v in scaler_stats:
+                mu_s, sd_s = scaler_stats[v]
+                if sd_s > 0:
+                    z_col = f"{v}_Z"
+                    df[z_col] = (pd.to_numeric(df[v], errors="coerce").to_numpy(dtype=float) - mu_s) / sd_s
+                    fixed_terms.append(z_col)
+                else:
+                    fixed_terms.append(v)
+            else:
+                fixed_terms.append(v)
 
         if include_lower_interactions:
             for var in best_lower_raw:
                 if var not in df.columns:
                     continue
-                inter_col = f"_{var}_x_logaadt"
                 x = pd.to_numeric(df[var], errors="coerce").to_numpy(dtype=float)
+                if var in scaler_stats:
+                    mu_s, sd_s = scaler_stats[var]
+                    if sd_s > 0:
+                        x_scaled = (x - mu_s) / sd_s
+                        inter_col = f"_{var}_Z_x_logaadt"
+                        df[inter_col] = x_scaled * log_aadt
+                        fixed_terms.append(inter_col)
+                        continue
+                inter_col = f"_{var}_x_logaadt"
                 df[inter_col] = x * log_aadt
                 fixed_terms.append(inter_col)
 
@@ -2867,41 +2995,104 @@ def _jax_random_params_refit(
             R=max(200, int(rp_draws)),
         )
 
-        from main_hpc import unpack_params as _unpack  # type: ignore
+        from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, mixed_model_loglik as _mml  # type: ignore
 
         fitted_spec = fit.get("spec", spec)
-        blocks = _unpack(np.array(fit["result"].params), fitted_spec)
+        params_vec = np.asarray(fit["result"].params, dtype=float)
 
-        rows: list[dict[str, Any]] = []
+        _objective = lambda p: _mml(p, fit["data"], fitted_spec)
+        _se_all = np.asarray(_compute_se(params_vec, _objective), dtype=float)
+        _pindex = _build_base_index(fitted_spec, model="nb")
+
+        def _se_slice(key: str) -> np.ndarray | None:
+            rng = _pindex.get(key)
+            if rng is None:
+                return None
+            lo, hi = rng if isinstance(rng, tuple) else (int(rng), int(rng) + 1)
+            return _se_all[lo:hi]
+
+        se_beta_f  = _se_slice("fixed")
+        se_ind_m   = _se_slice("ind_mean")
+        se_ind_s   = _se_slice("ind_sd")
+        se_alpha   = _se_slice("dispersion")
+
+        def _softplus(x):
+            return float(np.log1p(np.exp(float(x))))
+
+        def _sigmoid(x):
+            return float(1.0 / (1.0 + np.exp(-float(x))))
+
+        blocks = _unpack(params_vec, fitted_spec)
+
+        rows_param: list[dict[str, Any]] = []
+        param_idx = 0
+
         for k, name in enumerate(fitted_spec.fixed_names):
-            rows.append({
-                "Variable": VARIABLE_LABELS.get(name, name),
+            b = float(np.array(blocks["beta_f"])[k])
+            s = float(se_beta_f[k]) if se_beta_f is not None and k < len(se_beta_f) else np.nan
+            z = b / s if (np.isfinite(s) and s > 1e-15) else 0.0
+            p = float(2.0 * (1.0 - _norm_cdf(abs(z))))
+            rows_param.append({
+                "Parameter": VARIABLE_LABELS.get(name, name),
                 "Role": "Fixed",
-                "Estimate": float(np.array(blocks["beta_f"])[k]),
-                "StdDev": np.nan,
+                "Estimate": b,
+                "Std.Err": s,
+                "z-value": z,
+                "p-value": p,
             })
+            param_idx += 1
 
         if fitted_spec.Kr_ind > 0 and blocks.get("mean_ind") is not None:
             means = np.array(blocks["mean_ind"])
-            sds = np.abs(np.array(blocks["sd_ind"]))
+            sds_raw = np.array(blocks["sd_ind"])
             for j, rname in enumerate(fitted_spec.random_ind_names):
-                rows.append({
-                    "Variable": VARIABLE_LABELS.get(rname, rname),
-                    "Role": "Random-Ind",
-                    "Estimate": float(means[j]),
-                    "StdDev": float(sds[j]),
+                display_name = VARIABLE_LABELS.get(rname, rname)
+                mj = float(means[j])
+                mse = float(se_ind_m[j]) if se_ind_m is not None and j < len(se_ind_m) else np.nan
+                mz = mj / mse if (np.isfinite(mse) and mse > 1e-15) else 0.0
+                mp = float(2.0 * (1.0 - _norm_cdf(abs(mz))))
+                rows_param.append({
+                    "Parameter": f"{display_name} [mean]",
+                    "Role": "Random-Ind mean",
+                    "Estimate": mj,
+                    "Std.Err": mse,
+                    "z-value": mz,
+                    "p-value": mp,
+                })
+
+                sd_raw = float(sds_raw[j])
+                sd_trans = _softplus(sd_raw)
+                sse_raw = float(se_ind_s[j]) if se_ind_s is not None and j < len(se_ind_s) else np.nan
+                sse_trans = sse_raw * _sigmoid(sd_raw) if np.isfinite(sse_raw) else np.nan
+                sz = sd_trans / sse_trans if (np.isfinite(sse_trans) and sse_trans > 1e-15) else 0.0
+                sp = float(2.0 * (1.0 - _norm_cdf(abs(sz))))
+                rows_param.append({
+                    "Parameter": f"{display_name} [sd]",
+                    "Role": "Random-Ind sd",
+                    "Estimate": sd_trans,
+                    "Std.Err": sse_trans,
+                    "z-value": sz,
+                    "p-value": sp,
                 })
 
         if blocks.get("alpha") is not None:
-            rows.append({
-                "Variable": "NB2 Dispersion (alpha)",
+            a_raw = float(blocks["alpha"])
+            a_trans = _softplus(a_raw)
+            ase_raw = float(se_alpha) if se_alpha is not None else np.nan
+            ase_trans = ase_raw * _sigmoid(a_raw) if np.isfinite(ase_raw) else np.nan
+            az = a_trans / ase_trans if (np.isfinite(ase_trans) and ase_trans > 1e-15) else 0.0
+            ap = float(2.0 * (1.0 - _norm_cdf(abs(az))))
+            rows_param.append({
+                "Parameter": "NB2 Dispersion (alpha)",
                 "Role": "Dispersion",
-                "Estimate": float(jax.nn.softplus(blocks["alpha"])),
-                "StdDev": np.nan,
+                "Estimate": a_trans,
+                "Std.Err": ase_trans,
+                "z-value": az,
+                "p-value": ap,
             })
 
-        coef_df = pd.DataFrame(rows)
-        coef_str = coef_df.to_string(index=False, float_format=lambda v: f"{v:.4f}")
+        coef_df = pd.DataFrame(rows_param)
+        coef_str = _format_coef_table_journal(coef_df, title="RANDOM-PARAMETERS NB2 — FINAL COEFFICIENTS")
 
         summary_d = fit.get("summary", {}) if isinstance(fit, dict) else {}
         ll  = summary_d.get("loglik", float("nan")) if isinstance(summary_d, dict) else float("nan")
@@ -2976,44 +3167,98 @@ def _fit_literature_benchmark_with_metacount(
             R=max(200, int(rp_draws)),
         )
 
-        from main_hpc import unpack_params as _unpack  # type: ignore
+        from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, mixed_model_loglik as _mml  # type: ignore
 
         fitted_spec = fit.get("spec", spec)
-        blocks = _unpack(np.array(fit["result"].params), fitted_spec)
+        params_vec = np.asarray(fit["result"].params, dtype=float)
+
+        _objective = lambda p: _mml(p, fit["data"], fitted_spec)
+        _se_all = np.asarray(_compute_se(params_vec, _objective), dtype=float)
+        _pindex = _build_base_index(fitted_spec, model="nb")
+
+        def _se_slice(key: str) -> np.ndarray | None:
+            rng = _pindex.get(key)
+            if rng is None:
+                return None
+            lo, hi = rng if isinstance(rng, tuple) else (int(rng), int(rng) + 1)
+            return _se_all[lo:hi]
+
+        se_beta_f = _se_slice("fixed")
+        se_ind_m  = _se_slice("ind_mean")
+        se_ind_s  = _se_slice("ind_sd")
+        se_alpha  = _se_slice("dispersion")
+
+        def _softplus(x):
+            return float(np.log1p(np.exp(float(x))))
+
+        def _sigmoid(x):
+            return float(1.0 / (1.0 + np.exp(-float(x))))
+
+        blocks = _unpack(params_vec, fitted_spec)
         rows: list[dict[str, Any]] = []
 
         for k, name in enumerate(fitted_spec.fixed_names):
-            rows.append(
-                {
-                    "Variable": VARIABLE_LABELS.get(name, name),
-                    "Role": "Nonrandom parameter",
-                    "Estimate": float(np.array(blocks["beta_f"])[k]),
-                    "StdDev": np.nan,
-                }
-            )
+            b = float(np.array(blocks["beta_f"])[k])
+            s = float(se_beta_f[k]) if se_beta_f is not None and k < len(se_beta_f) else np.nan
+            z = b / s if (np.isfinite(s) and s > 1e-15) else 0.0
+            p = float(2.0 * (1.0 - _norm_cdf(abs(z))))
+            rows.append({
+                "Parameter": VARIABLE_LABELS.get(name, name),
+                "Role": "Fixed",
+                "Estimate": b,
+                "Std.Err": s,
+                "z-value": z,
+                "p-value": p,
+            })
 
         if fitted_spec.Kr_ind > 0 and blocks.get("mean_ind") is not None:
             means = np.array(blocks["mean_ind"])
-            sds = np.abs(np.array(blocks["sd_ind"]))
+            sds_raw = np.array(blocks["sd_ind"])
             for j, rname in enumerate(fitted_spec.random_ind_names):
-                rows.append(
-                    {
-                        "Variable": VARIABLE_LABELS.get(rname, rname),
-                        "Role": "Random mean (normal)",
-                        "Estimate": float(means[j]),
-                        "StdDev": float(sds[j]),
-                    }
-                )
+                display_name = VARIABLE_LABELS.get(rname, rname)
+                mj = float(means[j])
+                mse = float(se_ind_m[j]) if se_ind_m is not None and j < len(se_ind_m) else np.nan
+                mz = mj / mse if (np.isfinite(mse) and mse > 1e-15) else 0.0
+                mp = float(2.0 * (1.0 - _norm_cdf(abs(mz))))
+                rows.append({
+                    "Parameter": f"{display_name} [mean]",
+                    "Role": "Random-Ind mean",
+                    "Estimate": mj,
+                    "Std.Err": mse,
+                    "z-value": mz,
+                    "p-value": mp,
+                })
+
+                sd_raw = float(sds_raw[j])
+                sd_trans = _softplus(sd_raw)
+                sse_raw = float(se_ind_s[j]) if se_ind_s is not None and j < len(se_ind_s) else np.nan
+                sse_trans = sse_raw * _sigmoid(sd_raw) if np.isfinite(sse_raw) else np.nan
+                sz = sd_trans / sse_trans if (np.isfinite(sse_trans) and sse_trans > 1e-15) else 0.0
+                sp = float(2.0 * (1.0 - _norm_cdf(abs(sz))))
+                rows.append({
+                    "Parameter": f"{display_name} [sd]",
+                    "Role": "Random-Ind sd",
+                    "Estimate": sd_trans,
+                    "Std.Err": sse_trans,
+                    "z-value": sz,
+                    "p-value": sp,
+                })
 
         if blocks.get("alpha") is not None:
-            rows.append(
-                {
-                    "Variable": "NB2 Dispersion (alpha)",
-                    "Role": "Dispersion",
-                    "Estimate": float(jax.nn.softplus(blocks["alpha"])),
-                    "StdDev": np.nan,
-                }
-            )
+            a_raw = float(blocks["alpha"])
+            a_trans = _softplus(a_raw)
+            ase_raw = float(se_alpha) if se_alpha is not None else np.nan
+            ase_trans = ase_raw * _sigmoid(a_raw) if np.isfinite(ase_raw) else np.nan
+            az = a_trans / ase_trans if (np.isfinite(ase_trans) and ase_trans > 1e-15) else 0.0
+            ap = float(2.0 * (1.0 - _norm_cdf(abs(az))))
+            rows.append({
+                "Parameter": "NB2 Dispersion (alpha)",
+                "Role": "Dispersion",
+                "Estimate": a_trans,
+                "Std.Err": ase_trans,
+                "z-value": az,
+                "p-value": ap,
+            })
 
         coef_df = pd.DataFrame(rows)
         summary_d = fit.get("summary", {}) if isinstance(fit, dict) else {}
@@ -3034,8 +3279,8 @@ def _fit_literature_benchmark_with_metacount(
         if not coef_df.empty:
             has_nonfinite = bool(~np.isfinite(pd.to_numeric(coef_df["Estimate"], errors="coerce")).all())
 
-        fixed_est = coef_df.loc[coef_df["Role"] == "Nonrandom parameter", "Estimate"]
-        rand_sd = coef_df.loc[coef_df["Role"] == "Random mean (normal)", "StdDev"]
+        fixed_est = coef_df.loc[coef_df["Role"] == "Fixed", "Estimate"]
+        rand_sd = coef_df.loc[coef_df["Role"] == "Random-Ind sd", "Estimate"]
         max_abs_fixed = float(np.nanmax(np.abs(fixed_est.to_numpy(dtype=float)))) if len(fixed_est) else float("nan")
         max_rand_sd = float(np.nanmax(rand_sd.to_numpy(dtype=float))) if len(rand_sd) else float("nan")
 
@@ -3346,15 +3591,8 @@ def _print_readable_model(
     binary_vars: set[str],
     save_path: Path | None = None,
 ) -> None:
-    """
-    Print (and optionally save) a plain-English model summary with:
-      - the full variable name beside each coefficient
-      - the original-scale effect (un-standardised)
-      - the implied CMF at median AADT for a 1-unit or 1-SD change
-    """
     params = pd.Series(fitted.result.params)
     bse = pd.Series(getattr(fitted.result, "bse", np.nan), index=params.index)
-    lines: list[str] = []
 
     def _sig(p: float) -> str:
         if not np.isfinite(p):
@@ -3367,100 +3605,125 @@ def _print_readable_model(
             return "*"
         return ""
 
-    def _pval_str(pname: str) -> str:
+    def _se_fmt(v: float) -> str:
+        if not np.isfinite(v) or v <= 0:
+            return "     n/a "
+        return f" {v:11.4f}"
+
+    def _z_fmt(v: float) -> str:
+        if not np.isfinite(v):
+            return "     n/a "
+        return f" {v:+10.3f}"
+
+    def _pval_fmt(p: float) -> str:
+        if not np.isfinite(p):
+            return "    n/a"
+        if p < 0.001:
+            return "  <0.001"
+        return f"  {p:.4f}"
+
+    def _est_fmt(v: float) -> str:
+        if not np.isfinite(v):
+            return "     n/a "
+        return f" {v:+12.4f}"
+
+    def _pval_stats(pname: str) -> tuple[float, float, float, float]:
         se = float(bse.get(pname, np.nan))
+        coef = float(params.get(pname, 0))
         if not np.isfinite(se) or se <= 0:
-            return " (SE n/a)"
-        z = float(params.get(pname, 0)) / se
+            return (coef, np.nan, np.nan, np.nan)
+        z = coef / se
         p = float(2.0 * (1.0 - _norm_cdf(abs(z))))
-        return f" p={p:.4f}{_sig(p)}"
+        return (coef, se, z, p)
 
-    w = 85
-    lines.append("=" * w)
-    lines.append("  FINAL HIERARCHICAL CMF MODEL — READABLE SUMMARY")
-    lines.append("=" * w)
+    W = 85
+    lines: list[str] = []
+    lines.append("=" * W)
+    lines.append("  FINAL HIERARCHICAL CMF MODEL — JOURNAL SUMMARY")
+    lines.append("=" * W)
     lines.append("")
-    lines.append("  Model: log(crashes) = Intercept + b_AADT·log(AADT)")
-    lines.append("       + sum [Upper terms: direct effect on crash rate]")
-    lines.append("       + sum [Lower terms: modify AADT elasticity]")
-    lines.append("       + log(segment length)  [exposure offset]")
+    lines.append("  Model:  log(crashes) = alpha + beta_AADT * log(AADT)")
+    lines.append("         + sum_k [ alpha_k * x_k ]                    (upper: direct effect)")
+    lines.append("         + sum_k [ gamma_k * x_k * log(AADT) ]         (lower: AADT elasticity modifier)")
+    lines.append("         + log(segment_length)                          (exposure offset)")
     lines.append("")
 
-    # ── Core ──────────────────────────────────────────────────────────────
+    col_hdr = (f"  {'Parameter':<30}  {'Estimate':>12}  {'Std.Err':>11}  "
+               f"{'z-value':>10}  {'p-value':>8}  Signif")
+    sep_line = "  " + "-" * 29 + "  " + "-" * 12 + "  " + "-" * 11 + "  " + "-" * 10 + "  " + "-" * 8 + "  " + "-" * 6
+
+    # ── Core ────────────────────────────────────────────────────
     lines.append("  CORE PARAMETERS")
-    lines.append("  " + "-" * (w - 2))
+    lines.append(col_hdr)
+    lines.append(sep_line)
     for pname in ["const", "log_aadt"]:
         if pname in params.index:
-            lbl = "Intercept" if pname == "const" else "log(AADT) elasticity"
-            pv = _pval_str(pname)
-            lines.append(f"  {lbl:<45}  {params[pname]:>+9.4f}{pv}")
+            lbl = "Intercept (alpha)" if pname == "const" else "log(AADT) elasticity"
+            coef, se, z, p = _pval_stats(pname)
+            lines.append(f"  {lbl:<30} {_est_fmt(coef)} {_se_fmt(se)} {_z_fmt(z)} {_pval_fmt(p)} {_sig(p)}")
     lines.append("")
 
-    # ── Upper terms ────────────────────────────────────────────────────────
+    # ── Upper terms ──────────────────────────────────────────────
     upper_rows = [(n, v) for n, v in params.items() if str(n).startswith("upper::")]
     if upper_rows:
-        lines.append("  UPPER-LEVEL TERMS  (direct effect — AADT-independent)")
-        lines.append(f"  {'Variable':<45}  {'Coef':>9}  {'Orig scale':>11}  {'CMF (1-unit)':>12}  {'p-value'}")
-        lines.append("  " + "-" * (w - 2))
-        for pname, coef in upper_rows:
+        lines.append("  UPPER-LEVEL TERMS  (direct effect on crash rate — AADT-independent)")
+        lines.append(col_hdr + "  CMF (1-unit)")
+        lines.append(sep_line + "  " + "-" * 12)
+        for pname, coef_val in upper_rows:
             raw = pname.replace("upper::", "")
             is_std = raw.endswith("_Z")
             base_var = raw[:-2] if is_std else raw
             lbl = _label(base_var)
-            sd = scaler_stats.get(base_var, (0.0, 1.0))[1]
-            coef_orig = float(coef) / sd if is_std and sd > 0 else float(coef)
+            sd_v = scaler_stats.get(base_var, (0.0, 1.0))[1]
+            coef_orig = float(coef_val) / sd_v if is_std and sd_v > 0 else float(coef_val)
             cmf = float(np.exp(coef_orig))
-            tag = " (per SD)" if is_std else ""
-            pv = _pval_str(pname)
+            coef, se, z, p = _pval_stats(pname)
+            unit_tag = " (per SD)" if is_std else ""
             lines.append(
-                f"  {lbl:<45}  {coef:>+9.4f}  {coef_orig:>+11.4f}{tag}  CMF={cmf:>7.4f}  {pv}"
+                f"  {lbl:<30} {_est_fmt(coef)} {_se_fmt(se)} {_z_fmt(z)} {_pval_fmt(p)} {_sig(p)}"
+                f"  CMF={cmf:.4f}{unit_tag}"
             )
         lines.append("")
 
-    # ── Lower terms ────────────────────────────────────────────────────────
+    # ── Lower terms ──────────────────────────────────────────────
     lower_rows = [(n, v) for n, v in params.items()
                   if str(n).startswith("lower::") and str(n).endswith("*log_aadt")]
-
-    # Extract the base AADT elasticity for elasticity range display
     beta_aadt = float(params.get("log_aadt", params.get("log(AADT)", 0.0)))
 
     if lower_rows:
-        lines.append("  LOWER-LEVEL TERMS  (modify AADT elasticity — x × log(AADT) interaction)")
+        lines.append("  LOWER-LEVEL TERMS  (modify AADT elasticity)")
         lines.append("")
-        lines.append("  These do NOT affect the baseline crash rate directly.  They shift")
-        lines.append("  how steeply crash risk scales with AADT:  a negative coefficient means")
-        lines.append("  segments with high values of that variable are LESS sensitive to AADT.")
+        lines.append("  Interpretation: these do NOT affect baseline crash rate directly.")
+        lines.append("  They shift how steeply crash risk scales with AADT:")
+        lines.append("    negative coefficient => high value => LESS AADT-sensitive")
+        lines.append("    positive coefficient => high value => MORE AADT-sensitive")
         lines.append("")
-        lines.append(f"  {'Variable':<45}  {'Coef':>9}  {'Interpretation'}")
-        lines.append("  " + "-" * (w - 2))
-        for pname, coef in lower_rows:
+        lines.append(col_hdr)
+        lines.append(sep_line)
+        for pname, coef_val in lower_rows:
             raw = pname.replace("lower::", "").replace("*log_aadt", "")
             is_std = raw.endswith("_Z")
             base_var = raw[:-2] if is_std else raw
             lbl = _label(base_var)
-            sd = scaler_stats.get(base_var, (0.0, 1.0))[1]
-            coef_orig = float(coef) / sd if is_std and sd > 0 else float(coef)
-            direction = ("lower" if float(coef) < 0
-                         else "higher") + " AADT sensitivity"
-            pv = _pval_str(pname)
-            lines.append(
-                f"  {lbl:<45}  {coef:>+9.4f}  => {direction}  {pv}"
-            )
+            coef, se, z, p = _pval_stats(pname)
+            direction = ("less" if float(coef_val) < 0 else "more") + " AADT-sensitive"
+            lines.append(f"  {lbl:<30} {_est_fmt(coef)} {_se_fmt(se)} {_z_fmt(z)} {_pval_fmt(p)} {_sig(p)}")
         lines.append("")
-        lines.append(f"  Base AADT elasticity (log_aadt coeff): {beta_aadt:+.4f}")
-        lines.append("  Local elasticity_i = beta_AADT + sum(gamma_k * x_k_std_i)")
-        lines.append("  'Monotonic AADT' constraint: elasticity > 0 for EVERY segment in dataset.")
-        lines.append("  Meaning: more traffic always -> more crashes (no segment ever reverses).")
+        lines.append(f"  Base AADT elasticity: {beta_aadt:+.4f}")
+        lines.append("  Local elasticity_i = beta_AADT + sum(gamma_k * x_k_i)")
+        lines.append("  'Monotonic AADT' constraint: elasticity > 0 for every segment.")
         lines.append("")
 
-    # ── FC note ────────────────────────────────────────────────────────────
+    # ── FC note ──────────────────────────────────────────────────
     if any("FC" in str(n) for n in params.index):
-        lines.append("  NOTE — Functional Classification (FC) coding:")
+        lines.append("  FUNCTIONAL CLASSIFICATION CODING:")
         for code, desc in FC_LABELS.items():
             lines.append(f"    FC = {code} -> {desc}")
         lines.append("")
 
-    lines.append("=" * w)
+    lines.append("  Signif: *** p<0.01   ** p<0.05   * p<0.10")
+    lines.append("  SE computed from exact observed information matrix (JAX Hessian + ridge)")
+    lines.append("=" * W)
     text = "\n".join(lines)
     print(text)
     if save_path is not None:
@@ -3839,23 +4102,17 @@ def _build_literature_vs_proposed_coef_table(
     if random_params_result is not None:
         rp_df = random_params_result.get("coef_df")
     if isinstance(rp_df, pd.DataFrame) and not rp_df.empty:
-        for _, row in rp_df.iterrows():
-            ptype = str(row.get("Type", ""))
-            if not ptype.lower().startswith("random"):
-                continue
-            raw_name = str(row.get("Parameter", "")).strip()
-            base_name = raw_name.split("[random", 1)[0].strip() if "[random" in raw_name else raw_name
-            if "(" in ptype and ")" in ptype:
-                dist = ptype.split("(", 1)[1].split(")", 1)[0].strip()
-            elif ptype.lower() == "random-cor":
-                dist = "correlated"
-            else:
-                dist = "random"
+        mean_rows = rp_df.loc[rp_df["Role"] == "Random-Ind mean"]
+        sd_rows   = rp_df.loc[rp_df["Role"] == "Random-Ind sd"]
+        sd_map    = {str(r["Parameter"]).replace(" [sd]", ""): r["Estimate"] for _, r in sd_rows.iterrows()}
+        for _, row in mean_rows.iterrows():
+            param_name = str(row["Parameter"]).replace(" [mean]", "")
+            base_name  = param_name
             random_rows.append({
                 "label": base_name,
-                "dist": dist,
-                "mean": row.get("Mean", np.nan),
-                "sd": row.get("SD", np.nan),
+                "dist": "normal",
+                "mean": row.get("Estimate", np.nan),
+                "sd": sd_map.get(param_name, np.nan),
             })
 
     rows: list[dict[str, Any]] = []
@@ -5285,19 +5542,21 @@ def main() -> None:
                 print()
                 print(corr_str)
             print()
-            print("  INTERPRETATION:")
-            print("    Fixed         — same effect for every road segment")
-            print("    Random-Ind    — Mean = population average; SD = site-to-site variability")
-            print("    Random-Cor    — correlated pair; correlation matrix shows co-movement")
-            print("    A large SD means the effect differs substantially across segments")
+            print("  COLUMN GUIDE:")
+            print("    Fixed          — same coefficient for every road segment")
+            print("    Random-Ind mean — population-average effect (mean of random distribution)")
+            print("    Random-Ind sd   — standard deviation of site-to-site heterogeneity")
+            print("    Dispersion      — NB2 overdispersion parameter")
+            print("    Std.Err / z / p — significance test for each parameter")
             print("="*72 + "\n")
 
             rp_txt = (
                 f"Random-parameters NB2  |  LL={rp_ll:.2f}  BIC={rp_bic:.2f}\n\n"
                 "COEFFICIENT TABLE\n"
-                "  Fixed:       same value for every segment\n"
-                "  Random-Ind:  independently distributed across segments (Mean +/- SD)\n"
-                "  Random-Cor:  jointly distributed (see correlation matrix below)\n\n"
+                "  Fixed:          same value for every segment\n"
+                "  Random-Ind mean: population average (mean of random distribution)\n"
+                "  Random-Ind sd:   standard deviation of site heterogeneity\n"
+                "  Std.Err / z / p: significance test for each parameter\n\n"
                 + coef_str
                 + ("\n\n" + corr_str if corr_str else "")
                 + "\n\nINTERPRETATION\n"
