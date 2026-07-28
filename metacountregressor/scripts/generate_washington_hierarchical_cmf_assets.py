@@ -428,14 +428,20 @@ class _JAXResult:
         ll: float,
         n: int,
         family: str = "nb",
+        bse_np: np.ndarray | None = None,
     ):
         Kf   = len(col_names)           # fixed params (incl. intercept "const")
         k    = Kf + (1 if family == "nb" else 0)   # +1 for log_alpha
         self._beta   = params_np[:Kf]   # fixed betas (no alpha)
         self._Kf     = Kf
+        self.ll      = ll
+        self.Kf      = Kf
         # Named series matching statsmodels convention
         self.params  = pd.Series(self._beta, index=col_names, dtype=float)
-        self.bse     = pd.Series(np.full(Kf, np.nan), index=col_names, dtype=float)
+        if bse_np is not None and len(bse_np) >= Kf:
+            self.bse = pd.Series(bse_np[:Kf], index=col_names, dtype=float)
+        else:
+            self.bse = pd.Series(np.full(Kf, np.nan), index=col_names, dtype=float)
         self.aic     = float(2 * k - 2 * ll)
         self.bic     = float(k * np.log(max(n, 1)) - 2 * ll)
 
@@ -484,7 +490,7 @@ def _make_spec(Kf: int, col_names: list[str], family: str) -> "_ModelSpec":
 def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
              offset_np: np.ndarray | None, family: str,
              n_restarts: int = 1,
-             l2_penalty: float = 0.10,
+             l2_penalty: float = 0.50,
              max_abs_coef: float = 30.0) -> _JAXResult | None:
     """
     Fit NB2 or Poisson via the package's own JAX LBFGS engine.
@@ -574,7 +580,23 @@ def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
         ll = float(-_jax_loglik(jnp.array(params_final), data=data, spec=spec, indivi=False))
         if not np.isfinite(ll):
             return None
-        return _JAXResult(params_final, list(X_df.columns), ll, N, family)
+
+        # ── Hessian-based standard errors ──────────────────────────────
+        bse_arr = np.full(Kf, np.nan)
+        try:
+            def _neg_ll(p):
+                return -_jax_loglik(p, data=data, spec=spec, indivi=False)
+            hess = jax.hessian(_neg_ll)(jnp.array(params_final[:Kf]))
+            hess_np = np.asarray(hess, dtype=float)
+            eig = np.linalg.eigvalsh(hess_np)
+            if eig[0] > 1e-8 and not np.any(np.isnan(hess_np)):
+                cov = np.linalg.inv(hess_np)
+                bse_arr = np.sqrt(np.maximum(np.diag(cov), 0.0))
+        except Exception:
+            pass
+
+        return _JAXResult(params_final, list(X_df.columns), ll, N, family,
+                          bse_np=bse_arr)
     except Exception:
         return None
 
@@ -611,7 +633,7 @@ def _fit_model(
     family: str,
     offset_col: str | None,
     include_log_aadt: bool = True,
-    l2_penalty: float = 0.10,
+    l2_penalty: float = 0.50,
     max_abs_coef: float = 30.0,
 ) -> FittedModel | None:
     X_train = _design_matrix(
@@ -682,6 +704,22 @@ def _elasticity_stats(elasticity: np.ndarray) -> dict[str, float]:
     }
 
 
+def _bic_penalised(fit: FittedModel, p_threshold: float = 0.05,
+                   penalty_per_insig: float = 5.0,
+                   coef_reg_penalty: float = 2.0) -> float:
+    bic = float(getattr(fit.result, "bic", np.nan))
+    if not np.isfinite(bic):
+        return bic
+    pval_info = _pvalue_penalty_stats(fit, p_threshold=p_threshold)
+    bic_pen = bic + penalty_per_insig * pval_info["n_insig"]
+    params = np.asarray(fit.result.params, dtype=float)
+    Kf = fit.result.Kf if hasattr(fit.result, "Kf") else len(params)
+    if Kf > 1:
+        l2_norm = float(np.sum(params[1:Kf] ** 2))
+        bic_pen += coef_reg_penalty * l2_norm
+    return bic_pen
+
+
 def _random_search(
     df_train: pd.DataFrame,
     df_val: pd.DataFrame,
@@ -737,6 +775,15 @@ def _random_search(
         elasticity = _aadt_elasticity(df_val, fit)
         es         = _elasticity_stats(elasticity)
         mono_ok    = bool(es["aadt_elasticity_min"] > float(min_aadt_elasticity))
+
+        # P-value penalty: penalise models with many insignificant variables.
+        # Each variable with p > 0.05 adds 5.0 BIC units to the effective score,
+        # discouraging over-parameterised specifications during search.
+        pval_info = _pvalue_penalty_stats(fit, p_threshold=0.05)
+        n_insig = pval_info["n_insig"]
+        PVALUE_PENALTY_PER_INSIG = 5.0
+        bic_penalised = bic + PVALUE_PENALTY_PER_INSIG * n_insig if np.isfinite(bic) else bic
+
         history_rows.append({
             "Iteration": len(history_rows) + 1,
             "Family":    fit.family,
@@ -745,31 +792,29 @@ def _random_search(
             "Lower Vars": ", ".join(fit.lower_vars) if fit.lower_vars else "(none)",
             "Val Poisson Dev": score, "Val RMSE": val_rmse,
             "AIC": aic, "BIC": bic,
+            "BIC (p-value penalised)": bic_penalised,
+            "N Insignificant (p>0.05)": n_insig,
             "AADT elasticity min":            es["aadt_elasticity_min"],
             "AADT elasticity p10":            es["aadt_elasticity_p10"],
             "AADT elasticity median":         es["aadt_elasticity_median"],
             "AADT elasticity p90":            es["aadt_elasticity_p90"],
             "AADT elasticity share positive": es["aadt_elasticity_share_positive"],
-            # Monotonic = local AADT elasticity > 0 for ALL segments in val set.
-            # Elasticity = d(log crashes)/d(log AADT) = beta_AADT + sum(gamma_k * x_k)
-            # Must be positive everywhere so the model never predicts fewer crashes
-            # as traffic increases — a physical plausibility requirement.
             "Monotonic AADT (e>0 all segs)": "yes" if mono_ok else "no",
         })
         nonlocal best_fit, best_score, best_fit_any, best_score_any
-        if bic < best_score_any:
-            best_score_any = bic
+        if bic_penalised < best_score_any:
+            best_score_any = bic_penalised
             best_fit_any   = fit
-        if (not enforce_aadt_increase or mono_ok) and bic < best_score:
-            best_score = bic
+        if (not enforce_aadt_increase or mono_ok) and bic_penalised < best_score:
+            best_score = bic_penalised
             best_fit   = fit
-        # top-K heap maintenance (max-heap by negating bic for min-heap)
+        # top-K heap maintenance (max-heap by negating bic_penalised for min-heap)
         _counter[0] += 1
-        if np.isfinite(bic) and (not enforce_aadt_increase or mono_ok):
+        if np.isfinite(bic_penalised) and (not enforce_aadt_increase or mono_ok):
             if len(top_k_heap) < top_k:
-                _hq.heappush(top_k_heap, (-bic, _counter[0], fit))
-            elif -bic > top_k_heap[0][0]:
-                _hq.heapreplace(top_k_heap, (-bic, _counter[0], fit))
+                _hq.heappush(top_k_heap, (-bic_penalised, _counter[0], fit))
+            elif -bic_penalised > top_k_heap[0][0]:
+                _hq.heapreplace(top_k_heap, (-bic_penalised, _counter[0], fit))
 
     y_val_np = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
 
@@ -922,7 +967,7 @@ def _random_search(
         if _sa_start_log_msg:
             print(_sa_start_log_msg)
 
-        sa_bic   = float(getattr(_sa_start_fit.result, "bic", np.nan))
+        sa_bic   = _bic_penalised(_sa_start_fit)
         if not np.isfinite(sa_bic):
             sa_bic = 1e12
 
@@ -1015,7 +1060,7 @@ def _random_search(
 
             _mem_add(sa_bic, sa_upper, sa_lower, sa_fam)
             for _neg_bic, _, _fit_mem in sorted(top_k_heap, key=lambda x: x[0]):
-                _mb = float(getattr(_fit_mem.result, "bic", np.nan))
+                _mb = _bic_penalised(_fit_mem)
                 _mem_add(_mb, list(_fit_mem.upper_vars), list(_fit_mem.lower_vars), str(_fit_mem.family))
 
             for _ in range(n_sa):
@@ -1091,7 +1136,7 @@ def _random_search(
                 sa_cmp_fam = str(best_fit.family)
                 sa_cmp_start_fit = best_fit
 
-            sa_cmp_bic = float(getattr(sa_cmp_start_fit.result, "bic", np.nan))
+            sa_cmp_bic = _bic_penalised(sa_cmp_start_fit)
             if not np.isfinite(sa_cmp_bic):
                 sa_cmp_bic = 1e12
             T_cmp = 20.0
@@ -1118,7 +1163,7 @@ def _random_search(
                 )
                 if fit is not None:
                     _eval(fit, y_val_np, phase="sa")
-                    new_bic = float(getattr(fit.result, "bic", np.nan))
+                    new_bic = _bic_penalised(fit)
                     if np.isfinite(new_bic):
                         delta = new_bic - sa_cmp_bic
                         if delta < 0 or rng.random() < float(np.exp(-delta / max(T_cmp, 1e-9))):
@@ -1137,7 +1182,7 @@ def _random_search(
                                      family=nf, offset_col=offset_col)
                     if fit is not None:
                         _eval(fit, y_val_np, phase="sa")
-                        new_bic = float(getattr(fit.result, "bic", np.nan))
+                        new_bic = _bic_penalised(fit)
                         if np.isfinite(new_bic):
                             delta = new_bic - sa_bic
                             # Accept improvement always; accept worsening with SA prob
@@ -1166,6 +1211,36 @@ def _random_search(
     return best_fit, history_df_sorted, history_df, top_k_list
 
 
+def _pvalue_penalty_stats(fitted: FittedModel, p_threshold: float = 0.05) -> dict[str, Any]:
+    result = fitted.result
+    params = np.asarray(result.params, dtype=float)
+    bse = pd.Series(getattr(result, "bse", np.nan), index=result.params.index)
+    Kf = result.Kf if hasattr(result, "Kf") else len(params)
+    n_insig = 0
+    pvals = {}
+    for i, (name, val) in enumerate(result.params.items()):
+        if i >= Kf:
+            break
+        if name in ("const",):
+            continue
+        se = float(bse.get(name, np.nan))
+        if np.isfinite(se) and se > 1e-12:
+            z = float(val) / se
+            p = float(2.0 * (1.0 - _norm_cdf(abs(z))))
+            pvals[name] = p
+            if p > p_threshold:
+                n_insig += 1
+        else:
+            pvals[name] = float("nan")
+            n_insig += 1
+    return {"n_insig": n_insig, "pvals": pvals}
+
+
+def _norm_cdf(x: float) -> float:
+    import math
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
 def _coefficient_report(
     fitted: FittedModel,
     scaler_stats: dict[str, tuple[float, float]],
@@ -1173,6 +1248,20 @@ def _coefficient_report(
 ) -> pd.DataFrame:
     params = pd.Series(fitted.result.params)
     std_err = pd.Series(getattr(fitted.result, "bse", np.nan), index=params.index)
+
+    def _z_to_p(z: float) -> float:
+        return float(2.0 * (1.0 - _norm_cdf(abs(z))))
+
+    def _sig_stars(p: float) -> str:
+        if not np.isfinite(p):
+            return ""
+        if p < 0.01:
+            return "***"
+        if p < 0.05:
+            return "**"
+        if p < 0.10:
+            return "*"
+        return ""
 
     rows: list[dict[str, Any]] = []
     for name, value in params.items():
@@ -1212,6 +1301,12 @@ def _coefficient_report(
             scale_type = "native"
             coef_orig = float(value)
 
+        se_val = float(std_err.get(name, np.nan))
+        p_val = float("nan")
+        if np.isfinite(se_val) and se_val > 0:
+            z_val = float(value) / se_val
+            p_val = _z_to_p(z_val)
+
         rows.append(
             {
                 "Parameter": name,
@@ -1219,7 +1314,10 @@ def _coefficient_report(
                 "Variable": source_var,
                 "Scale Type": scale_type,
                 "Estimate (standardized fit scale)": float(value),
-                "Std. Error": float(std_err.get(name, np.nan)),
+                "Std. Error": se_val,
+                "z-value": float("nan") if np.isnan(p_val) else float(value) / se_val,
+                "p-value": p_val,
+                "Signif": _sig_stars(p_val),
                 "Estimate (original variable scale)": float(coef_orig),
             }
         )
@@ -3255,9 +3353,29 @@ def _print_readable_model(
       - the implied CMF at median AADT for a 1-unit or 1-SD change
     """
     params = pd.Series(fitted.result.params)
+    bse = pd.Series(getattr(fitted.result, "bse", np.nan), index=params.index)
     lines: list[str] = []
 
-    w = 70
+    def _sig(p: float) -> str:
+        if not np.isfinite(p):
+            return ""
+        if p < 0.01:
+            return "***"
+        if p < 0.05:
+            return "**"
+        if p < 0.10:
+            return "*"
+        return ""
+
+    def _pval_str(pname: str) -> str:
+        se = float(bse.get(pname, np.nan))
+        if not np.isfinite(se) or se <= 0:
+            return " (SE n/a)"
+        z = float(params.get(pname, 0)) / se
+        p = float(2.0 * (1.0 - _norm_cdf(abs(z))))
+        return f" p={p:.4f}{_sig(p)}"
+
+    w = 85
     lines.append("=" * w)
     lines.append("  FINAL HIERARCHICAL CMF MODEL — READABLE SUMMARY")
     lines.append("=" * w)
@@ -3274,14 +3392,15 @@ def _print_readable_model(
     for pname in ["const", "log_aadt"]:
         if pname in params.index:
             lbl = "Intercept" if pname == "const" else "log(AADT) elasticity"
-            lines.append(f"  {lbl:<45}  {params[pname]:>+9.4f}")
+            pv = _pval_str(pname)
+            lines.append(f"  {lbl:<45}  {params[pname]:>+9.4f}{pv}")
     lines.append("")
 
     # ── Upper terms ────────────────────────────────────────────────────────
     upper_rows = [(n, v) for n, v in params.items() if str(n).startswith("upper::")]
     if upper_rows:
         lines.append("  UPPER-LEVEL TERMS  (direct effect — AADT-independent)")
-        lines.append(f"  {'Variable':<45}  {'Coef':>9}  {'Orig scale':>11}  {'CMF (1-unit)':>12}")
+        lines.append(f"  {'Variable':<45}  {'Coef':>9}  {'Orig scale':>11}  {'CMF (1-unit)':>12}  {'p-value'}")
         lines.append("  " + "-" * (w - 2))
         for pname, coef in upper_rows:
             raw = pname.replace("upper::", "")
@@ -3292,8 +3411,9 @@ def _print_readable_model(
             coef_orig = float(coef) / sd if is_std and sd > 0 else float(coef)
             cmf = float(np.exp(coef_orig))
             tag = " (per SD)" if is_std else ""
+            pv = _pval_str(pname)
             lines.append(
-                f"  {lbl:<45}  {coef:>+9.4f}  {coef_orig:>+11.4f}{tag}  CMF={cmf:>7.4f}"
+                f"  {lbl:<45}  {coef:>+9.4f}  {coef_orig:>+11.4f}{tag}  CMF={cmf:>7.4f}  {pv}"
             )
         lines.append("")
 
@@ -3322,8 +3442,9 @@ def _print_readable_model(
             coef_orig = float(coef) / sd if is_std and sd > 0 else float(coef)
             direction = ("lower" if float(coef) < 0
                          else "higher") + " AADT sensitivity"
+            pv = _pval_str(pname)
             lines.append(
-                f"  {lbl:<45}  {coef:>+9.4f}  => {direction}"
+                f"  {lbl:<45}  {coef:>+9.4f}  => {direction}  {pv}"
             )
         lines.append("")
         lines.append(f"  Base AADT elasticity (log_aadt coeff): {beta_aadt:+.4f}")

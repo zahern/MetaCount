@@ -60,34 +60,72 @@ def plot_cmf_search_convergence(
         output_path = str(Path(history_csv).parent / "cmf_search_convergence.png")
 
     if val_rmse is not None:
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5), dpi=150)
+        fig = plt.figure(figsize=(15, 4.5), dpi=150)
+        gs = fig.add_gridspec(1, 3, width_ratios=[1, 1, 1.15])
 
+        ax1 = fig.add_subplot(gs[0, 0])
         bic_window = _compute_tight_axis_window(bic_vals, objective="bic")
-        ax1.scatter(iters, bic_vals, c=colors, s=22, alpha=0.65, zorder=3)
-        ax1.plot(iters, run_min_bic, color="#0a6c74", lw=2.5, label="Running min")
-        ax1.set_title("BIC over Search Iterations", fontsize=11, fontweight="bold")
+        ax1.scatter(iters, bic_vals, c=colors, s=10, alpha=0.55, zorder=3)
+        ax1.plot(iters, run_min_bic, color="#0a6c74", lw=2.0, label="Running min")
+        ax1.set_title("BIC over Iterations", fontsize=10, fontweight="bold")
         ax1.set_xlabel("Iteration")
         ax1.set_ylabel("BIC")
         if bic_window is not None:
             ax1.set_ylim(*bic_window)
-        ax1.legend(fontsize=8)
-        ax1.grid(alpha=0.2)
+        ax1.legend(fontsize=7)
+        ax1.grid(alpha=0.15)
 
+        ax2 = fig.add_subplot(gs[0, 1])
         run_min_rmse = [min(val_rmse[:i + 1]) for i in range(n)]
         rmse_window = _compute_tight_axis_window(val_rmse, objective="rmse")
-        ax2.scatter(iters, val_rmse, c=colors, s=22, alpha=0.65, zorder=3,
+        ax2.scatter(iters, val_rmse, c=colors, s=10, alpha=0.55, zorder=3,
                     label="Green = monotonic AADT" if has_mono else None)
-        ax2.plot(iters, run_min_rmse, color="#d96f32", lw=2.5, label="Running min")
-        ax2.set_title("Validation RMSE over Iterations", fontsize=11, fontweight="bold")
+        ax2.plot(iters, run_min_rmse, color="#d96f32", lw=2.0, label="Running min")
+        ax2.set_title("Validation RMSE over Iterations", fontsize=10, fontweight="bold")
         ax2.set_xlabel("Iteration")
         ax2.set_ylabel("Val RMSE")
         if rmse_window is not None:
             ax2.set_ylim(*rmse_window)
         if has_mono:
-            ax2.legend(fontsize=8)
-        ax2.grid(alpha=0.2)
+            ax2.legend(fontsize=7)
+        ax2.grid(alpha=0.15)
 
-        fig.suptitle(f"{dataset_label} \u2014 Search Convergence", fontsize=12, y=1.01)
+        ax3 = fig.add_subplot(gs[0, 2])
+        bic_np = np.asarray(bic_vals, dtype=float)
+        rmse_np = np.asarray(val_rmse, dtype=float)
+        valid = np.isfinite(bic_np) & np.isfinite(rmse_np)
+        bic_feas = bic_np[valid]
+        rmse_feas = rmse_np[valid]
+        colors_feas = [colors[i] for i in range(n) if valid[i]]
+        ax3.scatter(bic_feas, rmse_feas, c=colors_feas, s=10, alpha=0.55, zorder=3)
+
+        if len(bic_feas) > 0:
+            pt_order = np.lexsort((-rmse_feas, bic_feas))
+            bic_sorted = bic_feas[pt_order]
+            rmse_sorted = rmse_feas[pt_order]
+            pareto_mask = np.ones(len(bic_sorted), dtype=bool)
+            best_rmse = np.inf
+            for i in range(len(bic_sorted)):
+                if rmse_sorted[i] >= best_rmse:
+                    pareto_mask[i] = False
+                else:
+                    best_rmse = rmse_sorted[i]
+            pareto_idx = pt_order[pareto_mask]
+            bic_pareto = bic_feas[pareto_idx]
+            rmse_pareto = rmse_feas[pareto_idx]
+            ax3.scatter(bic_pareto, rmse_pareto, c="#d96f32", s=35, alpha=0.9,
+                        edgecolors="#333", linewidth=0.8, zorder=5, label="Pareto frontier")
+            sort_pf = np.argsort(bic_pareto)
+            ax3.plot(bic_pareto[sort_pf], rmse_pareto[sort_pf], "-",
+                     color="#d96f32", lw=2.0, alpha=0.7, zorder=4)
+
+        ax3.set_title("Pareto Front: BIC vs Val RMSE", fontsize=10, fontweight="bold")
+        ax3.set_xlabel("BIC (lower ← better)")
+        ax3.set_ylabel("Val RMSE (lower ← better)")
+        ax3.legend(fontsize=7, loc="upper right")
+        ax3.grid(alpha=0.15)
+
+        fig.suptitle(f"{dataset_label} \u2014 Search Convergence", fontsize=11, y=1.01)
     else:
         fig, ax1 = plt.subplots(1, 1, figsize=(10, 4.5), dpi=150)
         ax1.scatter(iters, bic_vals, c=colors, s=22, alpha=0.65, zorder=3)
