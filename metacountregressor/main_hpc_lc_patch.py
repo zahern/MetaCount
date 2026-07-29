@@ -732,7 +732,7 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
             theta_all.append(params[oc:oc + kc])
 
         # ── Per-class membership gamma and Z matrices ──────────────────
-        cm_idx = spec.class_membership_idx  # tuple of tuples, length C-1
+        cm_idx = getattr(spec, 'class_membership_idx', ())
         if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
             # Fallback: all membership vars for all classes (backward compat)
             cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
@@ -921,7 +921,7 @@ def fit_em(init_params, data, spec: ModelSpec,
     models     = spec.models  # per-class model strings
     base_spec_nolc = replace(spec, latent_classes=1)
     # ── Per-class membership indices ───────────────────────────────────
-    cm_idx = spec.class_membership_idx
+    cm_idx = getattr(spec, 'class_membership_idx', ())
     if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
         cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
     per_class_K_mem = tuple(len(idx_tup) for idx_tup in cm_idx)
@@ -1255,7 +1255,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
     models     = spec.models
     base_spec_nolc = replace(spec, latent_classes=1)
     # ── Per-class membership indices ───────────────────────────────────
-    cm_idx = spec.class_membership_idx
+    cm_idx = getattr(spec, 'class_membership_idx', ())
     if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
         cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
     per_class_K_mem = tuple(len(idx_tup) for idx_tup in cm_idx)
@@ -1683,7 +1683,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
 
         total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
         # ── Per-class gamma extraction (jagged) ─────────────────────────
-        cm_idx = spec.class_membership_idx
+        cm_idx = getattr(spec, 'class_membership_idx', ())
         if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
             cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
         gamma_list = []
@@ -1766,7 +1766,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
                 print(f"\n  [fitness error] {exc}")
                 # Fallback: print raw params without SEs
                 for i, val in enumerate(_theta_c):
-                    print(f"  param[{i}] = {val:+.6f}")
+                    print(f"  param[{i}] = {float(val):+.6f}")
                 print()
 
         # ── Membership gamma (per-class) ──────────────────────────
@@ -1954,7 +1954,7 @@ def compute_lc_posteriors(params, data, spec: ModelSpec):
     N = int(data["y"].shape[0])
 
     # Prior log-probabilities using per-class Z matrices
-    cm_idx = spec.class_membership_idx
+    cm_idx = getattr(spec, 'class_membership_idx', ())
     if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
         cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
     Xmem = _np.array(data["Xmem"])

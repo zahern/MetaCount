@@ -60,6 +60,7 @@ from metacountregressor.main_hpc import (  # noqa: E402
 from metacountregressor.main_hpc_lc_patch import (  # noqa: E402
     build_param_index,
     mixed_model_loglik,
+    mixed_model_loglik_reg,
     fit_em,
     _seed_classes_from_clusters,
     unpack_lc_params,
@@ -266,7 +267,8 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
                 return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
             spec_c = replace(spec, latent_classes=C,
-                             min_class_proportion=self.MIN_CLASS_PROP)
+                             min_class_proportion=self.MIN_CLASS_PROP,
+                             l2_penalty=0.1)
             pindex_c = build_param_index(spec_c)
             _class_K_base = list(pindex_c.get("class_K_base", [K_base_0] * C))
 
@@ -322,9 +324,9 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
             except Exception:
                 params_em = init_params
 
-            # Step 5 — LBFGS polish
+            # Step 5 — LBFGS polish (with L2 penalty)
             polish = LBFGS(
-                fun=lambda p: mixed_model_loglik(p, data_train, spec_c),
+                fun=lambda p: mixed_model_loglik_reg(p, data_train, spec_c),
                 maxiter=500,
             )
             result_c = polish.run(jnp.array(params_em))
@@ -392,12 +394,12 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
             )
             if lc_summary and isinstance(lc_summary, dict):
                 print(f"\n{'=' * 65}")
-                print(f"  GLOBAL LC-2 FIT")
-                print(f"  Log-Likelihood : {lc_summary['loglik']:.4f}")
-                print(f"  AIC            : {lc_summary['aic']:.4f}")
-                print(f"  BIC            : {lc_summary['bic']:.4f}")
-                print(f"  Params         : {lc_summary['num_parm']}")
-                print(f"  Latent Classes : {lc_summary['latent_classes']}")
+                print(f"  GLOBAL LC-{C} FIT")
+                print(f"  Log-Likelihood : {lc_summary.get('loglik', float('nan')):.4f}")
+                print(f"  AIC            : {lc_summary.get('aic', float('nan')):.4f}")
+                print(f"  BIC            : {lc_summary.get('bic', float('nan')):.4f}")
+                print(f"  Params         : {lc_summary.get('num_parm', '?')}")
+                print(f"  Latent Classes : {lc_summary.get('latent_classes', C)}")
                 print(f"  Class Probs    : {lc_summary.get('class_probs', [])}")
                 print(f"{'=' * 65}\n")
 
