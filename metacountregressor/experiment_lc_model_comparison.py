@@ -280,26 +280,34 @@ def _class_assignment_accuracy(builder, fit, df, C):
 def _recovery_summary(fit, C):
     """x1/x2 per-class estimates for sign-recovery check."""
     try:
-        from main_hpc_lc_patch import build_base_index
+        from main_hpc_lc_patch import build_param_index
         from dataclasses import replace
 
         spec      = fit["spec"]
         params_np = np.array(fit["result"].params)
-        base_spec = replace(spec, latent_classes=1)
-        K_base    = build_base_index(base_spec)["total_params"]
-        theta_all = params_np[:C * K_base].reshape(C, K_base)
-        names     = list(spec.fixed_names)
+        pindex    = build_param_index(spec)
+        class_offsets = list(pindex.get("class_offsets", []))
+        class_K_base  = list(pindex.get("class_K_base", []))
 
-        idx_x1 = names.index("x1") if "x1" in names else None
-        idx_x2 = names.index("x2") if "x2" in names else None
+        if not class_offsets:
+            base_spec = replace(spec, latent_classes=1)
+            K_base    = build_param_index(base_spec)["total_params"]
+            class_offsets = [i * K_base for i in range(C)]
+            class_K_base  = [K_base] * C
 
         parts = []
         for c in range(C):
+            oc = class_offsets[c]
+            kc = class_K_base[c]
+            thetas_c = params_np[oc:oc + kc]
+            names     = list(spec.fixed_names)
+            idx_x1 = names.index("x1") if "x1" in names else None
+            idx_x2 = names.index("x2") if "x2" in names else None
             seg = f"C{c+1}["
-            if idx_x1 is not None:
-                seg += f"x1={theta_all[c, idx_x1]:+.2f}"
-            if idx_x2 is not None:
-                seg += f" x2={theta_all[c, idx_x2]:+.2f}"
+            if idx_x1 is not None and idx_x1 < len(thetas_c):
+                seg += f"x1={thetas_c[idx_x1]:+.2f}"
+            if idx_x2 is not None and idx_x2 < len(thetas_c):
+                seg += f" x2={thetas_c[idx_x2]:+.2f}"
             seg += "]"
             parts.append(seg)
         return "  ".join(parts)
@@ -310,16 +318,32 @@ def _recovery_summary(fit, C):
 def _membership_summary(fit, C):
     """Gamma (membership) coefficients for z1/z2."""
     try:
-        from main_hpc_lc_patch import build_base_index
+        from main_hpc_lc_patch import build_param_index
         from dataclasses import replace
 
         spec      = fit["spec"]
         if spec.K_membership == 0:
             return "—"
         params_np = np.array(fit["result"].params)
-        base_spec = replace(spec, latent_classes=1)
-        K_base    = build_base_index(base_spec)["total_params"]
-        gamma     = params_np[C * K_base:].reshape(C - 1, spec.K_membership + 1)
+        pindex    = build_param_index(spec)
+        class_offsets = list(pindex.get("class_offsets", []))
+        class_K_base  = list(pindex.get("class_K_base", []))
+
+        if not class_offsets:
+            base_spec = replace(spec, latent_classes=1)
+            K_base    = build_param_index(base_spec)["total_params"]
+            total_theta = C * K_base
+        else:
+            total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
+
+        gamma_raw = params_np[total_theta:]
+        gamma_size = (C - 1) * (spec.K_membership + 1)
+        if len(gamma_raw) >= gamma_size:
+            gamma = gamma_raw[:gamma_size].reshape(C - 1, spec.K_membership + 1)
+        else:
+            gamma = np.zeros((C - 1, spec.K_membership + 1))
+            if len(gamma_raw) > 0:
+                gamma.flat[:len(gamma_raw)] = gamma_raw
         mem_names = ["intercept"] + list(spec.membership_names)
         parts = []
         for k, nm in enumerate(mem_names):
@@ -333,13 +357,20 @@ def _membership_summary(fit, C):
 def _random_stddev_summary(fit, C):
     """StdDev of random x1 per class."""
     try:
-        from main_hpc_lc_patch import build_base_index
+        from main_hpc_lc_patch import build_param_index
         from dataclasses import replace
         spec      = fit["spec"]
         params_np = np.array(fit["result"].params)
-        base_spec = replace(spec, latent_classes=1)
-        K_base    = build_base_index(base_spec)["total_params"]
-        theta_all = params_np[:C * K_base].reshape(C, K_base)
+        pindex    = build_param_index(spec)
+        class_offsets = list(pindex.get("class_offsets", []))
+        class_K_base  = list(pindex.get("class_K_base", []))
+
+        if not class_offsets:
+            base_spec = replace(spec, latent_classes=1)
+            K_base    = build_param_index(base_spec)["total_params"]
+            class_offsets = [i * K_base for i in range(C)]
+            class_K_base  = [K_base] * C
+
         if not hasattr(spec, "random_ind_names") or len(spec.random_ind_names) == 0:
             return "—"
         idx_sd = None
@@ -349,9 +380,16 @@ def _random_stddev_summary(fit, C):
                 break
         if idx_sd is None:
             return "—"
-        return "  ".join(
-            f"C{c+1}[StdDev(x1)={theta_all[c, idx_sd]:+.2f}]" for c in range(C)
-        )
+        parts = []
+        for c in range(C):
+            oc = class_offsets[c]
+            kc = class_K_base[c]
+            thetas_c = params_np[oc:oc + kc]
+            if idx_sd < len(thetas_c):
+                parts.append(f"C{c+1}[StdDev(x1)={thetas_c[idx_sd]:+.2f}]")
+            else:
+                parts.append(f"C{c+1}[StdDev(x1)=—]")
+        return "  ".join(parts)
     except Exception:
         return "—"
 

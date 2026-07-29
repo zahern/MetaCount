@@ -1559,8 +1559,16 @@ def print_summary(result, objective, data, spec: ModelSpec,
         total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
         gamma_flat = params_np[total_theta:]
         se_gamma   = se_np[total_theta:]
-        gamma      = gamma_flat.reshape(C - 1, K_mem + 1)
-        se_g       = se_gamma.reshape(C - 1, K_mem + 1)
+        gamma_size = (C - 1) * (K_mem + 1)
+        if len(gamma_flat) >= gamma_size:
+            gamma = gamma_flat[:gamma_size].reshape(C - 1, K_mem + 1)
+            se_g  = se_gamma[:gamma_size].reshape(C - 1, K_mem + 1)
+        else:
+            gamma = np.zeros((C - 1, K_mem + 1))
+            se_g  = np.zeros((C - 1, K_mem + 1))
+            if len(gamma_flat) > 0:
+                gamma.flat[:len(gamma_flat)] = gamma_flat
+                se_g.flat[:len(se_gamma)] = se_gamma
 
         logits_full = np.concatenate([[0.0], gamma[:, 0]])
         pi          = np.exp(logits_full) / np.exp(logits_full).sum()
@@ -1759,7 +1767,14 @@ def unpack_lc_params(params, spec: ModelSpec):
         theta_list.append(params_np[oc:oc + kc])
 
     total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
-    gamma = params_np[total_theta:].reshape(C - 1, K_mem + 1)
+    gamma_raw = params_np[total_theta:]
+    gamma_size = (C - 1) * (K_mem + 1)
+    if len(gamma_raw) >= gamma_size:
+        gamma = gamma_raw[:gamma_size].reshape(C - 1, K_mem + 1)
+    else:
+        gamma = _np.zeros((C - 1, K_mem + 1))
+        if len(gamma_raw) > 0:
+            gamma.flat[:len(gamma_raw)] = gamma_raw
 
     return theta_list, gamma, pindex
 
@@ -1796,9 +1811,16 @@ def compute_lc_posteriors(params, data, spec: ModelSpec):
     # Per-class individual log-likelihoods
     logL = _np.zeros((N, C))
     for c in range(C):
-        base_spec_c = replace(base_spec_nolc, model=models[c])
+        _data_c = data
+        _base_spec_c = base_spec_nolc
+        cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
+        if cfix is not None and len(cfix) < data["Xf"].shape[2]:
+            _data_c = dict(data)
+            _data_c["Xf"] = data["Xf"][:, :, list(cfix)]
+            _base_spec_c = replace(_base_spec_c, Kf=len(cfix))
+        base_spec_c = replace(_base_spec_c, model=models[c])
         ll_ind = mixed_model_loglik(
-            jnp.array(theta_list[c]), data, base_spec_c, indivi=True
+            jnp.array(theta_list[c]), _data_c, base_spec_c, indivi=True
         )
         logL[:, c] = _np.array(ll_ind)
 

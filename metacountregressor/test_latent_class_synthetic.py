@@ -287,16 +287,23 @@ def run_test(verbose: bool = True):
     )
 
     # ── recovery table ─────────────────────────────────────────────────
-    from main_hpc_lc_patch import build_base_index
+    from main_hpc_lc_patch import build_param_index
     from dataclasses import replace
 
     spec      = fit["spec"]
     params_np = np.array(fit["result"].params)
     C         = spec.latent_classes
-    base_spec = replace(spec, latent_classes=1)
-    base_idx  = build_base_index(base_spec)
-    K_base    = base_idx["total_params"]
-    gamma_flat = params_np[C * K_base:]
+    pindex    = build_param_index(spec)
+    class_offsets = list(pindex.get("class_offsets", []))
+    class_K_base  = list(pindex.get("class_K_base", []))
+    if not class_offsets:
+        base_spec = replace(spec, latent_classes=1)
+        K_base    = build_param_index(base_spec)["total_params"]
+        class_offsets = [i * K_base for i in range(C)]
+        class_K_base  = [K_base] * C
+    K_base    = class_K_base[0]
+    total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
+    gamma_flat = params_np[total_theta:]
 
     _print_recovery_table(
         est_params      = params_np,

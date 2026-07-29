@@ -1950,7 +1950,13 @@ class ExperimentBuilder:
         class_K_base  = list(pindex.get("class_K_base", [build_param_index(base_spec)["total_params"]] * C))
         total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
         gamma_size = (C - 1) * (K_mem + 1)
-        gamma = params[total_theta : total_theta + gamma_size].reshape(C - 1, K_mem + 1)
+        gamma_raw = params[total_theta : total_theta + gamma_size]
+        if len(gamma_raw) >= gamma_size:
+            gamma = gamma_raw[:gamma_size].reshape(C - 1, K_mem + 1)
+        else:
+            gamma = np.zeros((C - 1, K_mem + 1))
+            if len(gamma_raw) > 0:
+                gamma.flat[:len(gamma_raw)] = gamma_raw
 
         n = data["y"].shape[0]
         if K_mem > 0:
