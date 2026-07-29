@@ -21,23 +21,23 @@
 # Roles 7 and 8 are ignored (treated as 0 / 1 respectively) when the
 # latent-class code in the decision vector resolves to 1 class.
 #
-# DECISION VECTOR LAYOUT (dimension = 2·D + 2)
+# DECISION VECTOR LAYOUT (dimension = 4·D + 2)
 # ─────────────────────────────────────────────
-#   [roles(D) | dist_codes(D) | dispersion_bit | latent_class_code]
+#   [roles(D) | dist_codes(D) | dispersion_bit | lc_code | class_mask(D) | membership_mask(D)]
 #
 # MEMBERSHIP LOGIC
 # ─────────────────
 # Role 7 variable:
-#   → appears in spec["membership_terms"]
+#   → appears in spec["membership_terms"] (the pooled list)
 #   → does NOT appear in any outcome list
-#   → its gamma coefficient lets individual-level z-values shift class
-#     probability
+#   → membership_mask[i] controls which class(es) it enters (0=all, 1=class2, 2=class3, ...)
 #
 # Role 8 variable:
-#   → appears in spec["membership_terms"]  (class-prob equation)
+#   → appears in spec["membership_terms"] (class-prob equation)
 #   → ALSO appears in spec["fixed_terms"]  (outcome equation)
-#   → because the model has C classes, each class automatically gets its
-#     own fixed beta for this variable (class-specific outcome + membership)
+#   → class_mask[i] controls which outcome class(es) it enters
+#   → membership_mask[i] controls which membership class(es) it enters
+#   → they are INDEPENDENT: a variable can be in Class 2 outcome but Class 3 membership
 #
 # =======================================================================
 
@@ -284,14 +284,14 @@ class StructureEvaluatorLC(StructureEvaluator):
         """
         Decode a decision vector into a manual_spec dict.
 
-        Decision layout (dimension = 3·D + 2 for LC, 2·D + 1 for single-class):
+        Decision layout (dimension = 4·D + 2 for LC, 2·D + 1 for single-class):
           decision[:D]       = role codes  (0–8)
           decision[D:2D]     = dist codes
           decision[2D]       = dispersion bit
           decision[2D+1]     = latent_class_code  (0→1 class, 1→2, …)
-          decision[2D+2:3D+2]= class_mask  (per-class variable assignments)
-              0 = both classes   1 = class 1 only   2 = class 2 only
-              Only effective when max_latent_classes > 1.
+          decision[2D+2:3D+2]= class_mask  (per-class outcome variable assignments)
+          decision[3D+2:4D+2]= membership_mask  (per-class membership assignments)
+               0 = all classes   1 = class 2 only   2 = class 3 only  ...
         """
         D              = len(self.vars)
         roles          = decision[:D]
@@ -302,19 +302,20 @@ class StructureEvaluatorLC(StructureEvaluator):
             lc_code = int(decision[2*D + 1])
         else:
             lc_code = 0
-        # Per-class masks (new)
+        # Per-class outcome masks
         if self.max_latent_classes > 1 and len(decision) > 2*D + 2:
             class_mask = [int(x) for x in decision[2*D + 2 : 3*D + 2]]
         else:
             class_mask = [0] * D
+        # Per-class membership masks (NEW)
+        if self.max_latent_classes > 1 and len(decision) > 3*D + 2:
+            membership_mask = [int(x) for x in decision[3*D + 2 : 4*D + 2]]
+        else:
+            membership_mask = [0] * D
 
         use_nb          = dispersion_bit % 2 == 1
         latent_classes  = lc_code % self.max_latent_classes + 1
-        # Effective LC count for STRUCTURAL decisions (membership roles,
-        # class masks, per-class variable lists).  The fitness function may
-        # override the actual number of fitted classes later, but we must
-        # always build the spec as if latent classes are present so that
-        # membership (roles 7,8) and class-specific masks are not lost.
+        # Effective LC count for STRUCTURAL decisions
         struct_lc       = max(latent_classes, self.max_latent_classes) if self.max_latent_classes > 1 else 1
 
         fixed      = []
@@ -328,6 +329,8 @@ class StructureEvaluatorLC(StructureEvaluator):
         class_fixed   = [[] for _ in range(struct_lc)]
         class_rdm_ind = [[] for _ in range(struct_lc)]
         class_rdm_cor = [[] for _ in range(struct_lc)]
+        # Per-class membership lists (NEW) — one per non-reference class
+        class_membership = [[] for _ in range(struct_lc - 1)]
 
         # ── Mutual-exclusion check ────────────────────────────────────
         if self.mutual_exclusion:
@@ -349,7 +352,8 @@ class StructureEvaluatorLC(StructureEvaluator):
                 return None
 
             cm = class_mask[i] if struct_lc > 1 else 0
-            # Map class_mask to per-class inclusion
+            mm = membership_mask[i] if struct_lc > 1 and len(membership_mask) > i else 0
+            # Map class_mask to per-class inclusion (outcome equation)
             # 0 = all classes, 1 = class 1 only, 2 = class 2 only, ..., C = class C only
             in_class = []
             if struct_lc <= 1:
@@ -401,10 +405,17 @@ class StructureEvaluatorLC(StructureEvaluator):
             elif role == 7:
                 if struct_lc > 1:
                     membership.append(var)
+                    # Per-class membership: mm=0 → all non-reference classes; mm=c+1 → class c+1 only
+                    for _c in range(struct_lc - 1):
+                        if mm == 0 or mm == _c + 2:  # _c=0 → class 2, etc.
+                            class_membership[_c].append(var)
 
             elif role == 8:
                 if struct_lc > 1:
                     membership.append(var)
+                    for _c in range(struct_lc - 1):
+                        if mm == 0 or mm == _c + 2:
+                            class_membership[_c].append(var)
                 fixed.append(var)
                 for c, inc in enumerate(in_class):
                     if inc:
@@ -493,6 +504,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             "hetro_in_means":   hetero,
             "zi_terms":         zi,
             "membership_terms": membership,
+            "class_membership": class_membership if struct_lc > 1 else None,
             "dispersion":       1 if use_nb else 0,
             "latent_classes":   latent_classes,
         }
@@ -664,6 +676,13 @@ class StructureEvaluatorLC(StructureEvaluator):
             # ── Multi-class path with warm start ───────────────────
             else:
                 K_mem  = spec.K_membership
+                C_fit  = spec_dict.get("latent_classes", 1)
+                # ── Compute per-class gamma sizes from class_membership ──
+                if hasattr(spec, 'class_membership_idx') and spec.class_membership_idx:
+                    per_class_gamma_sizes = [len(idx) + 1 for idx in spec.class_membership_idx]
+                else:
+                    per_class_gamma_sizes = [K_mem + 1] * (C_fit - 1) if C_fit > 1 else []
+                gamma_total = sum(per_class_gamma_sizes)
                 spec_1 = replace(spec, latent_classes=1)
 
                 # Step 1 — fit single-class
@@ -694,7 +713,7 @@ class StructureEvaluatorLC(StructureEvaluator):
                     ])
 
                 # gamma init: zeros → equal class probs, membership coeffs=0
-                gamma_init = np.zeros((C - 1) * (K_mem + 1))
+                gamma_init = np.zeros(gamma_total)
                 init_params = np.concatenate([theta_init, gamma_init])
 
                 # Step 3 — EM

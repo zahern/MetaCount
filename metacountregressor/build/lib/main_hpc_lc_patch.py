@@ -77,6 +77,11 @@ from functools import partial
 from scipy import stats as scipy_stats
 from jaxopt import LBFGS
 
+try:
+    from .regularization import compute_regularized_estimates_jax
+except ImportError:
+    from regularization import compute_regularized_estimates_jax
+
 # ── Import the rest of main_hpc unchanged ──────────────────────────────
 try:
     from . import main_hpc as _hpc  # type: ignore[attr-defined]
@@ -212,8 +217,11 @@ class ModelSpec:
     grouped_dists:       tuple
     latent_classes:      int   = 1
     # ── MEMBERSHIP ────────────────────────────────────────────────────
-    membership_names:    tuple = ()   # variables in class-prob equation
-    K_membership:        int   = 0    # len(membership_names)
+    membership_names:    tuple = ()   # pooled set of all membership variables (union over classes)
+    K_membership:        int   = 0    # len(membership_names) — total unique membership vars
+    class_membership_idx: tuple = ()  # per-class-column indices into the pooled membership list
+                                      #   tuple of tuples, one per non-reference class (length C-1)
+                                      #   e.g. ( (0,), (0,1) ) means class 2 uses var 0; class 3 uses vars 0,1
     class_models:        tuple = ()   # per-class model strings (eg ("poisson","nb"))
     min_class_proportion: float = 0.15  # minimum posterior-mean proportion per class (will be scaled by C internally)
     # ── PER-CLASS COVARIATE SELECTION ─────────────────────────────────
@@ -221,7 +229,15 @@ class ModelSpec:
     class_rdm_ind_idx:   tuple = ()   # per-class column indices into Xr_ind
     class_rdm_cor_idx:   tuple = ()   # per-class column indices into Xr_cor
     class_variable_masks: tuple = ()  # per-class variable sets (frozensets) [NEW: alternative to indices]
-    l2_penalty:          float = 0.0  # L2 regularisation strength on non-intercept params (0 = off)
+    l2_penalty:          float = 0.0  # naive L2 ridge strength on non-intercept params (0 = off; opt-in only)
+    # ── DEFAULT IN-LOOP REGULARISATION ─────────────────────────────────
+    # Every M-step outcome-parameter update is shrunk with PARTE (Alghamdi
+    # et al. 2026) immediately after the LBFGS solve, using (k, d) selected
+    # adaptively from the per-class Fisher information — there is no fixed
+    # "default lambda" the way there would be for naive L2; the paper's
+    # whole premise is that (k, d) are data-adaptive rather than preset.
+    parte_shrinkage_in_loop: bool = True
+    parte_variant:        str  = "k3d3"  # "k1d1" | "k2d2" | "k3d3"
 
     @property
     def K_random_total(self):
@@ -255,6 +271,17 @@ def build_param_index(spec: ModelSpec) -> dict:
     K_mem = spec.K_membership
     models = spec.models  # per-class model strings
 
+    # ── Per-class membership indices (new) ─────────────────────────────
+    # class_membership_idx: tuple of tuples, length C-1, one per non-reference class
+    #   class 2 (first non-ref) → class_membership_idx[0] = (0, 2) etc.
+    _cm_idx = spec.class_membership_idx
+    if _cm_idx and len(_cm_idx) == C - 1 and K_mem > 0:
+        per_class_K_mem = tuple(len(idx_tup) for idx_tup in _cm_idx)
+    else:
+        per_class_K_mem = tuple(K_mem for _ in range(C - 1))
+        # Build default indices: all vars for all classes
+        _cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
+
     # Compute per-class K_base (may differ by model type AND per-class variables)
     base_spec_no_lc = replace(spec, latent_classes=1)
     class_offsets = []   # start index of each class's theta in flat param vector
@@ -268,8 +295,6 @@ def build_param_index(spec: ModelSpec) -> dict:
             cfix = spec.class_fixed_idx[c]
             if len(cfix) < spec.Kf:
                 _spec_c = replace(_spec_c, Kf=len(cfix))
-                # Zero out random-param counts that aren't per-class yet
-                # (per-class random indices TBD in future work)
         _base_idx_c = build_base_index(_spec_c, model=_model_c)
         _Kc = _base_idx_c["total_params"]
         class_offsets.append(offset)
@@ -284,11 +309,24 @@ def build_param_index(spec: ModelSpec) -> dict:
     index["class_K_base"]   = tuple(class_K_base)
     index["class_models"]   = tuple(models)
 
-    # (C-1) rows × (K_mem+1) cols  [intercept + membership vars]
-    gamma_size = (C - 1) * (K_mem + 1)
+    # ── Gamma: jagged per-class arrays (one per non-reference class) ───
+    # gamma_c has shape (K_c+1,) where K_c = number of membership vars for that class
+    gamma_offsets = []
+    gamma_sizes = []
     idx = total_theta
-    index["class_gamma"]    = (idx, idx + gamma_size)
-    idx += gamma_size
+    for c in range(C - 1):
+        Kc = per_class_K_mem[c]
+        gamma_offsets.append(idx)
+        gamma_sizes.append(Kc + 1)  # +1 for intercept
+        idx += (Kc + 1)
+
+    index["class_gamma_offsets"] = tuple(gamma_offsets)
+    index["class_gamma_sizes"]   = tuple(gamma_sizes)
+    index["class_gamma"]         = (total_theta, idx)
+    index["membership_class_idx"] = _cm_idx  # which pooled cols each class uses
+
+    gamma_size = idx - total_theta
+    index["gamma_size"] = gamma_size
 
     index["K_base"]         = class_K_base[0] if class_K_base else 0  # legacy compat
     index["K_mem"]          = K_mem
@@ -324,10 +362,11 @@ def build_jax_data(
     grouped_dists=None,
     zi_cols=None,
     membership_cols=None,
-    class_fixed_cols=None,     # per-class fixed variable lists (list of lists)
-    class_rdm_ind_cols=None,   # per-class random indep lists
-    class_rdm_cor_cols=None,   # per-class random corr lists
-    draw_method='sobol',      # 'halton' or 'sobol' (Sobol faster, more stable)
+    class_membership_cols=None,  # NEW: per-class membership variable lists (list of lists, length C-1)
+    class_fixed_cols=None,       # per-class fixed variable lists (list of lists)
+    class_rdm_ind_cols=None,     # per-class random indep lists
+    class_rdm_cor_cols=None,     # per-class random corr lists
+    draw_method='sobol',        # 'halton' or 'sobol' (Sobol faster, more stable)
     R=200,
 ):
     fixed_cols        = fixed_cols        or []
@@ -402,6 +441,16 @@ def build_jax_data(
         _class_fixed_idx = ()
     class_fixed_idx = tuple(_class_fixed_idx)
 
+    # ── Per-class membership column indices ────────────────────────────
+    _mem_names = list(membership_cols)
+    _mem_map = {name: i for i, name in enumerate(_mem_names)}
+    _class_membership_idx = []  # one tuple per non-reference class
+    if class_membership_cols and len(class_membership_cols) > 0 and len(_mem_names) > 0:
+        for cm_list in class_membership_cols:
+            _idx_c = tuple(_mem_map[n] for n in cm_list if n in _mem_map)
+            _class_membership_idx.append(_idx_c)
+    class_membership_idx = tuple(_class_membership_idx) if _class_membership_idx else ()
+
     N, P = y.shape[0], y.shape[1]
 
     if offset_col:
@@ -458,6 +507,7 @@ def build_jax_data(
         grouped_dists=tuple(grouped_dists),
         membership_names=tuple(membership_cols),    # NEW
         K_membership=Xmem.shape[2],                # NEW
+        class_membership_idx=class_membership_idx, # NEW: per-class membership column indices
         class_models=(),                           # set by caller via replace()
         class_fixed_idx=class_fixed_idx,           # per-class Xf column indices
     )
@@ -481,6 +531,7 @@ def parse_manual_spec(manual_spec: dict):
     hetro_terms       = manual_spec.get("hetro_in_means", [])
     zi_cols           = manual_spec.get("zi_terms", [])
     membership_cols   = manual_spec.get("membership_terms", [])
+    class_membership  = manual_spec.get("class_membership", None)  # per-class membership lists
     class_fixed       = manual_spec.get("class_fixed", None)   # per-class fixed lists
     class_rdm_ind     = manual_spec.get("class_rdm_ind", None)
     class_rdm_cor     = manual_spec.get("class_rdm_cor", None)
@@ -499,6 +550,7 @@ def parse_manual_spec(manual_spec: dict):
         random_ind_dists, random_cor_dists, grouped_dists,
         zi_cols, membership_cols,
         class_fixed, class_rdm_ind, class_rdm_cor,
+        class_membership,
     )
 
 
@@ -520,6 +572,7 @@ def build_model_from_manual_spec(
         random_ind_dists, random_cor_dists, grouped_dists,
         zi_cols, membership_cols,
         class_fixed, class_rdm_ind, class_rdm_cor,
+        class_membership,
     ) = parse_manual_spec(manual_spec)
 
     data, spec = build_jax_data(
@@ -534,6 +587,7 @@ def build_model_from_manual_spec(
         hetro_cols=hetro_cols,
         zi_cols=zi_cols,
         membership_cols=membership_cols,
+        class_membership_cols=class_membership,   # NEW: per-class membership lists
         class_fixed_cols=class_fixed,
         offset_col=offset_col,
         draws_ind=draws_ind,
@@ -592,7 +646,7 @@ def _l2_penalty(params, spec: ModelSpec):
         pindex = build_param_index(spec)
         class_offsets = list(pindex["class_offsets"])
         class_K_base = list(pindex["class_K_base"])
-        total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
+        # Penalise all per-class outcome params except the intercept (param[0] of each class)
         s = 0.0
         for c in range(C):
             oc = class_offsets[c]
@@ -614,6 +668,33 @@ def mixed_model_loglik_reg(params, data, spec: ModelSpec, indivi: bool = False):
         N = data["y"].shape[0]
         return base + penalty / N
     return base + penalty
+
+
+def _parte_shrink_theta(theta_c, objective, param_index_c: dict, variant: str = "k3d3"):
+    """
+    Apply PARTE (Alghamdi et al. 2026) shrinkage to a per-class outcome
+    parameter vector immediately after its M-step MLE solve.
+
+    ``objective`` must be the same weighted negative log-likelihood the
+    M-step just minimised over ``theta_c`` — its Hessian at the solution
+    is the (weighted) Fisher information PARTE shrinks against.  (k, d)
+    are selected adaptively (eqs 37-41); there is no free hyperparameter.
+
+    Falls back to the unshrunk ``theta_c`` when the class has fewer than
+    two fixed-effect parameters (PARTE needs a >=2-D block to be meaningful).
+    """
+    fixed_key = "fixed" if "fixed" in param_index_c else "beta_f"
+    if fixed_key not in param_index_c:
+        return theta_c
+    i0, i1 = int(param_index_c[fixed_key][0]), int(param_index_c[fixed_key][1])
+    if (i1 - i0) < 2:
+        return theta_c
+
+    hess = jax.hessian(objective)(theta_c)
+    theta_parte, _se_full, _beta_parte, _k, _d = compute_regularized_estimates_jax(
+        theta_c, hess, i0, i1, variant
+    )
+    return theta_parte
 
 
 @partial(jax.jit, static_argnames=("spec", "indivi"))
@@ -650,29 +731,36 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
             oc = class_offsets[c]
             theta_all.append(params[oc:oc + kc])
 
-        # Membership gamma: (C-1) × (K_mem+1)
-        gamma_size = (C - 1) * (K_mem + 1)
-        gamma      = params[total_theta : total_theta + gamma_size
-                            ].reshape(C - 1, K_mem + 1)
-
-        # Build Z_full (N, K_mem+1)
+        # ── Per-class membership gamma and Z matrices ──────────────────
+        cm_idx = spec.class_membership_idx  # tuple of tuples, length C-1
+        if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
+            # Fallback: all membership vars for all classes (backward compat)
+            cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
         N = data["y"].shape[0]
-        if K_mem > 0:
-            # Average membership covariates across panel periods
-            Xmem   = data["Xmem"]                          # (N, P, K_mem)
-            Z      = jnp.mean(Xmem, axis=1)                # (N, K_mem)
-            Z_full = jnp.concatenate(
-                [jnp.ones((N, 1)), Z], axis=1
-            )                                               # (N, K_mem+1)
-        else:
-            Z_full = jnp.ones((N, 1))                       # (N, 1) — intercept only
+
+        gamma_list = []   # per-class gamma arrays (list of jnp 1-d arrays)
+        g_offset = total_theta
+        logits_cols = []
+        for _c in range(C - 1):  # _c indexes non-reference classes (1...C-1)
+            idx_tup = cm_idx[_c]
+            Kc = len(idx_tup)
+            gamma_c = params[g_offset : g_offset + Kc + 1]  # intercept + Kc membership vars
+            gamma_list.append(gamma_c)
+            # Build Z_c for this class transition
+            if Kc > 0:
+                Z_sub = jnp.mean(data["Xmem"][:, :, list(idx_tup)], axis=1)  # (N, Kc)
+                Z_c = jnp.concatenate([jnp.ones((N, 1)), Z_sub], axis=1)      # (N, Kc+1)
+            else:
+                Z_c = jnp.ones((N, 1))  # intercept only
+            logits_cols.append(Z_c @ gamma_c)   # (N,)
+            g_offset += (Kc + 1)
 
         # Individual-specific log class probabilities
-        logits_i    = Z_full @ gamma.T                      # (N, C-1)
+        logits_i = jnp.stack(logits_cols, axis=1)            # (N, C-1)
         logits_full = jnp.concatenate(
             [jnp.zeros((N, 1)), logits_i], axis=1
-        )                                                   # (N, C)
-        log_pi      = jax.nn.log_softmax(logits_full, axis=1)  # (N, C)
+        )                                                     # (N, C)
+        log_pi = jax.nn.log_softmax(logits_full, axis=1)     # (N, C)
 
         # Per-class individual log-likelihoods (each with its own model)
         ll_classes = []
@@ -797,8 +885,8 @@ _hpc.mixed_model_loglik = mixed_model_loglik
 #     flat (C-1,) logits vector.  With membership variables the gamma
 #     section has shape (C-1, K_mem+1) — one intercept + K_mem slopes
 #     per class-pair.  This replacement:
-#       • E-step: computes individual-specific log_pi via Z_full @ gamma.T
-#       • M-step (gamma): minimises the weighted MNL cross-entropy
+#       • E-step: computes individual-specific log_pi via per-class Z_c @ gamma_c
+#       • M-step (gamma): minimises the weighted MNL cross-entropy per class
 #       • M-step (theta): unchanged (weighted outcome log-lik per class)
 #     When K_mem=0 the behaviour is identical to the original.
 # ═══════════════════════════════════════════════════════════════════════
@@ -832,12 +920,18 @@ def fit_em(init_params, data, spec: ModelSpec,
     K_mem      = spec.K_membership
     models     = spec.models  # per-class model strings
     base_spec_nolc = replace(spec, latent_classes=1)
-    gamma_size = (C - 1) * (K_mem + 1)
+    # ── Per-class membership indices ───────────────────────────────────
+    cm_idx = spec.class_membership_idx
+    if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
+        cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
+    per_class_K_mem = tuple(len(idx_tup) for idx_tup in cm_idx)
+    gamma_total_size = sum(Kc + 1 for Kc in per_class_K_mem)  # per-class gamma sizes including intercept
 
     # Compute per-class param sizes and specs (account for per-class vars)
     class_K_base = []
     class_offsets = []
     class_base_specs = []
+    class_param_index = []
     offset = 0
     for c in range(C):
         _spec_c = base_spec_nolc
@@ -845,30 +939,45 @@ def fit_em(init_params, data, spec: ModelSpec,
             cfix = spec.class_fixed_idx[c]
             if len(cfix) < spec.Kf:
                 _spec_c = replace(_spec_c, Kf=len(cfix))
-        _kc = build_base_index(_spec_c, model=models[c])["total_params"]
-        class_K_base.append(_kc)
+        _pindex_c = build_base_index(_spec_c, model=models[c])
+        class_K_base.append(_pindex_c["total_params"])
         class_offsets.append(offset)
         class_base_specs.append(replace(_spec_c, model=models[c]))
-        offset += _kc
+        class_param_index.append(_pindex_c)
+        offset += _pindex_c["total_params"]
     total_theta = offset
 
     params = np.array(init_params)
-    N = int(np.array(
-        mixed_model_loglik(params[:class_K_base[0]], data, class_base_specs[0], indivi=True)
-    ).shape[0])
+    N = int(data["y"].shape[0])
 
-    # Build membership design matrix Z_full (N, K_mem+1) — fixed for all iters
-    if K_mem > 0:
-        Xmem   = np.array(data["Xmem"])            # (N, P, K_mem)
-        Z      = np.mean(Xmem, axis=1)              # (N, K_mem)
-        Z_full = np.concatenate(
-            [np.ones((N, 1)), Z], axis=1
-        )                                           # (N, K_mem+1)
-    else:
-        Z_full = np.ones((N, 1))                    # (N, 1) — intercept only
+    # Per-class data: pre-slice Xf to each class's own fixed-effect columns
+    # (matching class_base_specs[c].Kf) once, up front — every per-class
+    # mixed_model_loglik call below must use this, not the unsliced `data`,
+    # whenever class_fixed_idx has reduced that class's Kf below the global.
+    class_data = []
+    for c in range(C):
+        cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
+        if cfix is not None and len(cfix) < data["Xf"].shape[2]:
+            _dc = dict(data)
+            _dc["Xf"] = data["Xf"][:, :, list(cfix)]
+            class_data.append(_dc)
+        else:
+            class_data.append(data)
 
-    # Pre-convert Z_full to JAX array once (used inside gamma objective)
-    Z_full_jnp = jnp.array(Z_full)
+    # Build per-class Z matrices (one per non-reference class) — fixed for all iters
+    Xmem_np = np.array(data["Xmem"])  # (N, P, K_mem)
+    Z_mats = []   # list of (N, Kc+1) arrays, one per non-reference class
+    for _c in range(C - 1):
+        idx_tup = cm_idx[_c]
+        Kc = len(idx_tup)
+        if Kc > 0:
+            Z_sub = np.mean(Xmem_np[:, :, list(idx_tup)], axis=1)  # (N, Kc)
+            Z_c = np.concatenate([np.ones((N, 1)), Z_sub], axis=1)  # (N, Kc+1)
+        else:
+            Z_c = np.ones((N, 1))  # intercept only
+        Z_mats.append(Z_c)
+    # Pre-convert to JAX once (used inside gamma objective)
+    Z_mats_jnp = tuple(jnp.array(Z_c) for Z_c in Z_mats)
 
     # Track best params seen across all iterations
     best_params = params.copy()
@@ -878,6 +987,17 @@ def fit_em(init_params, data, spec: ModelSpec,
         best_ll = -np.inf
 
     prev_ll = best_ll
+    prev_params = params.copy()
+    # A per-class M-step LBFGS call has no bound on how far theta can move
+    # and occasionally wanders to a numerically extreme point (e.g. an
+    # overflowing linear predictor), producing a params update that is
+    # drastically worse than the previous iterate. Since that divergent
+    # update otherwise becomes the *next* iteration's warm start, it
+    # propagates forward and derails several subsequent iterations --
+    # visible as large spikes in the objective trace. DIVERGENCE_TOL bounds
+    # how much the LL is allowed to drop in one iteration before that
+    # iterate is discarded in favour of the last good one.
+    DIVERGENCE_TOL = 50.0
     trace = []  # (iteration, T, m_iters, LL, delta_LL, class_shares)
 
     for iteration in range(max_iter):
@@ -903,20 +1023,29 @@ def fit_em(init_params, data, spec: ModelSpec,
             kc = class_K_base[c]
             theta_all.append(params[oc:oc + kc])
 
-        gamma = params[total_theta:].reshape(C - 1, K_mem + 1)
+        # Extract per-class gamma arrays (jagged)
+        gamma_list = []
+        g_offset = total_theta
+        for _c in range(C - 1):
+            Kc = per_class_K_mem[_c]
+            gamma_list.append(params[g_offset : g_offset + Kc + 1])
+            g_offset += (Kc + 1)
 
-        # Individual-specific log class probabilities  (N, C)
-        logits_i    = Z_full @ gamma.T                          # (N, C-1)
+        # Individual-specific log class probabilities (N, C)
+        logits_cols = []
+        for _c in range(C - 1):
+            logits_cols.append(Z_mats[_c] @ gamma_list[_c])  # (N,)
+        logits_i    = np.column_stack(logits_cols)            # (N, C-1)
         logits_full = np.concatenate(
             [np.zeros((N, 1)), logits_i], axis=1
-        )                                                       # (N, C)
+        )                                                      # (N, C)
         log_pi = np.array(_log_softmax(jnp.array(logits_full), axis=1))
 
         # Per-class individual log-likelihoods  (N, C)
         logL = np.zeros((N, C))
         for c in range(C):
             ll_ind = mixed_model_loglik(
-                jnp.array(theta_all[c]), data, class_base_specs[c], indivi=True
+                jnp.array(theta_all[c]), class_data[c], class_base_specs[c], indivi=True
             )
             logL[:, c] = np.array(ll_ind)
 
@@ -957,12 +1086,7 @@ def fit_em(init_params, data, spec: ModelSpec,
         for c in range(C):
             wc = w[:, c].copy()
             _base_c = class_base_specs[c]
-            # ── Per-class data: slice Xf when class has fewer fixed effects ─
-            _data_c = data
-            cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
-            if cfix is not None and len(cfix) < data["Xf"].shape[2]:
-                _data_c = dict(data)
-                _data_c["Xf"] = data["Xf"][:, :, list(cfix)]
+            _data_c = class_data[c]
 
             def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
                 ll_ind = mixed_model_loglik(
@@ -975,33 +1099,58 @@ def fit_em(init_params, data, spec: ModelSpec,
 
             solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
             result = solver_theta.run(jnp.array(theta_all[c]))
-            theta_new.append(np.array(result.params))
+            theta_c_mle = jnp.array(result.params)
+            if spec.parte_shrinkage_in_loop:
+                theta_c_mle = _parte_shrink_theta(
+                    theta_c_mle, weighted_objective,
+                    class_param_index[c], spec.parte_variant
+                )
+            theta_new.append(np.array(theta_c_mle))
 
         theta_new_flat = np.concatenate(theta_new)
 
-        # Update gamma — pure JAX with Dirichlet balance prior
+        # ── Update each per-class gamma independently ──────────────────
         _w_jnp = jnp.array(w)
         _pw = prior_weight  # capture for closure
+        gamma_new_parts = []
+        for _c in range(C - 1):
+            Z_c_jnp = Z_mats_jnp[_c]
+            Kc = per_class_K_mem[_c]
+            _class_c = _c  # capture for closure
 
-        def gamma_objective(gamma_flat):
-            gc = gamma_flat.reshape(C - 1, K_mem + 1)
-            li = Z_full_jnp @ gc.T                              # (N, C-1)
-            zeros_col = jnp.zeros((N, 1))
-            lf = jnp.concatenate([zeros_col, li], axis=1)      # (N, C)
-            lp = _log_softmax(lf, axis=1)                       # (N, C)
-            # Weighted cross-entropy for class assignments
-            ce = -jnp.sum(_w_jnp * lp)
-            # Dirichlet balance prior: pushes marginal class probs toward uniformity
-            # pi_marg = mean over observations of softmax(logits)
-            log_pi_marg = jax.nn.log_softmax(
-                jnp.mean(lf, axis=0, keepdims=True), axis=1
-            )  # (1, C)
-            balance_penalty = -_pw * jnp.sum(log_pi_marg)  # entropy bonus
-            return ce + balance_penalty
+            def gamma_objective_c(gamma_c, _Zc=Z_c_jnp, _cc=_class_c):
+                """Per-class gamma objective: optimises only class c+1's gamma."""
+                # Build full logits including all other classes' contributions
+                Ncur = _Zc.shape[0]
+                logit_cols = []
+                for _tc in range(C - 1):
+                    if _tc == _cc:
+                        logit_cols.append(_Zc @ gamma_c)  # optimised class (N,)
+                    else:
+                        # Use current (non-optimised) gamma for other classes
+                        gc_other = gamma_list[_tc]
+                        Z_other = Z_mats_jnp[_tc]
+                        logit_cols.append(Z_other @ jnp.array(gc_other))
+                li = jnp.stack(logit_cols, axis=1)                      # (N, C-1)
+                zeros_col = jnp.zeros((Ncur, 1))
+                lf = jnp.concatenate([zeros_col, li], axis=1)          # (N, C)
+                lp = _log_softmax(lf, axis=1)                           # (N, C)
+                ce = -jnp.sum(_w_jnp * lp)
+                # Dirichlet balance prior
+                log_pi_marg = jax.nn.log_softmax(
+                    jnp.mean(lf, axis=0, keepdims=True), axis=1
+                )
+                balance_penalty = -_pw * jnp.sum(log_pi_marg)
+                return ce + balance_penalty
 
-        solver_gamma = LBFGS(fun=gamma_objective, maxiter=m_iters)
-        result_gamma = solver_gamma.run(jnp.array(gamma.flatten()))
-        gamma_new = np.array(result_gamma.params)
+            solver_gamma_c = LBFGS(fun=gamma_objective_c, maxiter=m_iters)
+            gamma_c_prev = jnp.array(gamma_list[_c])
+            result_gamma_c = solver_gamma_c.run(gamma_c_prev)
+            gamma_c_new = np.array(result_gamma_c.params)
+            gamma_list[_c] = gamma_c_new  # update for next class's optimisation
+            gamma_new_parts.append(gamma_c_new)
+
+        gamma_new = np.concatenate(gamma_new_parts)
 
         params = np.concatenate([theta_new_flat, gamma_new])
 
@@ -1017,6 +1166,16 @@ def fit_em(init_params, data, spec: ModelSpec,
         if np.isfinite(current_ll) and current_ll > best_ll:
             best_ll     = current_ll
             best_params = params.copy()
+
+        # Divergence guard: discard this iteration's update if it is
+        # non-finite or drops the LL by more than DIVERGENCE_TOL, reverting
+        # to the last good iterate instead of carrying a diverged M-step
+        # forward as the next E-step's warm start (see note above the loop).
+        if not np.isfinite(current_ll) or current_ll < prev_ll - DIVERGENCE_TOL:
+            params = prev_params.copy()
+            current_ll = prev_ll
+        else:
+            prev_params = params.copy()
 
         ll_delta = abs(current_ll - prev_ll) if np.isfinite(current_ll) else np.inf
         prev_ll  = current_ll
@@ -1043,7 +1202,319 @@ def fit_em(init_params, data, spec: ModelSpec,
     return best_params
 
 
-_hpc.fit_em = fit_em
+_hpc.fit_em = fit_em          # keep original accessible as fit_em
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 7a-sq. fit_em_squarem
+#
+#   Drop-in replacement for fit_em that applies the Squared Extrapolation
+#   Method (SQUAREM) of Varadhan & Roland (2008) to accelerate convergence.
+#
+#   Algorithm (outer loop):
+#     1. θ₁ = F(θ)      — one full E+M step
+#     2. θ₂ = F(θ₁)     — second full E+M step
+#     3. r = θ₁ − θ,  v = θ₂ − 2θ₁ + θ
+#     4. α = min(−‖r‖/‖v‖, −1)      (step length ≤ −1)
+#     5. θ_prop = θ − 2α·r + α²·v   (extrapolation)
+#     6. Step-halve α toward −1 until LL(θ_prop) ≥ LL at step 1
+#        or fall back to θ₂ if no gain.
+#
+#   All parameters (theta + gamma) are unconstrained reals so no projection
+#   is needed after the extrapolation.
+# ═══════════════════════════════════════════════════════════════════════
+
+def fit_em_squarem(init_params, data, spec: ModelSpec,
+                   max_iter=100, tol=1e-6, verbose=True, return_trace=False):
+    """SQUAREM-accelerated EM for latent-class mixed count models.
+
+    Each outer iteration executes exactly two full E+M steps (identical to
+    the inner body of ``fit_em``) and then proposes a squared extrapolation.
+    Convergence is reached in far fewer total E+M calls than standard EM for
+    well-separated classes.
+
+    Parameters
+    ----------
+    init_params, data, spec, max_iter, tol, verbose, return_trace
+        Same semantics as :func:`fit_em`.
+
+    Returns
+    -------
+    best_params : np.ndarray
+        Parameter vector with the highest observed log-likelihood.
+    trace : list of tuples, optional
+        ``(outer_iter, em_calls, alpha, loglik, delta_ll, class_shares)``
+        returned only when ``return_trace=True``.
+    """
+    from jax.nn import log_softmax as _log_softmax
+
+    assert spec.latent_classes > 1, "SQUAREM-EM only needed for latent classes"
+
+    C          = spec.latent_classes
+    K_mem      = spec.K_membership
+    models     = spec.models
+    base_spec_nolc = replace(spec, latent_classes=1)
+    # ── Per-class membership indices ───────────────────────────────────
+    cm_idx = spec.class_membership_idx
+    if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
+        cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
+    per_class_K_mem = tuple(len(idx_tup) for idx_tup in cm_idx)
+    gamma_total_size = sum(Kc + 1 for Kc in per_class_K_mem)
+
+    class_K_base = []
+    class_offsets = []
+    class_base_specs = []
+    class_param_index = []
+    offset = 0
+    for c in range(C):
+        _spec_c = base_spec_nolc
+        if spec.class_fixed_idx and c < len(spec.class_fixed_idx):
+            cfix = spec.class_fixed_idx[c]
+            if len(cfix) < spec.Kf:
+                _spec_c = replace(_spec_c, Kf=len(cfix))
+        _pindex_c = build_base_index(_spec_c, model=models[c])
+        class_K_base.append(_pindex_c["total_params"])
+        class_offsets.append(offset)
+        class_base_specs.append(replace(_spec_c, model=models[c]))
+        class_param_index.append(_pindex_c)
+        offset += _pindex_c["total_params"]
+    total_theta = offset
+
+    params = np.array(init_params)
+    N = int(data["y"].shape[0])
+
+    # Per-class data: pre-slice Xf to each class's own fixed-effect columns
+    # (matching class_base_specs[c].Kf) once, up front — every per-class
+    # mixed_model_loglik call below must use this, not the unsliced `data`,
+    # whenever class_fixed_idx has reduced that class's Kf below the global.
+    class_data = []
+    for c in range(C):
+        cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
+        if cfix is not None and len(cfix) < data["Xf"].shape[2]:
+            _dc = dict(data)
+            _dc["Xf"] = data["Xf"][:, :, list(cfix)]
+            class_data.append(_dc)
+        else:
+            class_data.append(data)
+
+    # Build per-class Z matrices (fixed for all SQUAREM iters)
+    Xmem_np = np.array(data["Xmem"])
+    Z_mats = []
+    for _c in range(C - 1):
+        idx_tup = cm_idx[_c]
+        Kc = len(idx_tup)
+        if Kc > 0:
+            Z_sub = np.mean(Xmem_np[:, :, list(idx_tup)], axis=1)
+            Z_c = np.concatenate([np.ones((N, 1)), Z_sub], axis=1)
+        else:
+            Z_c = np.ones((N, 1))
+        Z_mats.append(Z_c)
+    Z_mats_jnp = tuple(jnp.array(Z_c) for Z_c in Z_mats)
+
+    # ── Quick marginal loglik (no M-step) for step-halving checks ──────
+    def _eval_loglik(p):
+        try:
+            return -float(mixed_model_loglik(jnp.array(p), data, spec))
+        except Exception:
+            return -np.inf
+
+    best_params = params.copy()
+    try:
+        best_ll = _eval_loglik(params)
+    except Exception:
+        best_ll = -np.inf
+
+    prev_ll = best_ll
+    trace   = []
+    em_calls = 0
+
+    # ── Single E+M step (mirrors the body of fit_em's inner loop) ───────
+    def _one_em_step(p, m_iters, T=1.0):
+        theta_all = []
+        for c in range(C):
+            oc = class_offsets[c]; kc = class_K_base[c]
+            theta_all.append(p[oc:oc + kc])
+        # Extract per-class gamma
+        gamma_list = []
+        g_off = total_theta
+        for _c in range(C - 1):
+            Kc = per_class_K_mem[_c]
+            gamma_list.append(p[g_off : g_off + Kc + 1])
+            g_off += (Kc + 1)
+
+        # Per-class logits
+        logits_cols = []
+        for _c in range(C - 1):
+            logits_cols.append(Z_mats[_c] @ gamma_list[_c])
+        logits_i    = np.column_stack(logits_cols)
+        logits_full = np.concatenate([np.zeros((N, 1)), logits_i], axis=1)
+        log_pi = np.array(_log_softmax(jnp.array(logits_full), axis=1))
+
+        logL = np.zeros((N, C))
+        for c in range(C):
+            ll_ind = mixed_model_loglik(
+                jnp.array(theta_all[c]), class_data[c], class_base_specs[c], indivi=True
+            )
+            logL[:, c] = np.array(ll_ind)
+
+        log_num = (logL + log_pi) / T
+        max_log = log_num.max(axis=1, keepdims=True)
+        w = np.exp(log_num - max_log)
+        w /= w.sum(axis=1, keepdims=True)
+        mean_w = w.mean(axis=0)
+
+        # M-step: outcome params
+        theta_new = []
+        for c in range(C):
+            wc = w[:, c].copy()
+            _base_c = class_base_specs[c]
+            _data_c = class_data[c]
+
+            def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
+                ll_ind = mixed_model_loglik(theta_c, _data, _spec, indivi=True)
+                loss = -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
+                if spec.l2_penalty > 0.0 and len(theta_c) > 1:
+                    loss = loss + spec.l2_penalty * jnp.sum(theta_c[1:] ** 2)
+                return loss
+
+            solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
+            result = solver_theta.run(jnp.array(theta_all[c]))
+            theta_c_mle = jnp.array(result.params)
+            if spec.parte_shrinkage_in_loop:
+                theta_c_mle = _parte_shrink_theta(
+                    theta_c_mle, weighted_objective,
+                    class_param_index[c], spec.parte_variant
+                )
+            theta_new.append(np.array(theta_c_mle))
+
+        # M-step: per-class gamma (optimise each class independently)
+        _raw_prop = getattr(spec, 'min_class_proportion', 0.15)
+        min_prop = max(0.02, _raw_prop / max(1, C * 0.5))
+        below_thresh = np.maximum(0.0, min_prop - mean_w)
+        prior_weight = float(np.sum(below_thresh) * max(5.0, C * 2.0))
+        _w_jnp = jnp.array(w)
+        _pw    = prior_weight
+
+        gamma_new_parts = []
+        _glist = [np.copy(x) for x in gamma_list]  # mutable copy for sequential updates
+        for _c in range(C - 1):
+            Z_c_jnp = Z_mats_jnp[_c]
+            _cc = _c
+
+            def gamma_objective_c(gamma_c, _Zc=Z_c_jnp, _cc=_cc):
+                Ncur = _Zc.shape[0]
+                logit_cols = []
+                for _tc in range(C - 1):
+                    if _tc == _cc:
+                        logit_cols.append(_Zc @ gamma_c)
+                    else:
+                        gc_other = _glist[_tc]
+                        Z_other = Z_mats_jnp[_tc]
+                        logit_cols.append(Z_other @ jnp.array(gc_other))
+                li = jnp.stack(logit_cols, axis=1)
+                zeros_col = jnp.zeros((Ncur, 1))
+                lf = jnp.concatenate([zeros_col, li], axis=1)
+                lp = _log_softmax(lf, axis=1)
+                ce = -jnp.sum(_w_jnp * lp)
+                log_pi_marg = jax.nn.log_softmax(
+                    jnp.mean(lf, axis=0, keepdims=True), axis=1
+                )
+                balance_penalty = -_pw * jnp.sum(log_pi_marg)
+                return ce + balance_penalty
+
+            solver_gamma_c = LBFGS(fun=gamma_objective_c, maxiter=m_iters)
+            result_gamma_c = solver_gamma_c.run(jnp.array(_glist[_c]))
+            gc_new = np.array(result_gamma_c.params)
+            _glist[_c] = gc_new
+            gamma_new_parts.append(gc_new)
+        gamma_new = np.concatenate(gamma_new_parts)
+
+        new_p = np.concatenate([np.concatenate(theta_new), gamma_new])
+        return new_p, mean_w
+
+    for outer_iter in range(max_iter):
+        warmup_frac = min(1.0, outer_iter / max(1, max_iter * 0.4))
+        T      = max(1.0, 2.0 - warmup_frac)
+        m_iters = min(50 + 25 * (outer_iter // 3), 300)
+
+        # Two full E+M steps
+        params1, mean_w1 = _one_em_step(params,  m_iters, T=T)
+        em_calls += 1
+        params2, mean_w2 = _one_em_step(params1, m_iters, T=T)
+        em_calls += 1
+
+        # Collapse guard (after warmup) — threshold relaxes with more classes
+        _collapse_cutoff = max(0.005, 0.02 / C)
+        if outer_iter >= 3 and np.any(mean_w2 < _collapse_cutoff):
+            if verbose:
+                print(f"  [SQUAREM] class collapse at outer_iter {outer_iter} "
+                      f"(min mean weight {mean_w2.min():.4f} < {_collapse_cutoff:.4f}) — stopping early")
+            params = params2
+            break
+
+        r = params1 - params
+        v = params2 - 2.0 * params1 + params
+        norm_v = np.linalg.norm(v)
+
+        if norm_v < 1e-14:
+            params   = params2
+            ll_cand  = _eval_loglik(params2)
+            used_alpha = -1.0
+        else:
+            alpha  = min(-np.linalg.norm(r) / norm_v, -1.0)
+            ll1    = _eval_loglik(params1)
+
+            accepted  = False
+            ll_cand   = _eval_loglik(params2)
+            used_alpha = -1.0
+            p_acc      = params2
+
+            for _ in range(10):
+                p_prop = params - 2.0 * alpha * r + alpha ** 2 * v
+                ll_prop = _eval_loglik(p_prop)
+                if np.isfinite(ll_prop) and ll_prop >= ll1:
+                    p_acc      = p_prop
+                    ll_cand    = ll_prop
+                    used_alpha = alpha
+                    accepted   = True
+                    break
+                alpha = (alpha + (-1.0)) / 2.0  # halve toward α = −1
+
+            params = p_acc
+
+        current_ll = _eval_loglik(params)
+        if np.isfinite(current_ll) and current_ll > best_ll:
+            best_ll     = current_ll
+            best_params = params.copy()
+
+        ll_delta = abs(current_ll - prev_ll) if np.isfinite(current_ll) else np.inf
+        prev_ll  = current_ll
+
+        class_shares = tuple(float(mw) for mw in mean_w2)
+        if return_trace:
+            trace.append((outer_iter, em_calls, float(used_alpha), current_ll,
+                          ll_delta, class_shares))
+
+        if verbose:
+            print(f"SQUAREM iter {outer_iter:3d} | em_calls={em_calls:4d} | "
+                  f"α={used_alpha:.3f} | LL={current_ll:.4f} | "
+                  f"delta_LL={ll_delta:.2e} | "
+                  f"shares={' '.join(f'{mw:.2f}' for mw in mean_w2)}")
+
+        if outer_iter >= 3 and ll_delta < tol:
+            if verbose:
+                print(f"  [SQUAREM] converged at outer_iter {outer_iter}  "
+                      f"(delta_LL={ll_delta:.2e} < tol={tol:.0e}, em_calls={em_calls})")
+            break
+
+    if return_trace:
+        return best_params, trace
+    return best_params
+
+
+# Make SQUAREM the default EM for all callers (experiment_package, etc.)
+# The original standard EM remains available as fit_em for direct use.
+_hpc.fit_em = fit_em_squarem
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1211,26 +1682,45 @@ def print_summary(result, objective, data, spec: ModelSpec,
             se_all.append(se_np[oc:oc + kc])
 
         total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
-        gamma_flat = params_np[total_theta:]
-        se_gamma   = se_np[total_theta:]
-        gamma_size = (C - 1) * (K_mem + 1)
-        if len(gamma_flat) >= gamma_size:
-            gamma = gamma_flat[:gamma_size].reshape(C - 1, K_mem + 1)
-            se_g  = se_gamma[:gamma_size].reshape(C - 1, K_mem + 1)
-        else:
-            gamma = np.zeros((C - 1, K_mem + 1))
-            se_g  = np.zeros((C - 1, K_mem + 1))
-            if len(gamma_flat) > 0:
-                gamma.flat[:len(gamma_flat)] = gamma_flat
-                se_g.flat[:len(se_gamma)] = se_gamma
+        # ── Per-class gamma extraction (jagged) ─────────────────────────
+        cm_idx = spec.class_membership_idx
+        if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
+            cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
+        gamma_list = []
+        se_gamma_list = []
+        g_off = total_theta
+        for _c in range(C - 1):
+            Kc = len(cm_idx[_c])
+            gamma_list.append(params_np[g_off : g_off + Kc + 1])
+            se_gamma_list.append(se_np[g_off : g_off + Kc + 1])
+            g_off += (Kc + 1)
 
-        logits_full = np.concatenate([[0.0], gamma[:, 0]])
-        pi          = np.exp(logits_full) / np.exp(logits_full).sum()
+        # Compute marginal class probabilities with per-class Z mats
+        Xmem_np = np.array(data["Xmem"])
+        N = int(data["y"].shape[0])
+        logits_cols = []
+        for _c in range(C - 1):
+            idx_tup = cm_idx[_c]
+            if len(idx_tup) > 0:
+                Z_sub = np.mean(Xmem_np[:, :, list(idx_tup)], axis=1)
+                Z_c = np.concatenate([np.ones((N, 1)), Z_sub], axis=1)
+            else:
+                Z_c = np.ones((N, 1))
+            logits_cols.append(Z_c @ gamma_list[_c])
+        logits_i    = np.column_stack(logits_cols)
+        logits_full = np.concatenate([np.zeros((N, 1)), logits_i], axis=1)
+        pi = np.exp(logits_full) / np.exp(logits_full).sum(axis=1, keepdims=True)
+        pi_mean = pi.mean(axis=0)  # marginal class probs
 
         print("\n" + "=" * 65)
         print("   LATENT CLASS MIXED MODEL SUMMARY")
         if K_mem > 0:
             print(f"   Membership covariates: {list(spec.membership_names)}")
+            for _c in range(C - 1):
+                idx_tup = cm_idx[_c]
+                if idx_tup:
+                    class_vars = [spec.membership_names[j] for j in idx_tup if j < len(spec.membership_names)]
+                    print(f"     Class {_c+2} membership vars: {class_vars}")
         print(f"   Per-class distributions: {list(models)}")
         print("=" * 65)
 
@@ -1279,36 +1769,38 @@ def print_summary(result, objective, data, spec: ModelSpec,
                     print(f"  param[{i}] = {val:+.6f}")
                 print()
 
-        # ── Membership gamma ─────────────────────────────────────
+        # ── Membership gamma (per-class) ──────────────────────────
         print("\n" + "=" * 65)
         print("   CLASS-MEMBERSHIP EQUATION")
         print("   log[pi_c(n) / pi_1(n)] = g_c0  +  sum_k g_ck * z_nk")
         print("   (Class 1 is the reference; all coefficients vs class 1)")
         print("=" * 65)
 
-        mem_cols = ["(intercept)"] + list(spec.membership_names)
+        for _c in range(C - 1):
+            class_num = _c + 2
+            idx_tup = cm_idx[_c]
+            Kc = len(idx_tup)
+            if Kc > 0:
+                col_names = [spec.membership_names[j] for j in idx_tup if j < len(spec.membership_names)]
+            else:
+                col_names = []
+            col_names_full = ["(intercept)"] + col_names
+            gamma_c = gamma_list[_c]
+            se_c    = se_gamma_list[_c]
 
-        # Header
-        col_w    = max(16, max(len(c) for c in mem_cols) + 2)
-        hdr      = f"  {'':>{col_w}}"
-        for c in range(1, C):
-            hdr += f"  {'Class '+str(c+1)+' coef':>14}  {'SE':>8}  {'z':>7}  {'p':>7}"
-        print(hdr)
-        print("  " + "-" * (len(hdr) - 2))
-
-        for k, col_name in enumerate(mem_cols):
-            row = f"  {col_name:>{col_w}}"
-            for c in range(C - 1):
-                g     = gamma[c, k]
-                sg    = se_g[c, k]
+            print(f"\n  --- Class {class_num} vs Class 1 ---")
+            print(f"  {'Parameter':>18}  {'Estimate':>10}  {'SE':>8}  {'z':>7}  {'p':>8}")
+            print("  " + "-" * 55)
+            for k, cn in enumerate(col_names_full):
+                g     = gamma_c[k]
+                sg    = se_c[k]
                 z_val = g / sg if sg > 1e-12 else 0.0
                 p_val = 2 * (1 - scipy_stats.norm.cdf(abs(z_val)))
                 stars = "***" if p_val < 0.01 else "**" if p_val < 0.05 \
                         else "*" if p_val < 0.10 else ""
-                row  += f"  {g:>+14.4f}  {sg:>8.4f}  {z_val:>7.3f}  {p_val:>7.4f}{stars}"
-            print(row)
+                print(f"  {cn:>18}  {g:>+10.4f}  {sg:>8.4f}  {z_val:>7.3f}  {p_val:>7.4f}{' '+stars}")
 
-        print(f"\n  NOTE: g_c0 is the class-{c+1} log-odds intercept vs class 1.")
+        print(f"\n  NOTE: g_c0 is the class-c log-odds intercept vs class 1.")
         if K_mem > 0:
             print("  g_ck > 0: higher value of z_k -> higher probability of class c+1.")
 
@@ -1316,7 +1808,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
         print("\n" + "-" * 65)
         print("  MARGINAL CLASS PROBABILITIES (at sample-mean covariates)\n")
         for c in range(C):
-            print(f"  pi_{c+1} = {pi[c]:.6f}")
+            print(f"  pi_{c+1} = {pi_mean[c]:.6f}")
 
         print("\n" + "=" * 65 + "\n")
 
@@ -1398,12 +1890,12 @@ _hpc.print_summary       = print_summary
 
 def unpack_lc_params(params, spec: ModelSpec):
     """
-    Extract per-class theta arrays and gamma matrix from flat LC params.
+    Extract per-class theta arrays and gamma list from flat LC params.
 
     Returns
     -------
     theta_list : list of np.ndarray   (one per class, lengths may differ)
-    gamma      : np.ndarray           shape (C-1, K_mem+1)
+    gamma_list : list of np.ndarray   (one per non-reference class, lengths may differ)
     pindex     : dict                 param index with class_offsets/class_K_base
     """
     import numpy as _np
@@ -1421,16 +1913,23 @@ def unpack_lc_params(params, spec: ModelSpec):
         theta_list.append(params_np[oc:oc + kc])
 
     total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
-    gamma_raw = params_np[total_theta:]
-    gamma_size = (C - 1) * (K_mem + 1)
-    if len(gamma_raw) >= gamma_size:
-        gamma = gamma_raw[:gamma_size].reshape(C - 1, K_mem + 1)
+    gamma_list = []
+    # Per-class gamma: use class_gamma_sizes from pindex
+    g_offsets = pindex.get("class_gamma_offsets", ())
+    g_sizes   = pindex.get("class_gamma_sizes", ())
+    if g_offsets and g_sizes:
+        for _c in range(C - 1):
+            g_off = g_offsets[_c]
+            g_sz = g_sizes[_c]
+            gamma_list.append(params_np[g_off : g_off + g_sz])
     else:
-        gamma = _np.zeros((C - 1, K_mem + 1))
-        if len(gamma_raw) > 0:
-            gamma.flat[:len(gamma_raw)] = gamma_raw
+        # Fallback: rectangular gamma
+        gamma_flat = params_np[total_theta:]
+        for _c in range(C - 1):
+            gamma_c = gamma_flat[_c * (K_mem + 1) : (_c + 1) * (K_mem + 1)]
+            gamma_list.append(gamma_c)
 
-    return theta_list, gamma, pindex
+    return theta_list, gamma_list, pindex
 
 
 def compute_lc_posteriors(params, data, spec: ModelSpec):
@@ -1450,15 +1949,25 @@ def compute_lc_posteriors(params, data, spec: ModelSpec):
     models  = spec.models
     base_spec_nolc = replace(spec, latent_classes=1)
 
-    theta_list, gamma, pindex = unpack_lc_params(params, spec)
+    theta_list, gamma_list, pindex = unpack_lc_params(params, spec)
 
     N = int(data["y"].shape[0])
 
-    # Prior log-probabilities  pi_c(n) = softmax( Z_full @ gamma.T )
+    # Prior log-probabilities using per-class Z matrices
+    cm_idx = spec.class_membership_idx
+    if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
+        cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
     Xmem = _np.array(data["Xmem"])
-    Z = _np.mean(Xmem, axis=1) if Xmem.shape[2] > 0 else _np.zeros((N, 0))
-    Z_full = _np.concatenate([_np.ones((N, 1)), Z], axis=1)
-    logits_i = Z_full @ gamma.T
+    logits_cols = []
+    for _c in range(C - 1):
+        idx_tup = cm_idx[_c]
+        if len(idx_tup) > 0:
+            Z_sub = _np.mean(Xmem[:, :, list(idx_tup)], axis=1)
+            Z_c = _np.concatenate([_np.ones((N, 1)), Z_sub], axis=1)
+        else:
+            Z_c = _np.ones((N, 1))
+        logits_cols.append(Z_c @ gamma_list[_c])
+    logits_i    = _np.column_stack(logits_cols)
     logits_full = _np.concatenate([_np.zeros((N, 1)), logits_i], axis=1)
     log_pi = _np.array(jax.nn.log_softmax(jnp.array(logits_full), axis=1))
 
@@ -1501,6 +2010,7 @@ __all__ = [
     "mixed_model_loglik_reg",
     "_l2_penalty",
     "fit_em",
+    "fit_em_squarem",
     "print_summary",
     "unpack_lc_params",
     "compute_lc_posteriors",

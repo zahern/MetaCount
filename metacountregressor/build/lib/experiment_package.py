@@ -21,23 +21,23 @@
 # Roles 7 and 8 are ignored (treated as 0 / 1 respectively) when the
 # latent-class code in the decision vector resolves to 1 class.
 #
-# DECISION VECTOR LAYOUT (dimension = 2·D + 2)
+# DECISION VECTOR LAYOUT (dimension = 4·D + 2)
 # ─────────────────────────────────────────────
-#   [roles(D) | dist_codes(D) | dispersion_bit | latent_class_code]
+#   [roles(D) | dist_codes(D) | dispersion_bit | lc_code | class_mask(D) | membership_mask(D)]
 #
 # MEMBERSHIP LOGIC
 # ─────────────────
 # Role 7 variable:
-#   → appears in spec["membership_terms"]
+#   → appears in spec["membership_terms"] (the pooled list)
 #   → does NOT appear in any outcome list
-#   → its gamma coefficient lets individual-level z-values shift class
-#     probability
+#   → membership_mask[i] controls which class(es) it enters (0=all, 1=class2, 2=class3, ...)
 #
 # Role 8 variable:
-#   → appears in spec["membership_terms"]  (class-prob equation)
+#   → appears in spec["membership_terms"] (class-prob equation)
 #   → ALSO appears in spec["fixed_terms"]  (outcome equation)
-#   → because the model has C classes, each class automatically gets its
-#     own fixed beta for this variable (class-specific outcome + membership)
+#   → class_mask[i] controls which outcome class(es) it enters
+#   → membership_mask[i] controls which membership class(es) it enters
+#   → they are INDEPENDENT: a variable can be in Class 2 outcome but Class 3 membership
 #
 # =======================================================================
 
@@ -54,6 +54,28 @@ except ImportError as exc:
             "Unable to import the JAX backend for metacountregressor. "
             "Install package dependencies including 'jax' and 'jaxlib'."
         ) from exc
+
+
+class FitResult(dict):
+    """Dictionary-like wrapper for ``fit_manual_model()`` results.
+
+    Behaves like a regular dict (you can access ``fit["result"]``,
+    ``fit["summary"]``, etc.) but produces a formatted model-summary
+    table when printed or displayed in a notebook.
+
+    Example
+    -------
+    >>> fit = builder.fit_manual_model(manual_spec=..., model='nb')
+    >>> print(fit)          # shows formatted parameter table + fit stats
+    >>> fit["summary"]      # still works as a dict
+    """
+
+    def __repr__(self) -> str:
+        text = self.get("_summary_text")
+        if text:
+            return text
+        return dict.__repr__(self)
+
 
 import numpy as np
 import pandas as pd
@@ -79,6 +101,7 @@ try:
         CMFFamilySearchProblem,
         DurationSearchProblem,
         LinearSearchProblem,
+        MultivariateSearchProblem,
         UnifiedCMFSearchProblem,
     )
 
@@ -108,7 +131,6 @@ try:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
-        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -118,6 +140,7 @@ except ImportError:
         CMFFamilySearchProblem,
         DurationSearchProblem,
         LinearSearchProblem,
+        MultivariateSearchProblem,
         UnifiedCMFSearchProblem,
     )
 
@@ -147,7 +170,6 @@ except ImportError:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
-        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -234,12 +256,27 @@ class StructureEvaluatorLC(StructureEvaluator):
       • warm-started LC estimation in fitness()
     """
 
-    def __init__(self, *args, max_latent_classes: int = 3, **kwargs):
+    def __init__(self, *args, max_latent_classes: int = 3, mutual_exclusion=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_latent_classes = max(1, int(max_latent_classes))
+        self.mutual_exclusion = mutual_exclusion or []
         # Populated after every fitness() call; read by BanditGuidedSA
         # to avoid a second fit call for identifiability diagnostics.
         self._last_fit_cache: Optional[dict] = None
+        # Progressive variable-ban: track how many times each variable
+        # was NEWLY activated in a model that subsequently failed to
+        # converge.  Only variables whose role changed from 0 → non-zero
+        # relative to the last successful fit get counted — established
+        # features are never blamed for failures they didn't cause.
+        self._variable_failure_counts: Dict[str, int] = {}
+        self._banned_variables: set[str] = set()
+        self._last_successful_decision: Optional[np.ndarray] = None
+        self._BAN_THRESHOLD = 10
+        # Variables that MUST appear (role 0 forbidden).  Never banned.
+        self._force_included_vars: set[str] = set()
+        for var_name, allowed in self.allowed_roles.items():
+            if 0 not in allowed:
+                self._force_included_vars.add(var_name)
 
     # ── build_spec ──────────────────────────────────────────────────
 
@@ -247,14 +284,14 @@ class StructureEvaluatorLC(StructureEvaluator):
         """
         Decode a decision vector into a manual_spec dict.
 
-        Decision layout (dimension = 3·D + 2 for LC, 2·D + 1 for single-class):
+        Decision layout (dimension = 4·D + 2 for LC, 2·D + 1 for single-class):
           decision[:D]       = role codes  (0–8)
           decision[D:2D]     = dist codes
           decision[2D]       = dispersion bit
           decision[2D+1]     = latent_class_code  (0→1 class, 1→2, …)
-          decision[2D+2:3D+2]= class_mask  (per-class variable assignments)
-              0 = both classes   1 = class 1 only   2 = class 2 only
-              Only effective when max_latent_classes > 1.
+          decision[2D+2:3D+2]= class_mask  (per-class outcome variable assignments)
+          decision[3D+2:4D+2]= membership_mask  (per-class membership assignments)
+               0 = all classes   1 = class 2 only   2 = class 3 only  ...
         """
         D              = len(self.vars)
         roles          = decision[:D]
@@ -265,19 +302,20 @@ class StructureEvaluatorLC(StructureEvaluator):
             lc_code = int(decision[2*D + 1])
         else:
             lc_code = 0
-        # Per-class masks (new)
+        # Per-class outcome masks
         if self.max_latent_classes > 1 and len(decision) > 2*D + 2:
             class_mask = [int(x) for x in decision[2*D + 2 : 3*D + 2]]
         else:
             class_mask = [0] * D
+        # Per-class membership masks (NEW)
+        if self.max_latent_classes > 1 and len(decision) > 3*D + 2:
+            membership_mask = [int(x) for x in decision[3*D + 2 : 4*D + 2]]
+        else:
+            membership_mask = [0] * D
 
         use_nb          = dispersion_bit % 2 == 1
         latent_classes  = lc_code % self.max_latent_classes + 1
-        # Effective LC count for STRUCTURAL decisions (membership roles,
-        # class masks, per-class variable lists).  The fitness function may
-        # override the actual number of fitted classes later, but we must
-        # always build the spec as if latent classes are present so that
-        # membership (roles 7,8) and class-specific masks are not lost.
+        # Effective LC count for STRUCTURAL decisions
         struct_lc       = max(latent_classes, self.max_latent_classes) if self.max_latent_classes > 1 else 1
 
         fixed      = []
@@ -291,6 +329,19 @@ class StructureEvaluatorLC(StructureEvaluator):
         class_fixed   = [[] for _ in range(struct_lc)]
         class_rdm_ind = [[] for _ in range(struct_lc)]
         class_rdm_cor = [[] for _ in range(struct_lc)]
+        # Per-class membership lists (NEW) — one per non-reference class
+        class_membership = [[] for _ in range(struct_lc - 1)]
+
+        # ── Mutual-exclusion check ────────────────────────────────────
+        if self.mutual_exclusion:
+            for group in self.mutual_exclusion:
+                # Count how many variables in this group have role != 0
+                active_in_group = 0
+                for i, var in enumerate(self.vars):
+                    if var in group and int(roles[i]) != 0:
+                        active_in_group += 1
+                        if active_in_group > 1:
+                            return None  # more than one active → invalid
 
         for i, var in enumerate(self.vars):
             role = int(roles[i])
@@ -301,15 +352,16 @@ class StructureEvaluatorLC(StructureEvaluator):
                 return None
 
             cm = class_mask[i] if struct_lc > 1 else 0
-            # Map class_mask to per-class inclusion
+            mm = membership_mask[i] if struct_lc > 1 and len(membership_mask) > i else 0
+            # Map class_mask to per-class inclusion (outcome equation)
+            # 0 = all classes, 1 = class 1 only, 2 = class 2 only, ..., C = class C only
             in_class = []
             if struct_lc <= 1:
                 in_class = [True]
             else:
                 in_class = [
-                    cm in (0, 1),   # class 1
-                    cm in (0, 2),   # class 2
-                ][:struct_lc]
+                    (cm == 0 or cm == c + 1) for c in range(struct_lc)
+                ]
 
             if role == 0:
                 pass  # excluded
@@ -353,16 +405,28 @@ class StructureEvaluatorLC(StructureEvaluator):
             elif role == 7:
                 if struct_lc > 1:
                     membership.append(var)
+                    # Per-class membership: mm=0 → all non-reference classes; mm=c+1 → class c+1 only
+                    for _c in range(struct_lc - 1):
+                        if mm == 0 or mm == _c + 2:  # _c=0 → class 2, etc.
+                            class_membership[_c].append(var)
 
             elif role == 8:
                 if struct_lc > 1:
                     membership.append(var)
+                    for _c in range(struct_lc - 1):
+                        if mm == 0 or mm == _c + 2:
+                            class_membership[_c].append(var)
                 fixed.append(var)
                 for c, inc in enumerate(in_class):
                     if inc:
                         class_fixed[c].append(var)
 
         # ── Force at least one membership variable for LC models ──────
+        # If no variable has been assigned a membership role (7 or 8),
+        # the logit equation collapses to a constant intercept and classes
+        # cannot be distinguished by covariate profiles.  Force-assign
+        # one variable that is already in the outcome equation to also
+        # enter the membership equation (effectively promoting it to role 8).
         if struct_lc > 1 and len(membership) == 0:
             eligible_mem = [
                 v for v in self.vars
@@ -396,6 +460,12 @@ class StructureEvaluatorLC(StructureEvaluator):
                     class_rdm_cor[c] = []
 
         # ── Force structural uniqueness across classes ────────────────
+        # Every LC spec MUST differentiate the classes — identical
+        # variable sets collapse the EM into a single-class solution.
+        # When classes share all variables, deterministically move
+        # variables so that each class has at least one unique variable.
+        # The RNG is seeded from the decision vector so the same decision
+        # always decodes to the same forced spec.
         if struct_lc > 1:
             class_var_sets = [
                 frozenset(class_fixed[c])
@@ -406,7 +476,9 @@ class StructureEvaluatorLC(StructureEvaluator):
             all_vars = set().union(*class_var_sets) if class_var_sets else set()
             seed = abs(hash(tuple(int(x) for x in decision))) % (2 ** 32)
             rng = np.random.default_rng(seed)
+
             if class_var_sets[0] and all(s == class_var_sets[0] for s in class_var_sets[1:]):
+                # All classes identical — force at least 2 differences if possible
                 eligible = sorted(class_var_sets[0])
                 n_diff = min(2, len(eligible))
                 for d in range(n_diff):
@@ -432,6 +504,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             "hetro_in_means":   hetero,
             "zi_terms":         zi,
             "membership_terms": membership,
+            "class_membership": class_membership if struct_lc > 1 else None,
             "dispersion":       1 if use_nb else 0,
             "latent_classes":   latent_classes,
         }
@@ -554,10 +627,14 @@ class StructureEvaluatorLC(StructureEvaluator):
 
         spec_dict = self.build_spec(decision)
         if spec_dict is None:
+            self.cache[key] = np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
             return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
         sig = self.structural_signature(spec_dict)
         if sig is None:
+            return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+
+        if sig in self._failed_structures:
             return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
 
         if sig in self.structure_cache:
@@ -599,6 +676,13 @@ class StructureEvaluatorLC(StructureEvaluator):
             # ── Multi-class path with warm start ───────────────────
             else:
                 K_mem  = spec.K_membership
+                C_fit  = spec_dict.get("latent_classes", 1)
+                # ── Compute per-class gamma sizes from class_membership ──
+                if hasattr(spec, 'class_membership_idx') and spec.class_membership_idx:
+                    per_class_gamma_sizes = [len(idx) + 1 for idx in spec.class_membership_idx]
+                else:
+                    per_class_gamma_sizes = [K_mem + 1] * (C_fit - 1) if C_fit > 1 else []
+                gamma_total = sum(per_class_gamma_sizes)
                 spec_1 = replace(spec, latent_classes=1)
 
                 # Step 1 — fit single-class
@@ -629,7 +713,7 @@ class StructureEvaluatorLC(StructureEvaluator):
                     ])
 
                 # gamma init: zeros → equal class probs, membership coeffs=0
-                gamma_init = np.zeros((C - 1) * (K_mem + 1))
+                gamma_init = np.zeros(gamma_total)
                 init_params = np.concatenate([theta_init, gamma_init])
 
                 # Step 3 — EM
@@ -647,7 +731,7 @@ class StructureEvaluatorLC(StructureEvaluator):
 
                 # Step 4 — MLE polish (JAX-native optimizer, regularised if l2_penalty > 0)
                 polish = LBFGS(
-                    fun=lambda p: mixed_model_loglik_reg(p, data_train, spec_c),
+                    fun=lambda p: mixed_model_loglik(p, data_train, spec_c),
                     maxiter=500,
                 )
                 result_c = polish.run(jnp.array(params_em))
@@ -679,6 +763,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             if self.mode == "single":
                 value = float(bic)
                 self.cache[key] = value
+                self._last_successful_decision = decision.copy()
                 return value
 
             # ── Multi-objective return (BIC + test RMSE) ──────────
@@ -693,10 +778,52 @@ class StructureEvaluatorLC(StructureEvaluator):
 
             value = np.array([float(bic), float(rmse)])
             self.cache[key] = value
+            self._last_successful_decision = decision.copy()
             return value
 
         except Exception as e:
             print(f"  [fitness error] {e}")
+            if sig is not None:
+                self._failed_structures.add(sig)
+                # Cap at 2000 entries to prevent unbounded growth during
+                # long searches (the older structures are re-tested).
+                if len(self._failed_structures) > 2000:
+                    self._failed_structures.clear()
+                    print("  [fitness] cleared convergence-failure cache"
+                          " (2000 entries); will re-test previously"
+                          " failed structures.")
+            # ── Progressive variable ban ──────────────────────────
+            # Only increment failure counts for variables that were
+            # NEWLY activated in this iteration (role went from 0 in
+            # the last successful fit to non-zero now).  Variables
+            # that were already active and working should not be
+            # blamed for a failure they didn't cause.
+            D = len(self.vars)
+            if (self._last_successful_decision is not None
+                    and len(decision) >= D
+                    and len(self._last_successful_decision) >= D):
+                for i in range(min(D, len(decision))):
+                    new_role = int(decision[i])
+                    old_role = int(self._last_successful_decision[i])
+                    # Only count if this variable was just added (0→non-zero)
+                    if old_role == 0 and new_role != 0:
+                        var = self.vars[i]
+                        if var not in self._force_included_vars:
+                            cnt = self._variable_failure_counts.get(var, 0) + 1
+                            self._variable_failure_counts[var] = cnt
+                            if cnt >= self._BAN_THRESHOLD and var not in self._banned_variables:
+                                self._banned_variables.add(var)
+                                print(f"  [ban] '{var}' excluded from future"
+                                      f" candidates ({cnt} failure{'' if cnt == 1 else 's'}"
+                                      f" when newly added); threshold = {self._BAN_THRESHOLD}")
+                # Cap and clear if too many bans
+                if len(self._banned_variables) > 50:
+                    self._banned_variables.clear()
+                    self._variable_failure_counts.clear()
+                    print("  [ban] cleared variable-ban cache (50+ variables);"
+                          " will re-test previously banned variables.")
+            fail_val = np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+            self.cache[key] = fail_val
             if _is_oom_error(e):
                 # A GPU OOM here means the device is at/near capacity. Free
                 # whatever JAX can free immediately so the *next* candidate
@@ -707,7 +834,7 @@ class StructureEvaluatorLC(StructureEvaluator):
                       "clearing JAX caches before continuing search.")
                 jax.clear_caches()
                 gc.collect()
-            return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+            return fail_val
 
     # ── Adaptive identifiability helper ─────────────────────────────
 
@@ -790,121 +917,248 @@ class ForcedModelStructureEvaluatorLC(StructureEvaluatorLC):
 
 def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_active=2):
     """
-    Extended generate_neighbor that correctly mutates ALL gene slots:
+    Extended generate_neighbor that mutates ALL gene slots AND uses
+    classical analyst-inspired moves (forward-selection, backward-elimination,
+    stepwise-swap, role promotion/demotion, distribution-change, etc.)
+    alongside random exploration.
 
-    Tail gene index  2D     → dispersion bit (flip 0↔1)
-    Tail gene index  2D+1   → latent-class code (step ±1)
-    Tail gene indices 2D+2 … 3D+1 → class-specific masks (cycle 0→1→2→0)
-    Role genes now include 7 and 8 (sampled via ROLE_PROBS).
+    Move probabilities (temperature-adaptive):
+      - Forward selection  : 0.18   (excluded → active)
+      - Backward elimination: 0.18   (active → excluded)
+      - Stepwise swap      : 0.10   (remove one active, add one excluded)
+      - Role promotion     : 0.12   (upgrade role, e.g. fixed→random)
+      - Role demotion      : 0.12   (downgrade role, e.g. random→fixed)
+      - Distribution change: 0.08   (try a different distribution)
+      - Dispersion flip    : 0.04   (Poisson ↔ NB)
+      - LC step            : 0.03   (change latent class count)
+      - Random exploration : 0.15   (current behaviour)
     """
-    for _ in range(max_attempts):
+    D = self.dim_core
+    roles = solution[:D].astype(int)
 
+    if T is not None and self.T0 is not None:
+        mut_rate = self.mutation_rate * (T / self.T0)
+    else:
+        mut_rate = self.mutation_rate
+    mut_rate = float(np.clip(mut_rate, 0.0, 1.0))
+
+    # ── Build helper maps ─────────────────────────────────────────────
+    var_names    = self.evaluator.vars
+    active_idx   = [i for i in range(D) if roles[i] != 0]
+    banned_vars  = getattr(self.evaluator, "_banned_variables", set())
+    force_inc    = getattr(self.evaluator, "_force_included_vars", set())
+    excluded_idx = [
+        i for i in range(D)
+        if roles[i] == 0 and var_names[i] not in (banned_vars - force_inc)
+    ]
+    allowed_map  = self.evaluator.allowed_roles
+    has_lc       = getattr(self.evaluator, "max_latent_classes", 1) > 1
+
+    # ── Move-type weights ─────────────────────────────────────────────
+    explore_w    = 0.15
+    fwd_w         = 0.18
+    bwd_w         = 0.18
+    swap_w        = 0.10
+    promote_w     = 0.12
+    demote_w      = 0.12
+    dist_change_w = 0.08
+    disp_flip_w   = 0.04
+    lc_step_w     = 0.03
+
+    move_names = ["explore",   "forward",    "backward",  "stepwise",
+                  "promote",   "demote",     "dist",      "dispersion",
+                  "lc_step"]
+    move_probs = np.array([explore_w, fwd_w, bwd_w, swap_w,
+                           promote_w, demote_w, dist_change_w,
+                           disp_flip_w, lc_step_w])
+    move_probs = move_probs / move_probs.sum()
+
+    for _attempt in range(max_attempts):
         neighbor = solution.copy()
+        move = np.random.choice(move_names, p=move_probs)
 
-        if T is not None and self.T0 is not None:
-            mut_rate = self.mutation_rate * (T / self.T0)
+        # ── FORWARD SELECTION ─────────────────────────────────────
+        if move == "forward" and excluded_idx:
+            i = np.random.choice(excluded_idx)
+            allowed = allowed_map.get(var_names[i], [0])
+            non_zero = [r for r in allowed if r != 0]
+            if non_zero:
+                neighbor[i] = np.random.choice(non_zero)
+            else:
+                neighbor[i] = 1  # default to fixed
+
+        # ── BACKWARD ELIMINATION ──────────────────────────────────
+        elif move == "backward" and active_idx:
+            i = np.random.choice(active_idx)
+            neighbor[i] = 0
+
+        # ── STEPWISE SWAP ─────────────────────────────────────────
+        elif move == "stepwise" and active_idx and excluded_idx:
+            i_out = np.random.choice(active_idx)
+            i_in  = np.random.choice(excluded_idx)
+            neighbor[i_out] = 0
+            allowed_in = allowed_map.get(var_names[i_in], [0])
+            non_zero_in = [r for r in allowed_in if r != 0]
+            neighbor[i_in] = np.random.choice(non_zero_in) if non_zero_in else 1
+
+        # ── ROLE PROMOTION (upgrade complexity) ───────────────────
+        elif move == "promote" and active_idx:
+            i = np.random.choice(active_idx)
+            role = int(neighbor[i])
+            allowed = allowed_map.get(var_names[i], range(9))
+            # Analyst hierarchy: excluded(0) < fixed(1) < rdm-ind(2) < rdm-cor(3)
+            #                  < grouped(4) < hetero(5) < ZI(6)
+            # Also allow jump from fixed(1) to ZI(6)
+            promotions = {
+                1: [2, 3, 6],          # fixed → random-ind/cor or ZI
+                2: [3, 5],             # rdm-ind → rdm-cor or hetero
+                3: [2, 3],             # rdm-cor → (already high)
+                6: [2, 3],             # ZI → random
+            }
+            candidates = promotions.get(role, [])
+            candidates = [c for c in candidates if c in allowed]
+            if candidates:
+                neighbor[i] = np.random.choice(candidates)
+
+        # ── ROLE DEMOTION (simplify) ──────────────────────────────
+        elif move == "demote" and active_idx:
+            i = np.random.choice(active_idx)
+            role = int(neighbor[i])
+            allowed = allowed_map.get(var_names[i], range(9))
+            demotions = {
+                2: [1, 0],           # rdm-ind → fixed or excluded
+                3: [2, 1],           # rdm-cor → rdm-ind or fixed
+                5: [0],              # hetero → excluded (unlikely to be useful alone)
+                6: [1, 0],           # ZI → fixed or excluded
+                7: [0],              # membership → excluded
+                8: [1, 0],           # membership+fixed → fixed or excluded
+            }
+            candidates = demotions.get(role, [])
+            # Always allow downgrade to excluded (0) or fixed (1) from any non-zero role
+            if role not in (0, 1):
+                candidates.extend([0, 1])
+            candidates = sorted(set(c for c in candidates if c in allowed))
+            if candidates:
+                neighbor[i] = np.random.choice(candidates)
+
+        # ── DISTRIBUTION CHANGE ───────────────────────────────────
+        elif move == "dist" and active_idx:
+            # Find random variables (roles 2,3,4) and change their dist
+            rdm_idx = [i for i in active_idx if int(neighbor[i]) in (2, 3, 4)]
+            if rdm_idx:
+                i = np.random.choice(rdm_idx)
+                dist_idx = D + i  # distribution genes offset by D
+                old_dist = int(neighbor[dist_idx])
+                possible = [d for d in range(4) if d != old_dist]
+                neighbor[dist_idx] = np.random.choice(possible) if possible else 0
+
+        # ── DISPERSION FLIP ───────────────────────────────────────
+        elif move == "dispersion":
+            disp_idx = 2 * D
+            neighbor[disp_idx] = 1 - int(neighbor[disp_idx])
+
+        # ── LATENT CLASS STEP ─────────────────────────────────────
+        elif move == "lc_step" and has_lc:
+            lc_idx = 2 * D + 1
+            max_code = self.evaluator.max_latent_classes - 1
+            step = np.random.choice([-1, 1])
+            neighbor[lc_idx] = int(np.clip(int(neighbor[lc_idx]) + step, 0, max_code))
+            # When stepping to LC=1, clear membership roles (7,8)
+            if neighbor[lc_idx] == 0:
+                for i in range(D):
+                    if int(neighbor[i]) in (7, 8):
+                        neighbor[i] = 0
+            # When stepping from LC=1 to LC>=2, also randomise class masks
+            if neighbor[lc_idx] > 0 and has_lc and len(neighbor) > 2 * D + 2:
+                max_lc = getattr(self.evaluator, "max_latent_classes", 2)
+                for idx in range(2 * D + 2, min(3 * D + 2, len(neighbor))):
+                    neighbor[idx] = np.random.randint(0, max_lc + 1)
+
+        # ── RANDOM EXPLORATION (classic behavior) ─────────────────
         else:
-            mut_rate = self.mutation_rate
-        mut_rate = float(np.clip(mut_rate, 0.0, 1.0))
+            n_changes = np.random.randint(self.min_changes, self.max_changes + 1)
+            indices   = list(np.random.choice(self.dim, size=n_changes, replace=False))
 
-        n_changes = np.random.randint(self.min_changes, self.max_changes + 1)
-        indices   = list(np.random.choice(self.dim, size=n_changes, replace=False))
+            # Force at least one class_mask mutation when LC is enabled
+            if has_lc:
+                mask_start = 2 * D + 2
+                mask_end   = 3 * D + 1
+                mask_ii = list(range(mask_start, min(mask_end + 1, self.dim)))
+                if mask_ii and not any(i in indices for i in mask_ii):
+                    ri = np.random.choice(range(len(indices)))
+                    indices[ri] = int(np.random.choice(mask_ii))
+                if mask_ii and np.random.rand() < 0.8:
+                    extra = int(np.random.choice(mask_ii))
+                    if extra not in indices:
+                        indices.append(extra)
+            indices = np.asarray(indices, dtype=int)
 
-        D = self.dim_core  # number of role/dist pairs
-
-        if self.evaluator.max_latent_classes > 1:
-            mask_start = 2 * D + 2
-            mask_end   = 3 * D + 1
-            mask_indices = list(range(mask_start, min(mask_end + 1, self.dim)))
-            if mask_indices and not any(i in indices for i in mask_indices):
-                replace_ix = np.random.choice(range(len(indices)))
-                indices[replace_ix] = int(np.random.choice(mask_indices))
-            if len(mask_indices) > 0 and np.random.rand() < 0.8:
-                extra = int(np.random.choice(mask_indices))
-                if extra not in indices:
-                    indices.append(extra)
-        indices = np.asarray(indices, dtype=int)
-
-        changed = False
-
-        for idx in indices:
-            if np.random.rand() < mut_rate:
-
-                if idx < D:
-                    # Role gene
-                    neighbor[idx] = self.sample_allowed_role(idx)
-                    changed = True
-
-                elif idx < 2 * D:
-                    # Distribution gene
-                    neighbor[idx] = np.random.randint(0, 6)
-                    changed = True
-
-                else:
-                    # Tail genes  — indices >= 2*D
-                    tail_pos = idx - 2 * D
-
-                    if tail_pos == 0:
-                        # Dispersion bit: flip
-                        neighbor[idx] = 1 - int(neighbor[idx])
-                    elif tail_pos == 1:
-                        # Latent-class code: step ±1 within bounds
-                        max_code      = self.evaluator.max_latent_classes - 1
-                        step          = np.random.choice([-1, 1])
-                        neighbor[idx] = int(np.clip(neighbor[idx] + step,
-                                                    0, max_code))
+            for idx in indices:
+                if np.random.rand() < mut_rate:
+                    if idx < D:
+                        neighbor[idx] = self.sample_allowed_role(idx)
+                    elif idx < 2 * D:
+                        neighbor[idx] = np.random.randint(0, 6)
                     else:
-                        # Class-specific variable masks (indices 2D+2 … 3D+1):
-                        #   0 = both classes  1 = class 1 only  2 = class 2 only
-                        # Cycle through the three possible values or pick random.
-                        old_val = int(neighbor[idx])
-                        choices = [v for v in (0, 1, 2) if v != old_val]
-                        neighbor[idx] = int(np.random.choice(choices))
-                    changed = True
+                        tail_pos = idx - 2 * D
+                        if tail_pos == 0:
+                            neighbor[idx] = 1 - int(neighbor[idx])
+                        elif tail_pos == 1:
+                            max_code = self.evaluator.max_latent_classes - 1
+                            step = np.random.choice([-1, 1])
+                            neighbor[idx] = int(np.clip(int(neighbor[idx]) + step, 0, max_code))
+                        else:
+                            max_lc2 = getattr(self.evaluator, "max_latent_classes", 2)
+                            old_val = int(neighbor[idx])
+                            choices = [v for v in range(max_lc2 + 1) if v != old_val]
+                            if choices:
+                                neighbor[idx] = int(np.random.choice(choices))
 
-        # Enforce min-active constraint
-        active = np.sum(neighbor[:D] != 0)
-        if active < min_active:
-            zeros = np.where(neighbor[:D] == 0)[0]
+        # ── Enforce min-active ────────────────────────────────────────
+        n_roles = neighbor[:D]
+        active_now = np.sum(n_roles != 0)
+        if active_now < min_active:
+            zeros = np.where(n_roles == 0)[0]
             if len(zeros) > 0:
                 activate = np.random.choice(
-                    zeros, size=min_active - active, replace=False
+                    zeros, size=min_active - active_now, replace=False
                 )
                 for j in activate:
                     neighbor[j] = self.sample_allowed_role(j, force_active=True)
 
+        # ── Verify LC consistency: if LC=1, strip membership roles ────
+        if has_lc and len(neighbor) > 2 * D + 1:
+            if int(neighbor[2 * D + 1]) == 0:
+                for i in range(D):
+                    if int(neighbor[i]) in (7, 8):
+                        neighbor[i] = 0
+
         neighbor = self.repair(neighbor)
-        if changed and not self.is_same(neighbor, solution):
-            return neighbor
+        if self.is_same(neighbor, solution):
+            continue
+        return neighbor
 
-    # Fallback
-    neighbor     = solution.copy()
-    active_count = np.sum(neighbor[:self.dim_core] != 0)
-
-    if active_count < min_active:
-        zero_idx = np.where(neighbor[:self.dim_core] == 0)[0]
-        activate = np.random.choice(
-            zero_idx, size=min_active - active_count, replace=False
-        )
-        neighbor[activate] = np.random.randint(1, 9, size=len(activate))
+    # Fallback — always return something different
+    neighbor = solution.copy()
+    if len(active_idx) > 0 and len(excluded_idx) > 0:
+        # Swap one active for one excluded
+        neighbor[np.random.choice(active_idx)] = 0
+        in_idx = np.random.choice(excluded_idx)
+        allowed = allowed_map.get(var_names[in_idx], [0])
+        non_zero = [r for r in allowed if r != 0]
+        neighbor[in_idx] = np.random.choice(non_zero) if non_zero else 1
+    elif len(active_idx) >= 2:
+        # Toggle the role of one active variable
+        i = np.random.choice(active_idx)
+        allowed = allowed_map.get(var_names[i], range(9))
+        old = int(neighbor[i])
+        possible = [r for r in allowed if r != old]
+        neighbor[i] = np.random.choice(possible) if possible else 0
     else:
-        idx      = np.random.randint(0, self.dim_core)
-        var_name = self.evaluator.vars[idx]
-        allowed  = self.evaluator.allowed_roles[var_name]
-        old      = neighbor[idx]
-        possible = [v for v in allowed if v != old]
-        if possible:
-            neighbor[idx] = np.random.choice(possible)
-
-    # Also randomize class masks in the fallback when LC is enabled
-    has_lc = getattr(self.evaluator, "max_latent_classes", 1) > 1
-    if has_lc and len(neighbor) > 2 * D + 2:
-        for idx in range(2 * D + 2, min(3 * D + 2, len(neighbor))):
-            neighbor[idx] = np.random.randint(0, 3)
-
-    if self.is_same(solution, neighbor):
-        return self.generate_neighbor(solution, T,
-                                      min_active=min_active + 1)
+        # Activate at least min_active
+        zero_idx = np.where(neighbor[:D] == 0)[0]
+        activate = np.random.choice(zero_idx, size=min_active, replace=False)
+        neighbor[activate] = np.random.randint(1, 9, size=len(activate))
     return neighbor
 
 
@@ -1527,7 +1781,7 @@ class ExperimentBuilder:
                         params_em = init_params
 
                     polish_seed, de_report_lc = self._continuous_de_warm_start(
-                        objective=lambda p: mixed_model_loglik_reg(p, data, spec_c),
+                        objective=lambda p: mixed_model_loglik(p, data, spec_c),
                         init_params=np.asarray(params_em),
                         enabled=continuous_de_warm_start,
                         maxiter=de_maxiter,
@@ -1546,7 +1800,7 @@ class ExperimentBuilder:
                     de_report["latent_class_attempts"].append(de_report_lc)
 
                     polish = LBFGS(
-                        fun=lambda p: mixed_model_loglik_reg(p, data, spec_c),
+                        fun=lambda p: mixed_model_loglik(p, data, spec_c),
                         maxiter=polish_maxiter,
                     )
                     candidate = polish.run(jnp.array(polish_seed))
@@ -1671,7 +1925,8 @@ class ExperimentBuilder:
         objective = partial(mixed_model_loglik, data=data, spec=spec)
         param_index = build_param_index(spec)
 
-        if print_report:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
             summary = print_summary(
                 result=result,
                 objective=objective,
@@ -1679,17 +1934,11 @@ class ExperimentBuilder:
                 spec=spec,
                 param_index=param_index,
             )
-        else:
-            with redirect_stdout(io.StringIO()):
-                summary = print_summary(
-                    result=result,
-                    objective=objective,
-                    data=data,
-                    spec=spec,
-                    param_index=param_index,
-                )
+        summary_text = buf.getvalue()
+        if print_report:
+            print(summary_text, end="")
 
-        return {
+        return FitResult({
             "result": result,
             "data": data,
             "spec": spec,
@@ -1698,7 +1947,8 @@ class ExperimentBuilder:
             "param_index": param_index,
             "predictions": np.asarray(fitted.predict()).squeeze(),
             "de_warm_start_report": de_report,
-        }
+            "_summary_text": summary_text,
+        })
 
     def compute_latent_class_probabilities(
         self,
@@ -2549,6 +2799,7 @@ class ExperimentBuilder:
         fixed_override:      Optional[Dict[str, list]] = None,
         membership_override: Optional[Dict[str, list]] = None,
         exclude:             Optional[List[str]]       = None,
+        mutual_exclusion:    Optional[List[List[str]]] = None,
         mode:                str                       = "single",
         max_latent_classes:  int                       = 1,
         R:                   int                       = 200,
@@ -2625,6 +2876,10 @@ class ExperimentBuilder:
             }
             _c_exclude = _ckw.get("exclude", [])
             exclude = list(dict.fromkeys(list(_c_exclude) + list(exclude or [])))
+            # Mutual exclusion groups from constraints (merged, explicit wins)
+            _c_mutex = _ckw.get("mutual_exclusion", [])
+            if _c_mutex:
+                mutual_exclusion = (_c_mutex + (mutual_exclusion or [])) if mutual_exclusion else _c_mutex
             # Distribution overrides from constraints (merged, explicit wins)
             if "dist_override" in _ckw:
                 family_kwargs.setdefault("dist_override", {})
@@ -2659,6 +2914,7 @@ class ExperimentBuilder:
             all_variables         = variables,
             allowed_roles         = allowed_roles,
             allowed_distributions = allowed_dists,
+            mutual_exclusion      = mutual_exclusion,
             group_id_col          = self.group_id_col,
             mode                  = mode,
             R                     = R,
@@ -2901,7 +3157,51 @@ class ExperimentBuilder:
                 group_id_col=self.group_id_col,
             )
 
-        raise ValueError("model_family must be one of: count, cmf, linear, duration")
+        if model_family == "multivariate":
+            try:
+                from .family_search import MultivariateSearchProblem
+            except ImportError:
+                from family_search import MultivariateSearchProblem
+
+            activity_cols = kwargs.pop("activity_cols", None)
+            if activity_cols is None:
+                raise ValueError(
+                    "multivariate search requires activity_cols=<list of outcome columns>."
+                )
+            # All activity columns must be present in the dataframe
+            self._ensure_columns_exist(activity_cols, "multivariate activity_cols")
+
+            offset_col_mv   = kwargs.pop("offset_col",            self.offset_col)
+            maxiter         = kwargs.pop("maxiter",                500)
+            verbose         = kwargs.pop("verbose",                False)
+            search_copula   = kwargs.pop("search_copula",          False)
+            search_marginal = kwargs.pop("search_marginal",        False)
+            fixed_copula    = kwargs.pop("fixed_copula",           "gaussian")
+            fixed_marginal  = kwargs.pop("fixed_marginal",         "nb")
+            min_vars        = kwargs.pop("min_vars_per_activity",  1)
+            add_intercept   = kwargs.pop("add_intercept",          True)
+            self._raise_on_unused_kwargs(kwargs, "multivariate search")
+
+            return MultivariateSearchProblem(
+                df=self.df,
+                activity_cols=activity_cols,
+                covariate_cols=variables,          # variables already normalised above
+                offset_col=offset_col_mv,
+                maxiter=maxiter,
+                verbose=verbose,
+                search_copula=search_copula,
+                search_marginal=search_marginal,
+                fixed_copula=fixed_copula,
+                fixed_marginal=fixed_marginal,
+                min_vars_per_activity=min_vars,
+                add_intercept=add_intercept,
+                metadata={
+                    "activity_cols":  activity_cols,
+                    "covariate_cols": variables,
+                },
+            )
+
+        raise ValueError("model_family must be one of: count, cmf, linear, duration, multivariate")
 
     def build_count_evaluator(self, **kwargs):
         kwargs.setdefault("model_family", "count")
@@ -2928,6 +3228,9 @@ class ExperimentBuilder:
                "de"  Differential Evolution NSGA2 (multi mode)
                "hs"  Harmony Search NSGA2 (multi mode)
         """
+        import time as _time
+        _t0 = _time.time()
+
         evaluator = evaluator or self._evaluator
         if evaluator is None:
             raise RuntimeError("Call build_evaluator() first.")
@@ -2949,6 +3252,20 @@ class ExperimentBuilder:
                 n_starts=1, alpha=0.995,
             )
             defaults.update(algo_kwargs)
+            # Run metadata for save_search_result() -- variables considered,
+            # the fully-resolved hyperparameters (defaults + any overrides,
+            # not just the raw overrides), and wall-clock timing. Addresses
+            # the JSON output previously carrying none of this (just
+            # solutions/scores/best_solution/best_score).
+            metadata = {
+                "variables": [str(v) for v in evaluator.vars],
+                "n_variables": len(evaluator.vars),
+                "algorithm": algo,
+                "max_iter": max_iter,
+                "seed": seed,
+                "hyperparameters": dict(defaults),
+                "objective": "bic",   # ExperimentBuilder.run() always optimises BIC internally
+            }
 
             solver = MultiStartSA(
                 evaluator=evaluator,
@@ -2989,6 +3306,7 @@ class ExperimentBuilder:
             save_run_summary_to_txt(evaluator, best_solution,
                                     algo, seed, config_id)
 
+            metadata["elapsed_seconds"] = _time.time() - _t0
             result = {
                 "algorithm":     algo,
                 "seed":          seed,
@@ -2996,9 +3314,15 @@ class ExperimentBuilder:
                 "scores":        scores,
                 "best_solution": best_solution,
                 "best_score":    best_score,
+                # search_stats/stats_csv: one entry per restart (n_starts),
+                # each a per-iteration trace (iter/temperature/best/
+                # archive_size, or the multi-objective columns) -- see
+                # AdvancedSimulatedAnnealing.save_search_stats_csv().
+                "search_stats":  [r.get("search_stats") for r in solver.results],
+                "stats_csv":     [r.get("stats_csv") for r in solver.results],
             }
             if output_config is not None:
-                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo))
+                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo, metadata=metadata))
             return result
 
         elif algo in ("de", "hs"):
@@ -3010,17 +3334,74 @@ class ExperimentBuilder:
                 de_def.update(algo_kwargs)
                 op  = AdaptiveDE(F=de_def["F"], CR=de_def["CR"])
                 pop = de_def["population_size"]
+                resolved_hyperparams = dict(de_def)
             else:
                 hs_def.update(algo_kwargs)
                 op  = DynamicHarmony(**{k: v for k, v in hs_def.items()
                                         if k != "population_size"})
                 pop = hs_def["population_size"]
+                resolved_hyperparams = dict(hs_def)
+
+            metadata = {
+                "variables": [str(v) for v in evaluator.vars],
+                "n_variables": len(evaluator.vars),
+                "algorithm": algo,
+                "max_iter": max_iter,
+                "seed": seed,
+                "hyperparameters": resolved_hyperparams,
+                "objective": "bic",   # multi-objective NSGA2 also ranks its Pareto "best" by BIC (column 0)
+            }
 
             result = run_nsga(evaluator=evaluator, operator=op,
                               seed=seed, pop_size=pop,
                               max_iter=max_iter, n_jobs=n_jobs)
+            # run_nsga()'s own result dict already carries search_stats/
+            # stats_csv (see main_hpc.py's run_nsga()).
+
+            # run_nsga()/NSGA2Engine.optimize() return "solutions"/"scores"
+            # but never "best_solution"/"best_score" -- the sa/hc branch
+            # above sets those, but this branch didn't, so callers using
+            # extract_search_best() got best_bic=None / best_decision=None
+            # even after a fully successful search (e.g. a clean 1750-gen,
+            # 5+ hour HS run whose own per-generation log showed a
+            # converged best BIC of 2722.5 the whole time). Downstream code
+            # that does build_spec(best["best_decision"]) then crashes with
+            # "TypeError: 'NoneType' object is not subscriptable" right
+            # after the expensive search finished -- losing the run's
+            # result was purely a missing-key bug, not a search failure.
+            solutions = np.asarray(result.get("solutions"))
+            scores    = np.asarray(result.get("scores"))
+            if solutions.size and scores.size:
+                if solutions.ndim == 1:
+                    # Single-objective: optimize() already reduced to one
+                    # best (decision, score) pair.
+                    best_solution = solutions
+                    best_score    = float(scores)
+                else:
+                    # Multi-objective: solutions/scores are the Pareto
+                    # front. Pick the point minimising the primary
+                    # objective (column 0, e.g. BIC) as "the" best.
+                    best_idx      = int(np.argmin(scores[:, 0]))
+                    best_solution = solutions[best_idx]
+                    best_score    = float(scores[best_idx, 0])
+
+                result["best_solution"] = best_solution
+                result["best_score"]    = best_score
+
+                print("\n  Best structure:")
+                decode_best_solution(best_solution, evaluator)
+                print(f"  Best BIC              : {best_score:.4f}")
+
+                refit_and_print(evaluator, best_solution)
+                save_run_summary_to_txt(evaluator, best_solution,
+                                        algo, seed, config_id)
+            else:
+                print("  [warn] Harmony/DE search returned no solutions; "
+                      "best_solution/best_score left unset.")
+
+            metadata["elapsed_seconds"] = _time.time() - _t0
             if output_config is not None:
-                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo))
+                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo, metadata=metadata))
             return result
 
         else:
@@ -3178,3 +3559,156 @@ def compare_models(fit_results: dict) -> "pd.DataFrame":
     df.index = range(1, len(df) + 1)
     df.index.name = "Rank"
     return df
+
+
+def make_synthetic_count_data(
+    n_obs: int = 500,
+    n_periods: int = 3,
+    latent_classes: int = 0,
+    seed: int = 42,
+    include_membership: bool = False,
+) -> "pd.DataFrame":
+    """Generate synthetic count data with a known true DGP.
+
+    Creates a panel dataset with 5 outcome covariates (x1..x5),
+    optional latent classes with membership covariates (z1, z2),
+    and NB2-distributed counts.  Useful for step-by-step tutorials,
+    method demonstrations, and recovery tests.
+
+    Parameters
+    ----------
+    n_obs : int
+        Number of individuals (if ``n_periods > 1``) or total observations.
+    n_periods : int
+        Time periods per individual.  Set to 1 for cross-sectional data.
+    latent_classes : int
+        Number of latent classes (0 = no latent classes, single-class model).
+        When ``latent_classes >= 2``, data are drawn from a mixture with
+        different parameter vectors per class.
+    seed : int
+        Random seed for reproducibility.
+    include_membership : bool
+        When ``True`` and ``latent_classes >= 2``, add membership covariates
+        z1, z2 whose values drive class assignment probabilities.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns: ``id``, ``t`` (if ``n_periods > 1``),
+        ``x1``..``x5``, ``z1``, ``z2`` (if membership),
+        ``y`` (count outcome), and ``true_class`` (if latent_classes >= 2).
+
+    Examples
+    --------
+    >>> from metacountregressor import make_synthetic_count_data
+    >>> df = make_synthetic_count_data(n_obs=500, n_periods=3)
+    >>> print(df.head())
+
+    >>> df_lc = make_synthetic_count_data(
+    ...     latent_classes=2, include_membership=True,
+    ... )
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    true_classes = []
+    panel = n_periods > 1
+    N = n_obs
+    C = latent_classes
+
+    if C < 2:
+        C = 1
+
+    n_vars = 5
+
+    if C >= 2:
+        betas = [rng.normal(0.0, 0.5, size=n_vars + 1) for _ in range(C)]
+        alphas = [rng.uniform(0.3, 2.0) for _ in range(C)]
+        gam = None
+        if include_membership:
+            gam = np.zeros((C - 1, 3))
+            gam[:, 1:] = np.array([[+1.5, -1.0], [-0.8, +1.2]])[:C - 1, :2]
+    else:
+        betas = [rng.normal(0.0, 0.5, size=n_vars + 1)]
+        alphas = [rng.uniform(0.3, 2.0)]
+        gam = None
+
+    for i in range(N):
+        x = rng.normal(0.0, 1.0, size=n_vars)
+        z_data = np.zeros(2) if not include_membership else rng.normal(0.0, 1.0, size=2)
+        z1_val, z2_val = float(z_data[0]), float(z_data[1])
+
+        if C >= 2:
+            if gam is not None:
+                logit = np.zeros(C)
+                for c in range(1, C):
+                    log_odds = gam[c - 1, 0] + gam[c - 1, 1] * z1_val + gam[c - 1, 2] * z2_val
+                    logit[c] = log_odds
+                probs = np.exp(logit) / np.exp(logit).sum()
+            else:
+                probs = np.ones(C) / C
+            class_idx = int(rng.choice(C, p=probs))
+        else:
+            class_idx = 0
+        true_classes.append(class_idx if C >= 2 else 0)
+
+        b = betas[class_idx]
+        a = alphas[class_idx]
+
+        for t in range(max(n_periods, 1)):
+            eta = b[0]
+            for k in range(n_vars):
+                eta += b[k + 1] * x[k]
+            mu = np.exp(np.clip(float(eta), -20.0, 20.0))
+            p_nb = a / (a + mu)
+            y = int(rng.negative_binomial(a, p_nb))
+            row = {"id": i, "y": y}
+            for k in range(n_vars):
+                row[f"x{k + 1}"] = float(x[k])
+            if include_membership:
+                row["z1"] = z1_val
+                row["z2"] = z2_val
+            if panel:
+                row["t"] = t
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+    if C >= 2:
+        df["true_class"] = [true_classes[int(r["id"])] for _, r in df.iterrows()] if panel else true_classes
+
+    return df
+
+
+def print_fit(fit_result: dict, file=None) -> None:
+    """Pretty-print the formatted model summary from a fit result.
+
+    Works with the dictionary returned by ``fit_manual_model()``, including
+    older fit dicts that were computed before ``FitResult`` was introduced.
+
+    Parameters
+    ----------
+    fit_result : dict
+        Output of ``ExperimentBuilder.fit_manual_model()`` or
+        ``CMFExperimentBuilder.fit_manual_cmf_model()``.
+    file : file-like, optional
+        Where to write the output.  Defaults to ``sys.stdout``.
+
+    Examples
+    --------
+    >>> fit = builder.fit_manual_model(manual_spec=..., model='nb', R=500)
+    >>> print_fit(fit)
+    """
+    import sys as _sys
+    out = file or _sys.stdout
+    text = fit_result.get("_summary_text")
+    if text:
+        out.write(text)
+        return
+
+    summary = fit_result.get("summary", {})
+    if isinstance(summary, dict):
+        out.write("────────────────── Model Fit Summary ──────────────────\n")
+        for k in ("loglik", "num_parm", "n_obs", "aic", "bic"):
+            v = summary.get(k)
+            if v is not None:
+                out.write(f"  {k:>12}: {v:,.4f}\n" if isinstance(v, (int, float)) else f"  {k:>12}: {v}\n")
+        out.write("──────────────────────────────────────────────────────\n")
