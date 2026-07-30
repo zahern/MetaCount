@@ -575,31 +575,57 @@ def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
         if not np.all(np.isfinite(params_final)) or np.max(np.abs(params_final)) > max_abs_coef:
             return None
 
-        # Report the TRUE (unregularised) log-likelihood for AIC/BIC — the
-        # penalty is a fitting aid, not part of the reported likelihood.
-        ll = float(-_jax_loglik(jnp.array(params_final), data=data, spec=spec, indivi=False))
-        if not np.isfinite(ll):
-            return None
-
-        # ── Hessian-based standard errors (ridge-regularized) ──────────
+        # ── Hessian + PARTE shrinkage + standard errors ──────────────────
+        # Compute the Hessian at the MLE, then apply PARTE shrinkage
+        # (Alghamdi et al. 2026) when the fixed-effect block has >=2 params.
+        # The corrected LL (evaluated at PARTE params) is always lower than
+        # the MLE LL; it is used for AIC/BIC to reflect the shrinkage bias.
         bse_arr = np.full(Kf, np.nan)
+        partes_applied = False
         try:
             _unreg_obj = _partial(_jax_loglik, data=data, spec=spec, indivi=False)
             hess = jax.hessian(_unreg_obj)(jnp.array(params_final))
             hess_np = np.asarray(hess, dtype=float)
             hess_beta = hess_np[:Kf, :Kf]
             if not np.any(np.isnan(hess_beta)):
-                eigvals, eigvecs = np.linalg.eigh(hess_beta)
-                max_ev = float(np.max(np.abs(eigvals)))
-                if max_ev > 0 and np.isfinite(max_ev):
-                    ridge = float(np.clip(max_ev * 1e-6, 1e-12, 1e-4))
-                    inv_eigvals = 1.0 / (eigvals + ridge)
-                    cov_np = (eigvecs * inv_eigvals) @ eigvecs.T
-                    diag_cov = np.diag(cov_np)
-                    diag_cov = np.where(diag_cov > 0, diag_cov, 1.0 / ridge)
-                    bse_arr = np.sqrt(diag_cov)
+                # ── PARTE shrinkage (post-MLE) ──────────────────────────
+                if Kf >= 2:
+                    try:
+                        from regularization import apply_parte_to_fixed_effects
+                        parte_result = apply_parte_to_fixed_effects(
+                            params_final[:Kf], hess_beta, variant="k3d3"
+                        )
+                        parte_coefs = parte_result.beta_parte
+                        parte_ses = parte_result.se_parte
+                        if (np.all(np.isfinite(parte_coefs))
+                                and np.max(np.abs(parte_coefs)) <= max_abs_coef):
+                            params_parte = params_final.copy()
+                            params_parte[:Kf] = parte_coefs
+                            bse_arr = parte_ses
+                            params_final = params_parte
+                            partes_applied = True
+                    except Exception:
+                        pass
+
+                # ── Ridge SE fallback (if PARTE not applied) ────────────
+                if np.any(np.isnan(bse_arr)):
+                    eigvals, eigvecs = np.linalg.eigh(hess_beta)
+                    max_ev = float(np.max(np.abs(eigvals)))
+                    if max_ev > 0 and np.isfinite(max_ev):
+                        ridge = float(np.clip(max_ev * 1e-6, 1e-12, 1e-4))
+                        inv_eigvals = 1.0 / (eigvals + ridge)
+                        cov_np = (eigvecs * inv_eigvals) @ eigvecs.T
+                        diag_cov = np.diag(cov_np)
+                        diag_cov = np.where(diag_cov > 0, diag_cov, 1.0 / ridge)
+                        bse_arr = np.sqrt(diag_cov)
         except Exception:
             pass
+
+        # Report the TRUE (unregularised) log-likelihood at the final
+        # (possibly PARTE-shrunk) params for AIC/BIC.
+        ll = float(-_jax_loglik(jnp.array(params_final), data=data, spec=spec, indivi=False))
+        if not np.isfinite(ll):
+            return None
 
         return _JAXResult(params_final, list(X_df.columns), ll, N, family,
                           bse_np=bse_arr)
@@ -2995,14 +3021,22 @@ def _jax_random_params_refit(
             R=max(200, int(rp_draws)),
         )
 
-        from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, mixed_model_loglik as _mml  # type: ignore
+        from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
 
         fitted_spec = fit.get("spec", spec)
         params_vec = np.asarray(fit["result"].params, dtype=float)
 
         _objective = lambda p: _mml(p, fit["data"], fitted_spec)
-        _se_all = np.asarray(_compute_se(params_vec, _objective), dtype=float)
         _pindex = _build_base_index(fitted_spec, model="nb")
+
+        try:
+            params_parte, se_parte, _ = _parte_cre(
+                params_vec, _objective, _pindex, variant="k3d3"
+            )
+            params_vec = np.asarray(params_parte)
+            _se_all = np.asarray(se_parte)
+        except Exception:
+            _se_all = np.asarray(_compute_se(params_vec, _objective), dtype=float)
 
         def _se_slice(key: str) -> np.ndarray | None:
             rng = _pindex.get(key)
@@ -3167,14 +3201,22 @@ def _fit_literature_benchmark_with_metacount(
             R=max(200, int(rp_draws)),
         )
 
-        from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, mixed_model_loglik as _mml  # type: ignore
+        from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
 
         fitted_spec = fit.get("spec", spec)
         params_vec = np.asarray(fit["result"].params, dtype=float)
 
         _objective = lambda p: _mml(p, fit["data"], fitted_spec)
-        _se_all = np.asarray(_compute_se(params_vec, _objective), dtype=float)
         _pindex = _build_base_index(fitted_spec, model="nb")
+
+        try:
+            params_parte, se_parte, _ = _parte_cre(
+                params_vec, _objective, _pindex, variant="k3d3"
+            )
+            params_vec = np.asarray(params_parte)
+            _se_all = np.asarray(se_parte)
+        except Exception:
+            _se_all = np.asarray(_compute_se(params_vec, _objective), dtype=float)
 
         def _se_slice(key: str) -> np.ndarray | None:
             rng = _pindex.get(key)
