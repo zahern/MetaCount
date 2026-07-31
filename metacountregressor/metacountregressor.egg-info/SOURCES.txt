@@ -32,6 +32,7 @@ metacountregressor/experiment_package.py
 metacountregressor/family_search.py
 metacountregressor/fitted_specifications.py
 metacountregressor/help_guide.py
+metacountregressor/main_hpc.py
 metacountregressor/model_constraints.py
 metacountregressor/output_config.py
 metacountregressor/pavement_clr.py

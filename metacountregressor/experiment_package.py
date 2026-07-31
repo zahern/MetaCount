@@ -1564,6 +1564,7 @@ class ExperimentBuilder:
         print_report: bool = False,
         use_prefit_start: bool = True,
         continuous_de_warm_start: bool = True,
+        use_slsqp: bool = False,
         de_maxiter: int = 12,
         de_popsize: int = 8,
         de_rel_span: float = 1.5,
@@ -1645,6 +1646,7 @@ class ExperimentBuilder:
                         ).run(jnp.array(_p0))
                         result_1 = _sol
                     else:
+                        model_1._use_slsqp = use_slsqp
                         result_1 = model_1.fit(
                             use_prefit=use_prefit_start,
                             use_continuous_de=continuous_de_warm_start,

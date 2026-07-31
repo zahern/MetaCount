@@ -3014,20 +3014,81 @@ def _jax_random_params_refit(
             rdm_terms=[f"{v}:normal" for v in rdm_terms],
             dispersion=1,
         )
-        fit = builder.fit_manual_model(
-            spec,
-            model="nb",
-            print_report=False,
-            R=max(200, int(rp_draws)),
+
+        # ── Fixed-effects warm start (skip DE, skip Poisson prefit) ──────
+        # Fit the model as pure fixed effects first, then use those
+        # parameters as initial values for the random-parameters fit.
+        # The FE estimates are close to the random-parameter means, and
+        # random SDs start near zero — a much better initial point than
+        # random noise or a crude Poisson prefit.
+        fe_upper = [v for v in fixed_terms if v not in (log_aadt_col,)]
+        fe_lower = [v.replace(f"_{v2}_x_logaadt", v2) for v in fixed_terms
+                    if v.endswith("_x_logaadt") or v.endswith("_Z_x_logaadt")]
+        fe_fit = _fit_model(
+            df_train=df,
+            aadt_col=aadt_col,
+            y_col=y_col,
+            upper_vars=fe_upper,
+            lower_vars=[],
+            family="nb",
+            offset_col=offset_col,
         )
 
-        from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
+        from main_hpc import build_model_from_manual_spec as _build, CountModel
+        data_rp, spec_rp = _build(
+            df=df,
+            manual_spec={
+                "fixed_terms": fixed_terms,
+                "rdm_terms": [f"{v}:normal" for v in rdm_terms],
+                "dispersion": 1,
+            },
+            id_col="_id", y_col=y_col, offset_col=offset_col,
+            R=max(200, int(rp_draws)),
+        )
+        spec_rp.model = "nb"
+        model_rp = CountModel(spec_rp, data_rp)
 
-        fitted_spec = fit.get("spec", spec)
-        params_vec = np.asarray(fit["result"].params, dtype=float)
+        # Build initial parameter vector from FE fit
+        from main_hpc import build_base_index as _bbi
+        _pindex = _bbi(spec_rp, model="nb")
+        n_total = int(_pindex["total_params"])
+        init_rp = np.zeros(n_total)
 
-        _objective = lambda p: _mml(p, fit["data"], fitted_spec)
-        _pindex = _build_base_index(fitted_spec, model="nb")
+        if fe_fit is not None:
+            fe_params = np.asarray(fe_fit.result.params, dtype=float)
+            fe_Kf = int(fe_fit.result.Kf)
+            # Fixed effects
+            i0f, i1f = _pindex["fixed"]
+            n_fixed = min(fe_Kf, i1f - i0f)
+            init_rp[i0f:i0f + n_fixed] = fe_params[:n_fixed]
+            # Random means: same as FE values for first Kr_ind
+            if spec_rp.Kr_ind > 0:
+                i0m, i1m = _pindex["ind_mean"]
+                init_rp[i0m:i1m] = fe_params[1:1 + spec_rp.Kr_ind]  # skip intercept
+            # NB dispersion
+            if fe_Kf < len(fe_params):
+                _alpha_i = _pindex.get("dispersion")
+                if _alpha_i is not None:
+                    init_rp[_alpha_i[0]] = float(fe_params[fe_Kf])
+        else:
+            init_rp[_pindex["fixed"][0]] = float(np.log(np.clip(float(np.mean(y_np)), 1e-8, None)))
+
+        # Fit with SLSQP from the FE warm start
+        model_rp._use_slsqp = True
+        result_rp = model_rp.fit(use_prefit=False, use_continuous_de=False)
+        params_vec = np.asarray(result_rp.params, dtype=float)
+
+        from main_hpc import mixed_model_loglik as _mml, compute_standard_errors as _compute_se, compute_regularized_estimates as _parte_cre
+
+        _objective = lambda p: _mml(p, data_rp, spec_rp)
+
+        try:
+            grad_j = jax.grad(_objective)(jnp.asarray(params_vec, dtype=float))
+            grad_norm = float(jnp.sqrt(jnp.sum(grad_j ** 2)))
+            if not np.isfinite(grad_norm) or grad_norm > 10.0:
+                return None
+        except Exception:
+            pass
 
         try:
             params_parte, se_parte, _ = _parte_cre(
@@ -3056,12 +3117,13 @@ def _jax_random_params_refit(
         def _sigmoid(x):
             return float(1.0 / (1.0 + np.exp(-float(x))))
 
-        blocks = _unpack(params_vec, fitted_spec)
+        from main_hpc import unpack_params
+        blocks = unpack_params(params_vec, spec_rp)
 
         rows_param: list[dict[str, Any]] = []
         param_idx = 0
 
-        for k, name in enumerate(fitted_spec.fixed_names):
+        for k, name in enumerate(spec_rp.fixed_names):
             b = float(np.array(blocks["beta_f"])[k])
             s = float(se_beta_f[k]) if se_beta_f is not None and k < len(se_beta_f) else np.nan
             z = b / s if (np.isfinite(s) and s > 1e-15) else 0.0
@@ -3076,10 +3138,10 @@ def _jax_random_params_refit(
             })
             param_idx += 1
 
-        if fitted_spec.Kr_ind > 0 and blocks.get("mean_ind") is not None:
+        if spec_rp.Kr_ind > 0 and blocks.get("mean_ind") is not None:
             means = np.array(blocks["mean_ind"])
             sds_raw = np.array(blocks["sd_ind"])
-            for j, rname in enumerate(fitted_spec.random_ind_names):
+            for j, rname in enumerate(spec_rp.random_ind_names):
                 display_name = VARIABLE_LABELS.get(rname, rname)
                 mj = float(means[j])
                 mse = float(se_ind_m[j]) if se_ind_m is not None and j < len(se_ind_m) else np.nan
@@ -3128,10 +3190,11 @@ def _jax_random_params_refit(
         coef_df = pd.DataFrame(rows_param)
         coef_str = _format_coef_table_journal(coef_df, title="RANDOM-PARAMETERS NB2 — FINAL COEFFICIENTS")
 
-        summary_d = fit.get("summary", {}) if isinstance(fit, dict) else {}
-        ll  = summary_d.get("loglik", float("nan")) if isinstance(summary_d, dict) else float("nan")
-        bic = summary_d.get("bic",    float("nan")) if isinstance(summary_d, dict) else float("nan")
-        aic = summary_d.get("aic",    float("nan")) if isinstance(summary_d, dict) else float("nan")
+        ll  = float(-model_rp.objective(params_vec))
+        n   = data_rp["y"].size
+        k   = int(_pindex["total_params"])
+        bic = float(k * np.log(max(n, 1)) - 2.0 * ll)
+        aic = float(2.0 * k - 2.0 * ll)
 
         return {
             "coef_str": coef_str,
@@ -3139,7 +3202,7 @@ def _jax_random_params_refit(
             "loglik": ll,
             "bic": bic,
             "aic": aic,
-            "fit": fit,
+            "fit": None,
             "fixed_terms": fixed_terms,
             "rdm_terms": rdm_terms,
         }
@@ -3199,6 +3262,7 @@ def _fit_literature_benchmark_with_metacount(
             model="nb",
             print_report=False,
             R=max(200, int(rp_draws)),
+            use_slsqp=True,
         )
 
         from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
