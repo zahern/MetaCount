@@ -3053,14 +3053,19 @@ def _jax_random_params_refit(
         if fe_fit is not None:
             fe_params = np.asarray(fe_fit.result.params, dtype=float)
             fe_Kf = int(fe_fit.result.Kf)
-            # Fixed effects
+            # Fixed effects — copy all FE params to the RP model's fixed block
             i0f, i1f = _pindex["fixed"]
             n_fixed = min(fe_Kf, i1f - i0f)
             init_rp[i0f:i0f + n_fixed] = fe_params[:n_fixed]
-            # Random means: same as FE values for first Kr_ind
+            # Random means — match by variable name, not by position
             if spec_rp.Kr_ind > 0:
                 i0m, i1m = _pindex["ind_mean"]
-                init_rp[i0m:i1m] = fe_params[1:1 + spec_rp.Kr_ind]  # skip intercept
+                fe_index = fe_fit.result.params.index
+                for j, rname in enumerate(spec_rp.random_ind_names):
+                    # Random names in spec are like 'F_W_Z', find in FE params
+                    if rname in fe_index:
+                        idx = list(fe_index).index(rname)
+                        init_rp[i0m + j] = fe_params[idx]
             # NB dispersion
             if fe_Kf < len(fe_params):
                 _alpha_i = _pindex.get("dispersion")
