@@ -872,6 +872,20 @@ def _random_search(
                 print(f"           upper: {_upper_str}")
             if _lower_str != "(none)":
                 print(f"           lower: {_lower_str}")
+            # Print coefficient summary for Pareto/ALL-SIG entries
+            if _entered_pareto or _all_sig:
+                _res = fit.result
+                _bse = getattr(_res, "bse", pd.Series(np.nan, index=_res.params.index))
+                _pinfo = pval_info.get("pvals", {})
+                for _i, (_nm, _v) in enumerate(_res.params.items()):
+                    if _i >= getattr(_res, "Kf", len(_res.params)) or _nm == "const":
+                        continue
+                    _se = float(_bse.get(_nm, np.nan)) if hasattr(_bse, 'get') else np.nan
+                    _p = _pinfo.get(_nm, np.nan)
+                    _sig = "***" if np.isfinite(_p) and _p < 0.01 else ("**" if _p < 0.05 else ("*" if _p < 0.10 else "  "))
+                    print(f"           {_nm:<30s} {float(_v):+10.4f}  p={_p:.4f} {_sig}")
+            if _lower_str != "(none)":
+                print(f"           lower: {_lower_str}")
 
     y_val_np = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
 
