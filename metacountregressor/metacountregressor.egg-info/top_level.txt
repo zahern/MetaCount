@@ -18,6 +18,7 @@ model_constraints
 output_config
 pareto_file
 pavement_clr
+regularization
 sample_data
 solution
 solvers_meta
