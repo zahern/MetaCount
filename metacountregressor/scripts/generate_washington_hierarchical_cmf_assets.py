@@ -880,7 +880,7 @@ def _random_search(
     MIN_UPPER = 2
     MIN_LOWER = 1
 
-    n_random = max(4, int(search_iter * 0.50))   # 50% random exploration
+    n_random = max(6, int(search_iter * 0.30))   # 30% random, more refinement
     n_sa     = search_iter - n_random
 
     # ── Phase 1: random ────────────────────────────────────────────────────
