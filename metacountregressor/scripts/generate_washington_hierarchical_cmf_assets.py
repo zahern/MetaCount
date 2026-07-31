@@ -874,15 +874,13 @@ def _random_search(
     #
     # SA acceptance: always accept improvements; accept worsening moves with
     # probability exp(-ΔBIC / T) so the search can escape local optima.
-    # Temperature cools geometrically: T <- T * cooling_rate.
-    #
-    # This is better than pure random because later iterations build on earlier
-    # discoveries rather than starting from scratch every time.
+    # Temperature cools geometrically with periodic reheating to escape
+    # plateaus (simulated annealing with reheating schedule).
 
     MIN_UPPER = 2
     MIN_LOWER = 1
 
-    n_random = max(2, int(search_iter * 0.40))
+    n_random = max(4, int(search_iter * 0.50))   # 50% random exploration
     n_sa     = search_iter - n_random
 
     # ── Phase 1: random ────────────────────────────────────────────────────
@@ -912,11 +910,13 @@ def _random_search(
 
     # ── Phase 2: SA refinement from best found ─────────────────────────────
     if best_fit is not None and n_sa > 0:
-        # SA parameters — temperature schedule chosen so we go from accepting
-        # ~30 BIC-unit worsening (broad exploration) to ~0.5 (near-greedy).
-        T = 20.0                  # initial temperature (BIC units)
-        T_min = 0.5               # final temperature
-        cooling = (T_min / T) ** (1.0 / max(n_sa, 1))
+        # SA parameters: T=50 starts broadly (accepts ~50 BIC-unit worsenings),
+        # cools to T_min=0.2 (near-greedy).  Reheat every 25% of iterations
+        # to escape local optima (T jumps back to T/2).
+        T = 50.0                  # initial temperature
+        T_min = 0.2               # final temperature
+        T_reheat_frac = 0.5       # reheat to half current T
+        reheat_every = max(1, n_sa // 4)  # reheat 3 times during SA
 
         # Current SA solution starts at the best joint (BIC + Val RMSE)
         # candidate found in Phase-1, not the best-BIC-only candidate.
@@ -1167,13 +1167,17 @@ def _random_search(
             sa_cmp_bic = _bic_penalised(sa_cmp_start_fit)
             if not np.isfinite(sa_cmp_bic):
                 sa_cmp_bic = 1e12
-            T_cmp = 20.0
-            T_cmp_min = 0.5
+            T_cmp = 50.0
+            T_cmp_min = 0.2
             cooling_cmp = (T_cmp_min / T_cmp) ** (1.0 / max(n_sa, 1))
             sa_seen: set[tuple[tuple[str, ...], tuple[str, ...], str]] = set()
 
-            for _ in range(n_sa):
-                nu, nl, nf = _perturb_sa(sa_cmp_upper, sa_cmp_lower, sa_cmp_fam)
+            for _i_sa in range(n_sa):
+                # Apply 2-3 perturbations per step for more aggressive exploration
+                nu, nl, nf = sa_cmp_upper[:], sa_cmp_lower[:], sa_cmp_fam
+                n_perturb = 3 if rng.random() < 0.3 else 2
+                for _ in range(n_perturb):
+                    nu, nl, nf = _perturb_sa(nu, nl, nf)
                 key_sa = (tuple(nu), tuple(nl), nf)
                 if key_sa in sa_seen:
                     T_cmp = max(T_cmp * cooling_cmp, T_cmp_min)
@@ -1199,9 +1203,18 @@ def _random_search(
                             sa_cmp_bic = new_bic
 
                 T_cmp = max(T_cmp * cooling_cmp, T_cmp_min)
+                # Reheat: jump temperature back up every 25% of iterations
+                if _i_sa > 0 and _i_sa % reheat_every == 0:
+                    T_cmp = max(T_cmp, T * T_reheat_frac)
         else:
-            for _ in range(n_sa):
-                nu, nl, nf = _perturb_sa(sa_upper, sa_lower, sa_fam)
+            # Standalone SA (no harmony comparison)
+            cooling = (T_min / T) ** (1.0 / max(n_sa, 1))
+            for _i_sa in range(n_sa):
+                # Multiple perturbations per step
+                nu, nl, nf = sa_upper[:], sa_lower[:], sa_fam
+                n_perturb = 3 if rng.random() < 0.3 else 2
+                for _ in range(n_perturb):
+                    nu, nl, nf = _perturb_sa(nu, nl, nf)
                 key = (tuple(nu), tuple(nl), nf)
                 if key not in tested:
                     tested.add(key)
@@ -1213,12 +1226,13 @@ def _random_search(
                         new_bic = _bic_penalised(fit)
                         if np.isfinite(new_bic):
                             delta = new_bic - sa_bic
-                            # Accept improvement always; accept worsening with SA prob
                             if delta < 0 or rng.random() < float(np.exp(-delta / max(T, 1e-9))):
                                 sa_upper, sa_lower, sa_fam = nu, nl, nf
                                 sa_bic = new_bic
 
                 T = max(T * cooling, T_min)
+                if _i_sa > 0 and _i_sa % reheat_every == 0:
+                    T = max(T, 50.0 * T_reheat_frac)  # reheat to 25
 
     if best_fit is None and best_fit_any is None:
         raise RuntimeError("Search failed to fit any candidate model.")
