@@ -2900,6 +2900,7 @@ def _jax_random_params_refit(
     include_lower_interactions: bool,
     max_random_terms: int,
     rp_draws: int,
+    try_correlated: bool = False,
 ) -> dict[str, Any] | None:
     """Attempt a random-parameters (partial-pooling) refit using ExperimentBuilder.
 
@@ -3005,9 +3006,24 @@ def _jax_random_params_refit(
             return None
 
         builder = ExperimentBuilder(df=df, id_col="_id", y_col=y_col, offset_col=offset_col)
+        # Build random terms: independent by default, correlated pairs if requested
+        rdm_ind_terms = [f"{v}:normal" for v in rdm_terms]
+        rdm_cor_pairs = []
+        if try_correlated and len(rdm_terms) >= 2:
+            # Pair adjacent random variables as correlated
+            for i in range(0, len(rdm_terms) - 1, 2):
+                rdm_cor_pairs.append(f"{rdm_terms[i]}:{rdm_terms[i+1]}:normal")
+            # Remove paired vars from independent
+            paired_vars = set()
+            for i in range(0, len(rdm_terms) - 1, 2):
+                paired_vars.add(rdm_terms[i])
+                paired_vars.add(rdm_terms[i+1])
+            rdm_ind_terms = [f"{v}:normal" for v in rdm_terms if v not in paired_vars]
+
         spec = builder.make_manual_spec(
             fixed_terms=fixed_terms,
-            rdm_terms=[f"{v}:normal" for v in rdm_terms],
+            rdm_terms=rdm_ind_terms,
+            rdm_cor_terms=rdm_cor_pairs,
             dispersion=1,
         )
 
@@ -5599,31 +5615,37 @@ def main() -> None:
 
     print(f"  Random-params sweep (mandatory) on {len(_rp_candidates_to_try)} candidates ...")
     for _rp_candidate in _rp_candidates_to_try:
-        _cand_upper = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.upper_vars})
-        _cand_lower = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.lower_vars})
-        _rp = _jax_random_params_refit(
-            df_trainval_raw=df_trainval_raw,
-            best_upper_raw=_cand_upper,
-            best_lower_raw=_cand_lower,
-            y_col=args.y_col,
-            aadt_col=args.aadt_col,
-            offset_col=offset_col,
-            scaler_stats=scaler_trainval,
-            binary_vars=binary_vars,
-            include_lower_interactions=bool(args.rp_include_lower_interactions),
-            max_random_terms=int(args.rp_max_random_terms),
-            rp_draws=int(args.rp_draws),
-        )
-        if _rp is None:
+        try:
+            _cand_upper = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.upper_vars})
+            _cand_lower = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.lower_vars})
+            # Try correlated random params first, then independent fallback
+            for _try_cor in [True, False]:
+                _rp = _jax_random_params_refit(
+                    df_trainval_raw=df_trainval_raw,
+                    best_upper_raw=_cand_upper,
+                    best_lower_raw=_cand_lower,
+                    y_col=args.y_col,
+                    aadt_col=args.aadt_col,
+                    offset_col=offset_col,
+                    scaler_stats=scaler_trainval,
+                    binary_vars=binary_vars,
+                    include_lower_interactions=bool(args.rp_include_lower_interactions),
+                    max_random_terms=int(args.rp_max_random_terms),
+                    rp_draws=int(args.rp_draws),
+                    try_correlated=_try_cor,
+                )
+                if _rp is not None:
+                    break
+            if _rp is None:
+                continue
+            _rp_bic = _rp.get("bic", float("nan"))
+            if not np.isfinite(_rp_bic):
+                continue
+            if best_rp_result is None or _rp_bic < best_rp_bic:
+                best_rp_bic    = _rp_bic
+                best_rp_result = _rp
+        except Exception as _rp_exc:
             continue
-        _rp_bic = _rp.get("bic", float("nan"))
-        if not np.isfinite(_rp_bic):
-            continue
-        if best_rp_result is None or _rp_bic < best_rp_bic:
-            best_rp_bic    = _rp_bic
-            best_rp_result = _rp
-            # Note: do NOT overwrite selected_upper_raw / selected_lower_raw here.
-            # Those drive the dashboard variables and must stay aligned with final_fit.
 
     jax_result = best_rp_result
 
