@@ -24,6 +24,7 @@ sample_data.py
 solution.py
 solvers_meta.py
 survival_models.py
+metacountregressor/GA_CMF_AADT_JAX.py
 metacountregressor/__init__.py
 metacountregressor/_version.py
 metacountregressor/bivariate_copula.py
