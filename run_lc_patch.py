@@ -474,7 +474,9 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
                           f"Accuracy={fc_acc:.1%}")
                     print()
                 except Exception as exc:
+                    import traceback
                     print(f"  [posterior computation error] {exc}\n")
+                    traceback.print_exc()
             else:
                 print()
 

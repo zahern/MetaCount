@@ -3607,57 +3607,55 @@ class CountModel:
         # --------------------------------------------------
         # 1️⃣ INITIALIZATION
         # --------------------------------------------------
-        key = jax.random.PRNGKey(0)
-        init = 0.01 * jax.random.normal(key, (n_params,))
-
-        if use_prefit:
-            try:
-                pre_beta = fit_simple_poisson_full(self.data, self.spec)
-
-                cursor_pre = 0  # position inside pre_beta
-
-                # ✅ Fixed
-                if self.spec.Kf > 0:
-                    start, end = self.param_index["fixed"]
-                    k = self.spec.Kf
-                    init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
-                    cursor_pre += k
-
-                # ✅ Correlated means
-                if self.spec.Kr_cor > 0:
-                    start, end = self.param_index["cor_mean"]
-                    k = self.spec.Kr_cor
-                    init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
-                    cursor_pre += k
-
-                # ✅ Independent means
-                if self.spec.Kr_ind > 0:
-                    start, end = self.param_index["ind_mean"]
-                    k = self.spec.Kr_ind
-                    init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
-                    cursor_pre += k
-
-                # ✅ Grouped means
-                if self.spec.Kg > 0:
-                    start, end = self.param_index["group_mean"]
-                    k = self.spec.Kg
-                    init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
-                    cursor_pre += k
-
-                # Everything else stays zero:
-                # sd's
-                # chol params
-                # heterogeneity
-                # dispersion
-
-            except Exception as e:
-                print("Prefit failed:", e)
-                key = jax.random.PRNGKey(0)
-                init = 0.001 * jax.random.normal(key, (n_params,))
-
+        # Check for externally-supplied initial parameters first
+        custom_init = getattr(self, "_init_params", None)
+        if custom_init is not None:
+            init = jnp.asarray(custom_init, dtype=float)
         else:
             key = jax.random.PRNGKey(0)
-            init = 0.001 * jax.random.normal(key, (n_params,))
+            init = 0.01 * jax.random.normal(key, (n_params,))
+
+            if use_prefit:
+                try:
+                    pre_beta = fit_simple_poisson_full(self.data, self.spec)
+
+                    cursor_pre = 0  # position inside pre_beta
+
+                    # ✅ Fixed
+                    if self.spec.Kf > 0:
+                        start, end = self.param_index["fixed"]
+                        k = self.spec.Kf
+                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        cursor_pre += k
+
+                    # ✅ Correlated means
+                    if self.spec.Kr_cor > 0:
+                        start, end = self.param_index["cor_mean"]
+                        k = self.spec.Kr_cor
+                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        cursor_pre += k
+
+                    # ✅ Independent means
+                    if self.spec.Kr_ind > 0:
+                        start, end = self.param_index["ind_mean"]
+                        k = self.spec.Kr_ind
+                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        cursor_pre += k
+
+                    # ✅ Grouped means
+                    if self.spec.Kg > 0:
+                        start, end = self.param_index["group_mean"]
+                        k = self.spec.Kg
+                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        cursor_pre += k
+
+                    # Everything else stays zero:
+                    # sd's / chol params / heterogeneity / dispersion
+
+                except Exception as e:
+                    print("Prefit failed:", e)
+                    key = jax.random.PRNGKey(0)
+                    init = 0.001 * jax.random.normal(key, (n_params,))
 
         # Track objective at the optimiser start point for diagnostics.
         try:

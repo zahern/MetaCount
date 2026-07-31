@@ -782,7 +782,9 @@ class StructureEvaluatorLC(StructureEvaluator):
             return value
 
         except Exception as e:
+            import traceback
             print(f"  [fitness error] {e}")
+            traceback.print_exc()
             if sig is not None:
                 self._failed_structures.add(sig)
                 # Cap at 2000 entries to prevent unbounded growth during

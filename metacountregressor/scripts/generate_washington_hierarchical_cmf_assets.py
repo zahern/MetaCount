@@ -124,11 +124,6 @@ VARIABLE_LABELS: dict[str, str] = {
     "max_snow": "Maximum Single-Day Snowfall in Month (in)",
 
     # ── Queensland heavy vehicles: roadway / traffic ────────────────────────
-    # Labels below follow the variable descriptions given in the paper text
-    # (hierarchical_cmf_paper.tex, Data and Methods / Table tab:qld_coefs).
-    # WC_P, S_B, SS_B, and ATLM are intentionally NOT labelled here: their
-    # exact definitions could not be confirmed against the paper text or a
-    # data dictionary, and a wrong guess would be worse than the raw code.
     "SP":     "Speed Limit 100 km/h Indicator",
     "HSP":    "High Speed-Limit Indicator",
     "MSP":    "Medium Speed-Limit Indicator",
@@ -144,6 +139,7 @@ VARIABLE_LABELS: dict[str, str] = {
     "RSMS":   "Rural Single Carriageway × Medium Speed Limit",
     "Curve50": "Curve Radius < 50m Indicator",
     "Median": "Median Present Indicator",
+    "WC_P":   "Wide Centreline",
     "L_Ter":  "Level Terrain Indicator",
     "Roll_Ter": "Rolling Terrain Indicator",
     "Mt_Ter": "Mountainous Terrain Indicator",
@@ -3071,10 +3067,11 @@ def _jax_random_params_refit(
                 if _alpha_i is not None:
                     init_rp[_alpha_i[0]] = float(fe_params[fe_Kf])
         else:
-            init_rp[_pindex["fixed"][0]] = float(np.log(np.clip(float(np.mean(y_np)), 1e-8, None)))
+            init_rp[_pindex["fixed"][0]] = float(np.log(np.clip(float(np.mean(pd.to_numeric(df[y_col], errors="coerce"))), 1e-8, None)))
 
         # Fit with SLSQP from the FE warm start
         model_rp._use_slsqp = True
+        model_rp._init_params = init_rp
         result_rp = model_rp.fit(use_prefit=False, use_continuous_de=False)
         params_vec = np.asarray(result_rp.params, dtype=float)
 
