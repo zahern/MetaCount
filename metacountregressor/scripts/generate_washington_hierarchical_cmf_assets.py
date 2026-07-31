@@ -805,12 +805,12 @@ def _random_search(
         mono_ok    = bool(es["aadt_elasticity_min"] > float(min_aadt_elasticity))
 
         # P-value penalty: penalise models with many insignificant variables.
-        # Each variable with p > 0.05 adds BIC penalty units, strongly
-        # discouraging over-parameterised specifications during search.
         pval_info = _pvalue_penalty_stats(fit, p_threshold=0.05)
         n_insig = pval_info["n_insig"]
         PVALUE_PENALTY_PER_INSIG = 10.0
         bic_penalised = bic + PVALUE_PENALTY_PER_INSIG * n_insig if np.isfinite(bic) else bic
+        # Soft penalty only: models with insignificant vars can still compete
+        # if their BIC improvement outweighs the penalty
 
         history_rows.append({
             "Iteration": len(history_rows) + 1,
@@ -830,19 +830,48 @@ def _random_search(
             "Monotonic AADT (e>0 all segs)": "yes" if mono_ok else "no",
         })
         nonlocal best_fit, best_score, best_fit_any, best_score_any
-        if bic_penalised < best_score_any:
+        _entered_pareto = False
+        _all_sig = (n_insig == 0)
+
+        # Only all-significant models can enter the Pareto frontier.
+        # Insignificant models are still evaluated (SA can explore through them
+        # via temperature acceptance) but are filtered out of best/top-K.
+        if _all_sig and bic_penalised < best_score_any:
             best_score_any = bic_penalised
             best_fit_any   = fit
-        if (not enforce_aadt_increase or mono_ok) and bic_penalised < best_score:
+            _entered_pareto = True
+        if _all_sig and (not enforce_aadt_increase or mono_ok) and bic_penalised < best_score:
             best_score = bic_penalised
             best_fit   = fit
-        # top-K heap maintenance (max-heap by negating bic_penalised for min-heap)
+            _entered_pareto = True
+
+        # top-K heap: only all-sig models
         _counter[0] += 1
-        if np.isfinite(bic_penalised) and (not enforce_aadt_increase or mono_ok):
+        _in_heap = False
+        if _all_sig and np.isfinite(bic_penalised) and (not enforce_aadt_increase or mono_ok):
             if len(top_k_heap) < top_k:
                 _hq.heappush(top_k_heap, (-bic_penalised, _counter[0], fit))
+                _in_heap = True
             elif -bic_penalised > top_k_heap[0][0]:
                 _hq.heapreplace(top_k_heap, (-bic_penalised, _counter[0], fit))
+                _in_heap = True
+
+        # ── Verbose logging ──────────────────────────────────────────
+        if _entered_pareto or _in_heap or _all_sig:
+            _iters = len(history_rows)
+            _upper_str = ", ".join(fit.upper_vars[:5]) if fit.upper_vars else "(none)"
+            _lower_str = ", ".join(fit.lower_vars[:3]) if fit.lower_vars else "(none)"
+            _flags = []
+            if _entered_pareto: _flags.append("PARETO")
+            if _in_heap: _flags.append(f"Top-{top_k}")
+            if _all_sig: _flags.append("ALL-SIG")
+            _flag_str = " | ".join(_flags) if _flags else "N_INSIG"
+            print(f"  [{_iters:5d}] {phase:7s} {fit.family:2s} | BIC={bic:.1f} (pen={bic_penalised:.1f}) | "
+                  f"RMSE={val_rmse:.4f} | N_insig={n_insig} | {_flag_str}")
+            if _upper_str != "(none)":
+                print(f"           upper: {_upper_str}")
+            if _lower_str != "(none)":
+                print(f"           lower: {_lower_str}")
 
     y_val_np = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
 
@@ -3041,12 +3070,7 @@ def _jax_random_params_refit(
             dispersion=1,
         )
 
-        # ── Fixed-effects warm start (skip DE, skip Poisson prefit) ──────
-        # Fit the model as pure fixed effects first, then use those
-        # parameters as initial values for the random-parameters fit.
-        # The FE estimates are close to the random-parameter means, and
-        # random SDs start near zero — a much better initial point than
-        # random noise or a crude Poisson prefit.
+        # ── Fixed-effects warm start ────────────────────────────────────────
         fe_upper = [v for v in fixed_terms if v not in (log_aadt_col,)]
         fe_lower = [v.replace(f"_{v2}_x_logaadt", v2) for v in fixed_terms
                     if v.endswith("_x_logaadt") or v.endswith("_Z_x_logaadt")]
@@ -5627,11 +5651,24 @@ def main() -> None:
     if best_fit_train not in _rp_candidates_to_try:
         _rp_candidates_to_try.append(best_fit_train)
 
-    print(f"  Random-params sweep (mandatory) on {len(_rp_candidates_to_try)} candidates ...")
+    print(f"\n  {'='*60}")
+    print(f"  RANDOM-PARAMETERS SWEEP")
+    print(f"  {'='*60}")
+    print(f"  Candidates to sweep: {len(_rp_candidates_to_try)}")
+    for _ri, _rc in enumerate(_rp_candidates_to_try):
+        _ru = sorted({n[:-2] if n.endswith('_Z') else n for n in _rc.upper_vars})
+        _rl = sorted({n[:-2] if n.endswith('_Z') else n for n in _rc.lower_vars})
+        print(f"  [{_ri+1}] upper={_ru}, lower={_rl}")
+    print(f"  max_random_terms={int(args.rp_max_random_terms)}, rp_draws={int(args.rp_draws)}")
+    print(f"  {'='*60}")
     for _rp_candidate in _rp_candidates_to_try:
         try:
             _cand_upper = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.upper_vars})
             _cand_lower = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.lower_vars})
+            _cont_upper = [v for v in _cand_upper if v not in binary_vars]
+            _n_avail = min(int(args.rp_max_random_terms), len(_cont_upper))
+            print(f"\n  [RP] Trying: upper={_cand_upper}, lower={_cand_lower}")
+            print(f"       Continuous upper vars available for random: {_cont_upper} ({_n_avail} max)")
             # Try correlated random params first, then independent fallback
             for _try_cor in [True, False]:
                 _rp = _jax_random_params_refit(
@@ -5649,8 +5686,15 @@ def main() -> None:
                     try_correlated=_try_cor,
                 )
                 if _rp is not None:
+                    _mode = "correlated" if _try_cor else "independent"
+                    print(f"       [RP] {_mode:12s} OK: BIC={_rp.get('bic', float('nan')):.1f}, "
+                          f"LL={_rp.get('loglik', float('nan')):.2f}")
                     break
+                else:
+                    _mode = "correlated" if _try_cor else "independent"
+                    print(f"       [RP] {_mode:12s} FAILED")
             if _rp is None:
+                print(f"       [RP] All modes failed for this candidate")
                 continue
             _rp_bic = _rp.get("bic", float("nan"))
             if not np.isfinite(_rp_bic):
@@ -5658,7 +5702,9 @@ def main() -> None:
             if best_rp_result is None or _rp_bic < best_rp_bic:
                 best_rp_bic    = _rp_bic
                 best_rp_result = _rp
+                print(f"       [RP] *** NEW BEST RP BIC={best_rp_bic:.1f} ***")
         except Exception as _rp_exc:
+            print(f"       [RP] Exception: {_rp_exc}")
             continue
 
     jax_result = best_rp_result
