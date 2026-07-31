@@ -737,7 +737,7 @@ def _elasticity_stats(elasticity: np.ndarray) -> dict[str, float]:
 
 
 def _bic_penalised(fit: FittedModel, p_threshold: float = 0.05,
-                   penalty_per_insig: float = 5.0,
+                   penalty_per_insig: float = 10.0,
                    coef_reg_penalty: float = 2.0) -> float:
     bic = float(getattr(fit.result, "bic", np.nan))
     if not np.isfinite(bic):
@@ -809,11 +809,11 @@ def _random_search(
         mono_ok    = bool(es["aadt_elasticity_min"] > float(min_aadt_elasticity))
 
         # P-value penalty: penalise models with many insignificant variables.
-        # Each variable with p > 0.05 adds 5.0 BIC units to the effective score,
+        # Each variable with p > 0.05 adds BIC penalty units, strongly
         # discouraging over-parameterised specifications during search.
         pval_info = _pvalue_penalty_stats(fit, p_threshold=0.05)
         n_insig = pval_info["n_insig"]
-        PVALUE_PENALTY_PER_INSIG = 5.0
+        PVALUE_PENALTY_PER_INSIG = 10.0
         bic_penalised = bic + PVALUE_PENALTY_PER_INSIG * n_insig if np.isfinite(bic) else bic
 
         history_rows.append({
@@ -4133,10 +4133,16 @@ def _build_literature_vs_proposed_coef_table(
     coef_df: pd.DataFrame,
     benchmark_fit: FittedModel | None,
     random_params_result: dict[str, Any] | None,
+    benchmark_coef_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Create side-by-side coefficient table: literature benchmark vs proposed model."""
     bench_params = pd.Series(dtype=float)
-    if benchmark_fit is not None and hasattr(benchmark_fit, "result"):
+    if benchmark_coef_df is not None and not benchmark_coef_df.empty:
+        # Use Metacount benchmark coefficient DataFrame when available
+        for _, row in benchmark_coef_df.iterrows():
+            param_name = str(row.get("Parameter", ""))
+            bench_params[param_name] = row.get("Estimate", np.nan)
+    elif benchmark_fit is not None and hasattr(benchmark_fit, "result"):
         bench_params = pd.Series(getattr(benchmark_fit.result, "params", {}), dtype=float)
 
     random_rows: list[dict[str, Any]] = []
@@ -5060,8 +5066,8 @@ def main() -> None:
     parser.add_argument(
         "--rp-max-random-terms",
         type=int,
-        default=4,
-        help="Maximum number of random terms to include in RP sweep after ranking (default: 4).",
+        default=6,
+        help="Maximum number of random terms to include in RP sweep after ranking (default: 6).",
     )
     parser.add_argument(
         "--rp-draws",
@@ -5260,9 +5266,13 @@ def main() -> None:
     # Rescue pass: if the current final choice misses benchmark test RMSE,
     # scan searched specifications and swap in a benchmark-dominating candidate
     # when one exists. This keeps reporting robust in small-budget searches.
+    # Uses p-value-penalised BIC (10.0 per insignificant variable, p>0.05) to
+    # discourage over-parameterised specifications.
     _bench_bic_now = float(bench.get("tv_bic", np.nan))
     _bench_rmse_now = float(bench.get("test_rmse", np.nan))
-    _final_bic_now = float(getattr(final_fit.result, "bic", np.nan))
+    _final_bic_raw = float(getattr(final_fit.result, "bic", np.nan))
+    _final_pvinfo = _pvalue_penalty_stats(final_fit, p_threshold=0.05)
+    _final_bic_now = _final_bic_raw + 10.0 * _final_pvinfo["n_insig"] if np.isfinite(_final_bic_raw) else _final_bic_raw
     _final_rmse_now = float(metrics_test["rmse"])
     if np.isfinite(_bench_bic_now) and np.isfinite(_bench_rmse_now):
         _fails_now = not ((_final_bic_now < _bench_bic_now) and (_final_rmse_now < _bench_rmse_now))
@@ -5303,12 +5313,16 @@ def main() -> None:
 
             _pred_test_try = _predict(df_test_final, _fit_try)
             _rmse_try = float(_metrics(y_test_rescue, _pred_test_try)["rmse"])
-            _bic_try = float(getattr(_fit_try.result, "bic", np.nan))
+            _bic_raw = float(getattr(_fit_try.result, "bic", np.nan))
+            _pvinfo = _pvalue_penalty_stats(_fit_try, p_threshold=0.05)
+            _bic_try = _bic_raw + 10.0 * _pvinfo["n_insig"] if np.isfinite(_bic_raw) else _bic_raw
             _rescue_pool.append(
                 {
                     "fit": _fit_try,
                     "rmse": _rmse_try,
                     "bic": _bic_try,
+                    "bic_raw": _bic_raw,
+                    "n_insig": _pvinfo["n_insig"],
                     "upper": _up,
                     "lower": _lo,
                     "family": _fam,
@@ -5366,8 +5380,10 @@ def main() -> None:
             "Test R2":         round(metrics_test["r2"], 4),
         },
     ])
+    _final_n_insig = _pvalue_penalty_stats(final_fit, p_threshold=0.05) if final_fit is not None else {"n_insig": 0}
     print("\n  BENCHMARK VS HIERARCHICAL CMF:")
     print(bench_compare_df.to_string(index=False))
+    print(f"  Proposed model N Insignificant variables (p>0.05): {_final_n_insig['n_insig']}")
 
     # Enforce required final dominance over benchmark on both metrics.
     final_bic = float(getattr(final_fit.result, "bic", np.nan))
@@ -5577,7 +5593,8 @@ def main() -> None:
 
             print("\n" + "="*72)
             print("  RANDOM-PARAMETERS NB2 — FINAL COEFFICIENTS")
-            print(f"  LL={rp_ll:.2f}   BIC={rp_bic:.2f}")
+            _rp_pvinfo = _pvalue_penalty_stats(final_fit, p_threshold=0.05) if final_fit is not None else {"n_insig": 0}
+            print(f"  LL={rp_ll:.2f}   BIC={rp_bic:.2f}   N Insig (p>0.05)={_rp_pvinfo['n_insig']}")
             print("="*72)
             print(coef_str)
             if corr_str:
@@ -6032,10 +6049,19 @@ def main() -> None:
 
     # Side-by-side coefficient table: literature benchmark vs proposed model,
     # including random-parameter distributions and coefficients.
+    # Fit the full literature benchmark with random parameters for the comparison.
+    benchmark_mc = _fit_literature_benchmark_with_metacount(
+        df_trainval_raw=df_trainval_raw,
+        y_col=args.y_col,
+        aadt_col=args.aadt_col,
+        offset_col=offset_col,
+        rp_draws=int(args.rp_draws),
+    )
     coef_compare_df = _build_literature_vs_proposed_coef_table(
         coef_df=coef_df,
         benchmark_fit=bench.get("fitted"),
         random_params_result=jax_result,
+        benchmark_coef_df=benchmark_mc.get("coef_df") if benchmark_mc is not None else None,
     )
     if not coef_compare_df.empty:
         (output_dir / "literature_vs_proposed_coefficients.csv").write_text(
@@ -6155,14 +6181,7 @@ def main() -> None:
     _print_readable_model(final_fit, scaler_trainval, binary_vars,
                           output_dir / "model_summary_readable.txt")
 
-    # MetaCount re-estimation of the user-specified benchmark structure.
-    benchmark_mc = _fit_literature_benchmark_with_metacount(
-        df_trainval_raw=df_trainval_raw,
-        y_col=args.y_col,
-        aadt_col=args.aadt_col,
-        offset_col=offset_col,
-        rp_draws=int(args.rp_draws),
-    )
+    # Save benchmark Metacount coefficients to file (model already fit above).
     if benchmark_mc is not None:
         bm_df = benchmark_mc.get("coef_df", pd.DataFrame())
         if isinstance(bm_df, pd.DataFrame) and not bm_df.empty:
@@ -6198,8 +6217,10 @@ def main() -> None:
         rp_cm = jax_result.get("corr_matrix_str", "")
         print("\n" + "="*70)
         print("  FINAL MODEL: RANDOM-PARAMETERS NB2 (extends fixed-effects spec)")
+        _rp_pvinfo2 = _pvalue_penalty_stats(final_fit, p_threshold=0.05) if final_fit is not None else {"n_insig": 0}
         print(f"  LL={jax_result.get('loglik', float('nan')):.2f}   "
-              f"BIC={jax_result.get('bic', float('nan')):.2f}")
+              f"BIC={jax_result.get('bic', float('nan')):.2f}   "
+              f"N Insig (p>0.05)={_rp_pvinfo2['n_insig']}")
         print("="*70)
         print("  Column key:  Fixed = same for all segments")
         print("               Random-Ind = population Mean +/- SD (site heterogeneity)")
