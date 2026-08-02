@@ -496,6 +496,26 @@ class StructureEvaluatorLC(StructureEvaluator):
                     ]
                     class_var_sets[drop_class] = class_var_sets[drop_class] - {var}
 
+            # ── Force membership uniqueness across classes ──────────
+            # When all non-reference classes share identical membership
+            # variable sets, deterministically differentiate them to
+            # avoid a constant class-probability model.
+            if struct_lc > 1 and class_membership and len(class_membership) >= 2:
+                mem_var_sets = [frozenset(cm) for cm in class_membership]
+                if mem_var_sets[0] and all(s == mem_var_sets[0] for s in mem_var_sets[1:]):
+                    eligible = sorted(mem_var_sets[0])
+                    n_diff = min(2, len(eligible))
+                    for d in range(n_diff):
+                        avail = sorted(set(eligible) & mem_var_sets[0])
+                        if not avail:
+                            break
+                        var = avail[int(rng.integers(len(avail)))]
+                        drop_class = (d + int(rng.integers(len(class_membership)))) % len(class_membership)
+                        class_membership[drop_class] = [
+                            v for v in class_membership[drop_class] if v != var
+                        ]
+                        mem_var_sets[drop_class] = mem_var_sets[drop_class] - {var}
+
         spec = {
             "fixed_terms":      fixed,
             "rdm_terms":        rdm_ind,
