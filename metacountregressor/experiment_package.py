@@ -131,6 +131,7 @@ try:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
+        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -170,6 +171,7 @@ except ImportError:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
+        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -712,7 +714,8 @@ class StructureEvaluatorLC(StructureEvaluator):
                 K_base    = build_param_index(spec_1)["total_params"]
 
                 # Pre-build spec_c and pindex for per-class sizes
-                spec_c = replace(spec, latent_classes=C)
+                spec_c = replace(spec, latent_classes=C,
+                                 l2_penalty=0.1)
                 pindex_c = build_param_index(spec_c)
                 _class_K_base = list(pindex_c.get("class_K_base", [K_base] * C))
 
@@ -749,9 +752,9 @@ class StructureEvaluatorLC(StructureEvaluator):
                 except Exception:
                     params_em = init_params
 
-                # Step 4 — MLE polish (JAX-native optimizer, regularised if l2_penalty > 0)
+                # Step 4 — MLE polish (JAX-native optimizer with L2 penalty)
                 polish = LBFGS(
-                    fun=lambda p: mixed_model_loglik(p, data_train, spec_c),
+                    fun=lambda p: mixed_model_loglik_reg(p, data_train, spec_c),
                     maxiter=500,
                 )
                 result_c = polish.run(jnp.array(params_em))

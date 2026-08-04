@@ -349,6 +349,74 @@ def _build_scaler_stats(df: pd.DataFrame, columns: list[str]) -> dict[str, tuple
     return stats
 
 
+def _column_skewness(series: pd.Series) -> float:
+    try:
+        from scipy.stats import skew as _scipy_skew
+    except ImportError:
+        return 0.0
+    values = pd.to_numeric(series, errors="coerce").dropna().to_numpy(dtype=float)
+    if len(values) < 3:
+        return 0.0
+    std = float(np.nanstd(values))
+    if std < 1e-12:
+        return 0.0
+    try:
+        return float(_scipy_skew(values))
+    except Exception:
+        return 0.0
+
+
+def _detect_skewed_columns(
+    df: pd.DataFrame, columns: list[str], binary_vars: set[str],
+    skew_threshold: float = 1.5,
+) -> dict[str, str]:
+    """Return {column_name: transform_method} for each highly skewed predictor.
+    Only considers continuous non-binary columns where the vast majority of
+    values are non-negative."""
+    transforms: dict[str, str] = {}
+    for col in columns:
+        if col in binary_vars:
+            continue
+        series = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(series) < 10:
+            continue
+        if _is_binary(series):
+            continue
+        # Only transform if the column is overwhelmingly non-negative
+        neg_frac = float((series < 0).mean())
+        if neg_frac > 0.05:
+            continue
+        skew = _column_skewness(series)
+        if abs(skew) < skew_threshold:
+            continue
+        # Right-skewed, positive-origin: log1p is the safest default
+        transforms[col] = "log1p"
+    return transforms
+
+
+def _apply_transforms(
+    df: pd.DataFrame, transform_map: dict[str, str]
+) -> pd.DataFrame:
+    """Apply per-column transformations in-place (returns a new DataFrame)."""
+    out = df.copy()
+    for col, method in transform_map.items():
+        if col not in out.columns:
+            continue
+        values = pd.to_numeric(out[col], errors="coerce").to_numpy(dtype=float)
+        if method == "log1p":
+            min_val = float(np.nanmin(values)) if len(values) > 0 else 0.0
+            if min_val < 0:
+                shift = abs(min_val) + 1e-6
+                transformed = np.log1p(values + shift)
+            else:
+                transformed = np.log1p(np.clip(values, 0, None))
+        else:
+            continue
+        if np.all(np.isfinite(transformed)):
+            out[col] = transformed
+    return out
+
+
 def _apply_standardization(df: pd.DataFrame, stats: dict[str, tuple[float, float]]) -> pd.DataFrame:
     out = df.copy()
     for col, (mu, sd) in stats.items():
@@ -1316,7 +1384,8 @@ def _pvalue_penalty_stats(fitted: FittedModel, p_threshold: float = 0.05) -> dic
             if p > p_threshold:
                 n_insig += 1
         else:
-            pvals[name] = float("nan")
+            # Non-identifiable SE: penalise as fully insignificant (p=1)
+            pvals[name] = 1.0
             n_insig += 1
     return {"n_insig": n_insig, "pvals": pvals}
 
@@ -3145,7 +3214,14 @@ def _jax_random_params_refit(
         # Fit with SLSQP from the FE warm start
         model_rp._use_slsqp = True
         model_rp._init_params = init_rp
-        result_rp = model_rp.fit(use_prefit=False, use_continuous_de=False)
+        try:
+            result_rp = model_rp.fit(use_prefit=False, use_continuous_de=False)
+        except Exception:
+            model_rp._use_slsqp = False
+            try:
+                result_rp = model_rp.fit(use_prefit=False, use_continuous_de=False)
+            except Exception:
+                return None
         params_vec = np.asarray(result_rp.params, dtype=float)
 
         from main_hpc import mixed_model_loglik as _mml, compute_standard_errors as _compute_se, compute_regularized_estimates as _parte_cre
@@ -3287,7 +3363,10 @@ def _fit_literature_benchmark_with_metacount(
     offset_col: str | None,
     rp_draws: int,
 ) -> dict[str, Any] | None:
-    """Fit the user-specified Ex16-3 benchmark structure with MetaCount's mixed NB2 engine."""
+    """Fit Behara's Ex16-3 specification using MetaCount's NB2 random-parameters
+    engine.  Uses the same variable lists as the literature model but estimates
+    all coefficients from scratch via ExperimentBuilder so the BIC and SEs
+    are on a comparable footing with the search-selected specifications."""
     import sys as _sys
 
     _pkg_root = str(Path(__file__).resolve().parent.parent)
@@ -5238,10 +5317,19 @@ def main() -> None:
     df_val_raw = df.iloc[val_idx].reset_index(drop=True)
     df_test_raw = df.iloc[test_idx].reset_index(drop=True)
 
-    scaler_train = _build_scaler_stats(df_train_raw, continuous_vars)
-    df_train = _apply_standardization(df_train_raw, scaler_train)
-    df_val = _apply_standardization(df_val_raw, scaler_train)
-    df_test = _apply_standardization(df_test_raw, scaler_train)
+    # ── Transform highly skewed predictors before standardisation ───────
+    transform_map = _detect_skewed_columns(df_train_raw, continuous_vars, binary_vars)
+    if transform_map:
+        print(f"  Auto-transform applied to {len(transform_map)} skewed column(s): "
+              f"{dict(transform_map)}")
+    df_train_tx = _apply_transforms(df_train_raw, transform_map)
+    df_val_tx   = _apply_transforms(df_val_raw,   transform_map)
+    df_test_tx  = _apply_transforms(df_test_raw,  transform_map)
+
+    scaler_train = _build_scaler_stats(df_train_tx, continuous_vars)
+    df_train = _apply_standardization(df_train_tx, scaler_train)
+    df_val = _apply_standardization(df_val_tx, scaler_train)
+    df_test = _apply_standardization(df_test_tx, scaler_train)
 
     model_name_map = {v: (v if v in binary_vars else f"{v}_Z") for v in set(upper_raw + lower_raw)}
     upper_model_vars = [model_name_map[v] for v in upper_raw]
@@ -5343,9 +5431,14 @@ def main() -> None:
 
     # Final refit on train+validation, then test on held-out test split.
     df_trainval_raw = pd.concat([df_train_raw, df_val_raw], axis=0, ignore_index=True)
-    scaler_trainval = _build_scaler_stats(df_trainval_raw, continuous_vars)
-    df_trainval = _apply_standardization(df_trainval_raw, scaler_trainval)
-    df_test_final = _apply_standardization(df_test_raw, scaler_trainval)
+    # Re-detect transforms on the combined train+val (may pick up slightly
+    # different thresholds but applies the same method: log1p for right-skewed).
+    transform_map_tv = _detect_skewed_columns(df_trainval_raw, continuous_vars, binary_vars)
+    df_trainval_tx  = _apply_transforms(df_trainval_raw, transform_map_tv)
+    df_test_final_tx = _apply_transforms(df_test_raw,      transform_map_tv)
+    scaler_trainval = _build_scaler_stats(df_trainval_tx, continuous_vars)
+    df_trainval = _apply_standardization(df_trainval_tx, scaler_trainval)
+    df_test_final = _apply_standardization(df_test_final_tx, scaler_trainval)
 
     final_fit = _fit_model(
         df_train=df_trainval,
@@ -6209,9 +6302,10 @@ def main() -> None:
         )
     (output_dir / "harmony_search_summary.md").write_text(harmony_summary_md, encoding="utf-8")
 
-    # Side-by-side coefficient table: literature benchmark vs proposed model,
-    # including random-parameter distributions and coefficients.
-    # Fit the full literature benchmark with random parameters for the comparison.
+    # Side-by-side coefficient table: Behara literature benchmark fit with
+    # metacountregressor's NB2 random-parameters engine vs the search-selected
+    # proposed model.  This lets us observe what BIC Behara's specification
+    # achieves when estimated through our pipeline.
     benchmark_mc = _fit_literature_benchmark_with_metacount(
         df_trainval_raw=df_trainval_raw,
         y_col=args.y_col,

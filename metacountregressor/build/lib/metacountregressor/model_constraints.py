@@ -43,7 +43,7 @@ _OUTCOME_ROLES    = [0, 1, 2, 3, 4, 5, 6]   # roles that affect outcome eq
 _RANDOM_ROLES     = [2, 3, 4]
 _MEMBERSHIP_ROLES = [7, 8]
 
-_DIST_OPTIONS = ["normal", "lognormal", "triangular", "uniform"]
+_DIST_OPTIONS = ["normal", "lognormal", "negative_lognormal", "triangular", "uniform"]
 
 _ROLE_LABELS = {
     0: "Excluded",

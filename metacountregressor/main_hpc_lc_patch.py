@@ -1746,7 +1746,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
             _spec_c = replace(_spec_c, model=_model_c, latent_classes=1)
             _base_idx_c = build_base_index(_spec_c, model=_model_c)
 
-            print(f"\n{'#' * 20}  CLASS {c+1}  (pi = {pi[c]:.4f})  "
+            print(f"\n{'#' * 20}  CLASS {c+1}  (pi = {float(pi_mean[c]):.4f})  "
                   f"[{_model_c.upper()}]  {'#' * 20}\n")
             dummy       = DummyRes()
             dummy.params = _theta_c
@@ -1769,48 +1769,55 @@ def print_summary(result, objective, data, spec: ModelSpec,
                     print(f"  param[{i}] = {float(val):+.6f}")
                 print()
 
-        # ── Membership gamma (per-class) ──────────────────────────
-        print("\n" + "=" * 65)
-        print("   CLASS-MEMBERSHIP EQUATION")
-        print("   log[pi_c(n) / pi_1(n)] = g_c0  +  sum_k g_ck * z_nk")
-        print("   (Class 1 is the reference; all coefficients vs class 1)")
-        print("=" * 65)
+# ── Membership gamma (per-class) ──────────────────────────
+        # This whole block is display-only.  Wrap it so that any
+        # (e.g. formatting) failure cannot abort the fit — the fitted
+        # model and its quality metrics are reported regardless.
+        try:
+            print("\n" + "=" * 65)
+            print("   CLASS-MEMBERSHIP EQUATION")
+            print("   log[pi_c(n) / pi_1(n)] = g_c0  +  sum_k g_ck * z_nk")
+            print("   (Class 1 is the reference; all coefficients vs class 1)")
+            print("=" * 65)
 
-        for _c in range(C - 1):
-            class_num = _c + 2
-            idx_tup = cm_idx[_c]
-            Kc = len(idx_tup)
-            if Kc > 0:
-                col_names = [spec.membership_names[j] for j in idx_tup if j < len(spec.membership_names)]
-            else:
-                col_names = []
-            col_names_full = ["(intercept)"] + col_names
-            gamma_c = gamma_list[_c]
-            se_c    = se_gamma_list[_c]
+            for _c in range(C - 1):
+                class_num = _c + 2
+                idx_tup   = cm_idx[_c]
+                Kc        = len(idx_tup)
+                if Kc > 0:
+                    col_names = [spec.membership_names[j] for j in idx_tup if j < len(spec.membership_names)]
+                else:
+                    col_names = []
+                col_names_full = ["(intercept)"] + col_names
+                gamma_c = np.ravel(gamma_list[_c])
+                se_c    = np.ravel(se_gamma_list[_c])
 
-            print(f"\n  --- Class {class_num} vs Class 1 ---")
-            print(f"  {'Parameter':>18}  {'Estimate':>10}  {'SE':>8}  {'z':>7}  {'p':>8}")
-            print("  " + "-" * 55)
-            for k, cn in enumerate(col_names_full):
-                g     = gamma_c[k]
-                sg    = se_c[k]
-                z_val = g / sg if sg > 1e-12 else 0.0
-                p_val = 2 * (1 - scipy_stats.norm.cdf(abs(z_val)))
-                stars = "***" if p_val < 0.01 else "**" if p_val < 0.05 \
-                        else "*" if p_val < 0.10 else ""
-                print(f"  {cn:>18}  {g:>+10.4f}  {sg:>8.4f}  {z_val:>7.3f}  {p_val:>7.4f}{' '+stars}")
+                print(f"\n  --- Class {class_num} vs Class 1 ---")
+                print(f"  {'Parameter':>18}  {'Estimate':>10}  {'SE':>8}  {'z':>7}  {'p':>8}")
+                print("  " + "-" * 55)
+                for k, cn in enumerate(col_names_full):
+                    g     = float(gamma_c[k]) if k < len(gamma_c) else float("nan")
+                    sg    = float(se_c[k])    if k < len(se_c)    else float("nan")
+                    z_val = float(g / sg) if sg > 1e-12 else 0.0
+                    p_val = float(2 * (1 - scipy_stats.norm.cdf(abs(z_val))))
+                    stars = "***" if p_val < 0.01 else "**" if p_val < 0.05 \
+                            else "*" if p_val < 0.10 else ""
+                    print(f"  {cn:>18}  {g:>+10.4f}  {sg:>8.4f}  {z_val:>7.3f}  {p_val:>7.4f}{' '+stars}")
 
-        print(f"\n  NOTE: g_c0 is the class-c log-odds intercept vs class 1.")
-        if K_mem > 0:
-            print("  g_ck > 0: higher value of z_k -> higher probability of class c+1.")
+            print(f"\n  NOTE: g_c0 is the class-c log-odds intercept vs class 1.")
+            if K_mem > 0:
+                print("  g_ck > 0: higher value of z_k -> higher probability of class c+1.")
 
-        # ── Class shares ─────────────────────────────────────────
-        print("\n" + "-" * 65)
-        print("  MARGINAL CLASS PROBABILITIES (at sample-mean covariates)\n")
-        for c in range(C):
-            print(f"  pi_{c+1} = {pi_mean[c]:.6f}")
+            # ── Class shares ─────────────────────────────────────────
+            print("\n" + "-" * 65)
+            print("  MARGINAL CLASS PROBABILITIES (at sample-mean covariates)\n")
+            for c in range(C):
+                print(f"  pi_{c+1} = {float(pi_mean[c]):.6f}")
 
-        print("\n" + "=" * 65 + "\n")
+            print("\n" + "=" * 65 + "\n")
+        except Exception as exc:
+            print(f"\n  [fitness error] membership summary: {exc}")
+            print("  (model still fitted; continuing with raw results)")
 
         # ── Build summary dict for LC models ─────────────────────
         lc_ll = float(-objective(params_np))
