@@ -248,6 +248,181 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
     return -jnp.sum(loglik_i)
 
 
+# ─────────────────────────────────────────────────────────────
+# EXPONENTIAL-ELASTICITY FORM  (paper Eq 37-39)
+#   Np = A(z1) * AADT^{B(z2)}
+#   log A(z1) = alpha0 + sum_k alpha_k * X_ki
+#   B(z2)     = beta0 * exp( sum_j beta_j * z_ji )        [beta0 = exp(raw_beta0) > 0]
+# so   log_mu_i = log A(z1) + B(z2) * log(AADT_i)
+#
+# Hierarchical extension keeps per-variable random effects on the
+# Component A covariates and on the Component B exponent covariates
+# (simulation-based MSL via _mixed_ll_exp).
+# ─────────────────────────────────────────────────────────────
+
+def count_params_exp(rand_baseline, rand_local, model):
+    n = 1 + len(rand_baseline) + sum(rand_baseline)   # alpha block
+    n += 1 + len(rand_local) + sum(rand_local)        # raw_beta0 + beta/exponent block
+    if model == 'nb':
+        n += 1
+    return n
+
+
+def _param_labels_exp(selected_baseline, selected_local,
+                      rand_baseline, rand_local, model):
+    labels = ['alpha0']
+    for k, v in enumerate(selected_baseline):
+        labels.append(f'alpha[{v}]')
+        if rand_baseline[k]:
+            labels.append(f'sigma_alpha[{v}]')
+    labels.append('log_beta0')
+    for k, v in enumerate(selected_local):
+        labels.append(f'beta[{v}]')
+        if rand_local[k]:
+            labels.append(f'sigma_beta[{v}]')
+    if model == 'nb':
+        labels.append('log_theta')
+    return labels
+
+
+@partial(jax.jit, static_argnames=('rand_baseline', 'rand_local', 'model'))
+def _fixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
+                  rand_baseline, rand_local, model):
+    """Closed-form log-likelihood for the exp-elasticity form (all fixed)."""
+    k_base = baseline_mat.shape[1]
+    k_loc  = locals_mat.shape[1]
+
+    idx     = 0
+    alpha0  = params[idx]; idx += 1
+    alphas  = []
+    for k in range(k_base):
+        alphas.append(params[idx]); idx += 1
+    alpha   = jnp.stack(alphas) if k_base > 0 else jnp.zeros(0)
+
+    raw_beta0 = params[idx]; idx += 1
+    beta0   = jnp.exp(raw_beta0)                      # base elasticity > 0
+    betas   = []
+    for k in range(k_loc):
+        betas.append(params[idx]); idx += 1
+    beta    = jnp.stack(betas) if k_loc > 0 else jnp.zeros(0)
+
+    log_A = alpha0 + (baseline_mat @ alpha if k_base > 0 else 0.0)
+    log_A = jnp.clip(log_A, -20.0, 20.0)
+    expo  = locals_mat @ beta if k_loc > 0 else 0.0
+    B     = beta0 * jnp.exp(expo)
+    log_mu = jnp.clip(log_A + B * jnp.log(AADT), -30.0, 30.0)
+    mu     = jnp.exp(log_mu)
+
+    if model == 'poisson':
+        ll = y * log_mu - mu - gammaln(y + 1.0)
+    else:
+        log_theta = params[idx]
+        theta = jnp.exp(log_theta)
+        ll = (  gammaln(y + 1.0/theta)
+              - gammaln(1.0/theta)
+              - gammaln(y + 1.0)
+              + y * (log_mu + jnp.log(theta))
+              - (y + 1.0/theta) * jnp.log(1.0 + theta * mu))
+
+    return -jnp.sum(ll)
+
+
+@partial(jax.jit, static_argnames=('rand_baseline', 'rand_local', 'model'))
+def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
+                  rand_baseline, rand_local, draws, model):
+    """
+    Simulation-based log-likelihood for the exp-elasticity form with
+    per-variable random effects (hierarchical, MSL).
+    draws : (R, N, n_rand) standard normal, pre-generated.
+    """
+    R      = draws.shape[0]
+    N      = len(y)
+    k_base = baseline_mat.shape[1]
+    k_loc  = locals_mat.shape[1]
+
+    idx       = 0
+    alpha0    = params[idx]; idx += 1
+    alpha       = []
+    sigma_alpha = []
+    for k in range(k_base):
+        alpha.append(params[idx]); idx += 1
+        if rand_baseline[k]:
+            sigma_alpha.append(params[idx]); idx += 1
+        else:
+            sigma_alpha.append(0.0)
+
+    raw_beta0 = params[idx]; idx += 1
+    beta0    = jnp.exp(raw_beta0)
+    beta       = []
+    sigma_beta = []
+    for k in range(k_loc):
+        beta.append(params[idx]); idx += 1
+        if rand_local[k]:
+            sigma_beta.append(params[idx]); idx += 1
+        else:
+            sigma_beta.append(0.0)
+
+    if model == 'nb':
+        theta = jnp.exp(params[idx])
+
+    log_AADT = jnp.log(AADT)            # (N,)
+
+    # ── Component A  —  shape (R, N) ─────────────────────────
+    log_A    = jnp.full((R, N), alpha0)
+    draw_col = 0
+    for k in range(k_base):
+        xk = baseline_mat[:, k][None, :]    # (1, N)
+        if rand_baseline[k]:
+            u = draws[:, :, draw_col]       # (R, N)
+            log_A = log_A + (alpha[k] + sigma_alpha[k] * u) * xk
+            draw_col += 1
+        else:
+            log_A = log_A + alpha[k] * xk
+    log_A = jnp.clip(log_A, -20.0, 20.0)
+
+    # ── Component B  —  exponential elasticity, shape (R, N) ─
+    expo    = jnp.zeros((R, N))
+    for k in range(k_loc):
+        xk = locals_mat[:, k][None, :]
+        if rand_local[k]:
+            v = draws[:, :, draw_col]
+            expo = expo + (beta[k] + sigma_beta[k] * v) * xk
+            draw_col += 1
+        else:
+            expo = expo + beta[k] * xk
+    B = beta0 * jnp.exp(expo)
+
+    log_mu = jnp.clip(log_A + B * log_AADT[None, :], -30.0, 30.0)
+    mu     = jnp.exp(log_mu)
+
+    if model == 'poisson':
+        sim_ll = y[None, :] * log_mu - mu - gammaln(y + 1.0)[None, :]
+    else:
+        sim_ll = (  gammaln(y[None, :] + 1.0/theta)
+                  - gammaln(1.0/theta)
+                  - gammaln(y[None, :] + 1.0)
+                  + y[None, :] * (log_mu + jnp.log(theta))
+                  - (y[None, :] + 1.0/theta) * jnp.log(1.0 + theta * mu))
+
+    loglik_i = logsumexp(sim_ll, axis=0) - jnp.log(R)
+    return -jnp.sum(loglik_i)
+
+
+def make_objective_exp(y_jax, AADT_jax, baseline_jax, locals_jax,
+                       rand_baseline, rand_local, draws, R, model):
+    """Return the JAX objective for the exp-elasticity form."""
+    rand_baseline_t = tuple(rand_baseline)
+    rand_local_t    = tuple(rand_local)
+    simulate        = any(rand_baseline_t) or any(rand_local_t)
+    if not simulate:
+        return lambda p: _fixed_ll_exp(
+            p, y_jax, AADT_jax, baseline_jax, locals_jax,
+            rand_baseline_t, rand_local_t, model)
+    return lambda p: _mixed_ll_exp(
+        p, y_jax, AADT_jax, baseline_jax, locals_jax,
+        rand_baseline_t, rand_local_t, draws, model)
+
+
 def spf_loglike(params, y, AADT, baseline_mat, locals_mat,
                 rand_baseline, rand_local, draws=None, R=200, model='poisson'):
     """
@@ -356,6 +531,7 @@ def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
                 np.asarray(p_star, dtype=float), H, variant="k3d3"
             )
             se = pr.se_parte.copy()
+            cov = np.full((len(p_star), len(p_star)), np.nan)  # covariance not computed with PARTE
         except Exception:
             # Fallback: plain ridge-regularized Hessian inversion
             eigvals, eigvecs = np.linalg.eigh(H)
@@ -371,8 +547,11 @@ def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
                 n = len(p_star)
                 cov = np.full((n, n), np.nan)
                 se  = np.full(n, np.nan)
+    except np.linalg.LinAlgError:
+        print("  WARNING: Hessian singular ─ returning NaN SEs.")
         n = len(p_star)
-        cov = np.full((n, n), np.nan)  # covariance not computed with PARTE
+        cov = np.full((n, n), np.nan)
+        se  = np.full(n, np.nan)
 
     return se, cov
 
@@ -696,7 +875,7 @@ def print_summary_table(df):
         param = str(row["Parameter"])[:30]
         est   = _fmt(row["Estimate"], 12, True)
         se    = _fmt(row["Std.Err"],   11, False)
-        z     = _fmt(row["z-value"],   10, True)
+        z     = _fmt(row["z"],   10, True)
         pv    = _pval_fmt(row["p-value"])
         st    = stars(row["p-value"])
         print(f"  {param:<30} {est} {se} {z} {pv}{st}")

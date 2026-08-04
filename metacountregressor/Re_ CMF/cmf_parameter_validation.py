@@ -4,7 +4,7 @@ CMF Parameter Validation - Python Recreation of R Analysis
 This script:
 1. Loads the Washington data (Ex-16-3.csv)
 2. Applies reported hierarchical parameters (from Parameters_hierarchical_models.csv)
-3. Computes predictions using the CMF formula: Np = A * exp(B * log(AADT))
+3. Computes predictions using the CMF formula: Np = A * AADT^(B * exp(...))
 4. Creates plots similar to the R geom_smooth visualization
 5. Validates that Python and R give same results
 
@@ -93,10 +93,10 @@ def compute_hierarchical_predictions(df, params_hier):
     """
     Compute hierarchical model predictions.
 
-    Formula (from R script):
+    Formula (from R script / paper Eq 37-39):
       A_base = exp(Xa @ A_coeffs)
       B_base = exp(SLOPE_FLAT * SLOPE_coef)
-      Np = A_base * (AADTmaj)^(b0 * B_base)
+      Np = A_base * (AADT)^(b0 * B_base)        # base is AADT (exposure), not log(AADT)
     """
     print("\n[3] Computing hierarchical predictions...")
 
@@ -128,9 +128,11 @@ def compute_hierarchical_predictions(df, params_hier):
     # B_base = exp(SLOPE_FLAT * SLOPE_parameter)
     B_base = np.exp(df['SLOPE_FLAT'].values * slope_param)
 
-    # Final: Np = A_base * (AADTmaj)^(b0 * B_base)
-    # AADTmaj is already log(AADT), so we use it as exponent base
-    Np = A_base * np.power(df['AADTmaj'].values, b0_param * B_base)
+    # Final: Np = A_base * (AADT)^(b0 * B_base)
+    # Paper form (Eq 37-39): Np = A(z1) * x^{B(z2)} with x = traffic exposure (AADT),
+    # so the base of the power is AADT itself, NOT log(AADT).
+    AADT = np.maximum(df['AADT'].to_numpy(dtype=float), 1e-12)
+    Np = A_base * np.power(AADT, b0_param * B_base)
 
     # Handle any infinite or NaN values
     Np = np.where(np.isfinite(Np), Np, np.nan)

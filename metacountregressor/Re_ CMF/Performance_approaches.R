@@ -43,7 +43,8 @@ B <- as.matrix(hierarchical_parameters$parameter[8:9])
 B_base <- exp(washington.data$SLOPE_FLAT * B[2])
 
 # Fitted
-Np <- A_base * washington.data$AADTmaj**(B[1] * B_base)
+# Paper form (Eq 37-39): Np = A(z1) * x^{B(z2)} with x = AADT (exposure), base is AADT not log(AADT)
+Np <- A_base * washington.data$AADT**(B[1] * B_base)
 hist(Np, "fd")
 
 washington.data$hierarchical.vals <- Np
@@ -106,7 +107,7 @@ B  <- as.matrix(hierarchical_parameters$parameter[5:6])
 Xb <- as.matrix(qld.hv %>% select(const, RS))
 B_base <- exp(B[2] * qld.hv$RS)
 
-Np <- A_base * qld.hv$AADTmaj ** (B[1] * B_base)  
+Np <- A_base * qld.hv$AADT ** (B[1] * B_base)  
 qld.hv$fitted_hierarchical <- Np
   
 # Benchmark
@@ -196,7 +197,7 @@ A_base <- exp(Xa %*% A)
 B  <- as.matrix(hierarchical_parameters$parameter[6:7])
 B_base <- exp(maine.data$dummy_winter * B[2])
 
-Np <- A_base * maine.data$AADTmaj**(B[1] * B_base)
+Np <- A_base * maine.data$monthly_AADT**(B[1] * B_base)
 maine.data$pred_jerarquico <- Np
 
 literature_parameters <- parameters %>% filter(model == 'literature') %>% filter(analysis == 'Maine')

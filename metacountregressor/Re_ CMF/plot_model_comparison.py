@@ -147,7 +147,7 @@ def _summary(label, obs, pred):
 #              TANGENT_LENGTH=0.1014, INTERCHANGES=0.4192,
 #              MXGRDIFF=0.0769, SHOULDER_WIDTH=−0.4338
 #   B  params: b0=5.3944, SLOPE_FLAT=−0.0769   ← SLOPE = −0.0769, not −0.0076
-#   Formula: Np = exp(Xa @ A) × log(AADT)^(b0 × exp(SLOPE_FLAT × −0.0769))
+#   Formula: Np = exp(Xa @ A) × AADT^(b0 × exp(SLOPE_FLAT × −0.0769))   [Eq 37-39: base = AADT]
 
 WASH_BMARK_A = np.array([2.81, -0.41, -0.05, -0.01, 2.70, 0.15, -0.16, -0.18])
 WASH_HIER_A  = np.array([-10.3774, -0.0534, 0.0954, 0.1014, 0.4192, 0.0769, -0.4338])
@@ -177,7 +177,7 @@ def plot_washington():
               "INTECHAG", "MXGRDIFF", "SHOULDER_WIDTH"]].astype(float).values
     A_base = np.exp(Xa @ WASH_HIER_A)
     B_base = np.exp(df["SLOPE_FLAT"].values * WASH_HIER_slope)
-    hier   = A_base * np.power(df["AADTmaj"].values, WASH_HIER_b0 * B_base)
+    hier   = A_base * np.power(df["AADT"].values.astype(float), WASH_HIER_b0 * B_base)
 
     obs = df["FREQ"].values.astype(float)
     la  = df["AADTmaj"].values
@@ -202,7 +202,7 @@ def plot_washington():
 # Hierarchical:
 #   A params: a0=−10.859, Total_width=−0.2758, RS_HS=1.378, LNMCV=0.9219
 #   B params: b0=2.1655, RS=0.1179
-#   Formula: Np = exp(Xa @ A) × log(AADT)^(b0 × exp(RS × 0.1179))
+#   Formula: Np = exp(Xa @ A) × AADT^(b0 × exp(RS × 0.1179))
 
 QLD_BMARK_A  = np.array([-12.3962, -1.2646, 0.5442, 2.2823])
 QLD_HIER_A   = np.array([-10.8590, -0.2758, 1.3780, 0.9219])
@@ -230,7 +230,7 @@ def plot_queensland():
     # Hierarchical (Table 2)
     Xa   = df[["const", "Total_width", "RS_HS", "LNMCV"]].astype(float).values
     hier = (np.exp(Xa @ QLD_HIER_A) *
-            np.power(df["AADTmaj"].values,
+            np.power(df["AADT"].values.astype(float),
                      QLD_HIER_b0 * np.exp(df["RS"].values * QLD_HIER_rs)))
 
     obs = df["Headon"].astype(float).values
@@ -259,7 +259,7 @@ def plot_queensland():
 #   A params: a0=−57.2378, speed=0.4949, right_shoulder_width=−0.0234,
 #             DP01=0.0440, DX32=0.0455
 #   B params: b0=7.5549, dummy_winter=0.2350
-#   Formula: Np = exp(Xa @ A) × log(AADT)^(b0 × exp(dummy_winter × 0.2350))
+#   Formula: Np = exp(Xa @ A) × AADT^(b0 × exp(dummy_winter × 0.2350))
 
 MAINE_BMARK_A = np.array([-10.36, 0.805, 0.955, 0.030, -0.165, 0.204])
 MAINE_HIER_A  = np.array([-57.2378, 0.4949, -0.0234, 0.0440, 0.0455])
@@ -285,7 +285,7 @@ def plot_maine():
     Xa   = df[["const", "speed", "right_shoulder_width",
                 "DP01", "DX32"]].astype(float).values
     hier = (np.exp(Xa @ MAINE_HIER_A) *
-            np.power(df["AADTmaj"].values,
+            np.power(df["monthly_AADT"].values.astype(float),
                      MAINE_HIER_b0 * np.exp(df["dummy_winter"].values * MAINE_HIER_winter)))
 
     obs = df["crashes"].astype(float).values
@@ -324,7 +324,7 @@ def plot_combined():
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     bmark_w = np.exp(df[["const","LOWPRE","GRADEBR","FRICTION","EXPOSE","INTPM","CURVES","HISNOW"]].astype(float).values @ WASH_BMARK_A)
     hier_w  = (np.exp(df[["const","WIDTH_PER_LANE","CURVES","TANGENT","INTECHAG","MXGRDIFF","SHOULDER_WIDTH"]].astype(float).values @ WASH_HIER_A) *
-               np.power(df["AADTmaj"].values, WASH_HIER_b0 * np.exp(df["SLOPE_FLAT"].values * WASH_HIER_slope)))
+               np.power(df["AADT"].values.astype(float), WASH_HIER_b0 * np.exp(df["SLOPE_FLAT"].values * WASH_HIER_slope)))
     obs_w, la_w = df["FREQ"].values.astype(float), df["AADTmaj"].values
 
     # ── Queensland ──
@@ -338,7 +338,7 @@ def plot_combined():
     df2["LNMCV"]       = pd.to_numeric(df2["LNMCV"], errors="coerce").fillna(0)
     bmark_q = np.exp(df2[["const","Nlanes","RS_HS","LNMCV"]].astype(float).values @ QLD_BMARK_A)
     hier_q  = (np.exp(df2[["const","Total_width","RS_HS","LNMCV"]].astype(float).values @ QLD_HIER_A) *
-               np.power(df2["AADTmaj"].values, QLD_HIER_b0 * np.exp(df2["RS"].values * QLD_HIER_rs)))
+               np.power(df2["AADT"].values.astype(float), QLD_HIER_b0 * np.exp(df2["RS"].values * QLD_HIER_rs)))
     obs_q, la_q = df2["Headon"].astype(float).values, df2["AADTmaj"].values
 
     # ── Maine ──
@@ -349,7 +349,7 @@ def plot_combined():
         df3[c] = pd.to_numeric(df3[c], errors="coerce").fillna(0)
     bmark_m = np.exp(df3[["const","AADTmaj","segment_length","speed","right_shoulder_width","curve"]].astype(float).values @ MAINE_BMARK_A)
     hier_m  = (np.exp(df3[["const","speed","right_shoulder_width","DP01","DX32"]].astype(float).values @ MAINE_HIER_A) *
-               np.power(df3["AADTmaj"].values, MAINE_HIER_b0 * np.exp(df3["dummy_winter"].values * MAINE_HIER_winter)))
+               np.power(df3["monthly_AADT"].values.astype(float), MAINE_HIER_b0 * np.exp(df3["dummy_winter"].values * MAINE_HIER_winter)))
     obs_m, la_m = df3["crashes"].astype(float).values, df3["AADTmaj"].values
 
     datasets = [

@@ -61,7 +61,8 @@ def compute_washington_hierarchical(df, params):
 
     A_base = np.exp(np.dot(Xa, A_coefs))
     B_base = np.exp(df['SLOPE_FLAT'].values * slope_param)
-    Np = A_base * np.power(df['AADTmaj'].values, b0 * B_base)
+    # Paper form (Eq 37-39): Np = A(z1) * x^{B(z2)} with x = AADT (exposure).
+    Np = A_base * np.power(df['AADT'].values.astype(float), b0 * B_base)
 
     return np.where(np.isfinite(Np), Np, np.nan)
 
@@ -102,7 +103,8 @@ def compute_maine_hierarchical(df, params):
 
     A_base = np.exp(np.dot(Xa, A_coefs))
     winter_base = np.exp(df['dummy_winter'].fillna(0).values * winter_param)
-    Np = A_base * np.power(df['ln_AADT'].values, b0 * winter_base)
+    # Paper form (Eq 37-39): Np = A(z1) * x^{B(z2)} with x = AADT (exposure).
+    Np = A_base * np.power(df['monthly_AADT'].values.astype(float), b0 * winter_base)
 
     return np.where(np.isfinite(Np), Np, np.nan)
 
