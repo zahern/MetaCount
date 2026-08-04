@@ -347,7 +347,7 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
             # ── Class balance check: penalise extreme imbalance ──
             try:
                 posterior, _, _ = compute_lc_posteriors(params_c, data_train, spec_c)
-                class_props = posterior.mean(axis=0)  # (C,) mean posterior weight
+                class_props = np.asarray(posterior).mean(axis=0)  # (C,) mean posterior weight
                 min_prop = float(class_props.min())
                 # Severe imbalance penalty: if any class < MIN_CLASS_PROP,
                 # add a penalty to BIC proportional to the shortfall.
@@ -357,6 +357,7 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
             except Exception:
                 min_prop = 0.0
                 bic_penalty = 0.0
+                class_props = np.full(C, 1.0 / max(C, 1))
 
             self._last_fit_cache = {
                 "params": params_c,

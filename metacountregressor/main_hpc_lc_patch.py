@@ -1830,7 +1830,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
             "aic":       2 * lc_k - 2 * lc_ll,
             "bic":       lc_k * np.log(lc_n) - 2 * lc_ll,
             "latent_classes": C,
-            "class_probs":    pi.tolist(),
+            "class_probs":    pi_mean.tolist(),
         }
 
     # ── SINGLE-CLASS SUMMARY (delegate to main_hpc's print_summary) ─
