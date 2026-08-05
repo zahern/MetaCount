@@ -176,7 +176,10 @@ class CMFMetaheuristicObjective:
         }
 
     def get_fitness(self, vector, multi=False, verbose=False, max_routine=3):
-        from GA_CMF_AADT_JAX import evaluate_model
+        try:
+            from .GA_CMF_AADT_JAX import evaluate_model
+        except ImportError:
+            from GA_CMF_AADT_JAX import evaluate_model
         vec = np.asarray(vector, dtype=int)
         key = tuple(int(v) for v in vec.tolist())
         self._last_vector = vec

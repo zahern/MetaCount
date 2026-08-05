@@ -3044,10 +3044,9 @@ def _jax_random_params_refit(
     varying-elasticity mechanism) — kept fixed rather than random to avoid
     an under-identified model on top of the random main effects.
 
-    Correlated random parameters (rdm_cor_terms) are intentionally out of
-    scope here — independent random parameters already deliver genuine
-    partial pooling and match the "Random-Ind: Mean = population average;
-    SD = site-to-site variability" interpretation printed by the caller.
+    When ``try_correlated`` is enabled, the selected random terms are placed
+    in the correlated block, which reports population means and a Cholesky
+    factor that can be converted to covariance and correlation matrices.
     """
     # Ensure the package root is on sys.path regardless of how the script is invoked
     import sys as _sys
@@ -3132,29 +3131,24 @@ def _jax_random_params_refit(
             return None
 
         builder = ExperimentBuilder(df=df, id_col="_id", y_col=y_col, offset_col=offset_col)
-        # Build random terms: independent by default, correlated pairs if requested
+        # Build independent terms by default, or use the correlated block.
         rdm_ind_terms = [f"{v}:normal" for v in rdm_terms]
-        rdm_cor_pairs = []
+        rdm_cor_terms = []
         if try_correlated and len(rdm_terms) >= 2:
-            # Pair adjacent random variables as correlated
-            for i in range(0, len(rdm_terms) - 1, 2):
-                rdm_cor_pairs.append(f"{rdm_terms[i]}:{rdm_terms[i+1]}:normal")
-            # Remove paired vars from independent
-            paired_vars = set()
-            for i in range(0, len(rdm_terms) - 1, 2):
-                paired_vars.add(rdm_terms[i])
-                paired_vars.add(rdm_terms[i+1])
-            rdm_ind_terms = [f"{v}:normal" for v in rdm_terms if v not in paired_vars]
+            rdm_cor_terms = [f"{v}:normal" for v in rdm_terms]
+            rdm_ind_terms = []
 
         spec = builder.make_manual_spec(
             fixed_terms=fixed_terms,
             rdm_terms=rdm_ind_terms,
-            rdm_cor_terms=rdm_cor_pairs,
+            rdm_cor_terms=rdm_cor_terms,
             dispersion=1,
         )
 
         # ── Fixed-effects warm start ────────────────────────────────────────
-        fe_upper = [v for v in fixed_terms if v not in (log_aadt_col,)]
+        fe_upper = list(dict.fromkeys(
+            [v for v in fixed_terms if v != log_aadt_col] + list(rdm_terms)
+        ))
         fe_lower = [v.replace(f"_{v2}_x_logaadt", v2) for v in fixed_terms
                     if v.endswith("_x_logaadt") or v.endswith("_Z_x_logaadt")]
         fe_fit = _fit_model(
@@ -3172,7 +3166,8 @@ def _jax_random_params_refit(
             df=df,
             manual_spec={
                 "fixed_terms": fixed_terms,
-                "rdm_terms": [f"{v}:normal" for v in rdm_terms],
+                "rdm_terms": rdm_ind_terms,
+                "rdm_cor_terms": rdm_cor_terms,
                 "dispersion": 1,
             },
             id_col="_id", y_col=y_col, offset_col=offset_col,
@@ -3200,6 +3195,13 @@ def _jax_random_params_refit(
                 fe_index = fe_fit.result.params.index
                 for j, rname in enumerate(spec_rp.random_ind_names):
                     # Random names in spec are like 'F_W_Z', find in FE params
+                    if rname in fe_index:
+                        idx = list(fe_index).index(rname)
+                        init_rp[i0m + j] = fe_params[idx]
+            if spec_rp.Kr_cor > 0:
+                i0m, i1m = _pindex["cor_mean"]
+                fe_index = fe_fit.result.params.index
+                for j, rname in enumerate(spec_rp.random_cor_names):
                     if rname in fe_index:
                         idx = list(fe_index).index(rname)
                         init_rp[i0m + j] = fe_params[idx]
@@ -3253,12 +3255,14 @@ def _jax_random_params_refit(
             return _se_all[lo:hi]
 
         se_beta_f  = _se_slice("fixed")
+        se_cor_m   = _se_slice("cor_mean")
+        se_chol    = _se_slice("chol")
         se_ind_m   = _se_slice("ind_mean")
         se_ind_s   = _se_slice("ind_sd")
         se_alpha   = _se_slice("dispersion")
 
         def _softplus(x):
-            return float(np.log1p(np.exp(float(x))))
+            return float(np.logaddexp(0.0, float(x)))
 
         def _sigmoid(x):
             return float(1.0 / (1.0 + np.exp(-float(x))))
@@ -3336,6 +3340,61 @@ def _jax_random_params_refit(
         coef_df = pd.DataFrame(rows_param)
         coef_str = _format_coef_table_journal(coef_df, title="RANDOM-PARAMETERS NB2 — FINAL COEFFICIENTS")
 
+        corr_matrix_str = ""
+        if spec_rp.Kr_cor > 0 and blocks.get("mean_cor") is not None:
+            means = np.asarray(blocks["mean_cor"])
+            for j, rname in enumerate(spec_rp.random_cor_names):
+                display_name = VARIABLE_LABELS.get(rname, rname)
+                mj = float(means[j])
+                mse = float(se_cor_m[j]) if se_cor_m is not None and j < len(se_cor_m) else np.nan
+                mz = mj / mse if (np.isfinite(mse) and mse > 1e-15) else 0.0
+                mp = float(2.0 * (1.0 - _norm_cdf(abs(mz))))
+                rows_param.append({
+                    "Parameter": f"{display_name} [mean]",
+                    "Role": "Random-Cor mean",
+                    "Estimate": mj,
+                    "Std.Err": mse,
+                    "z-value": mz,
+                    "p-value": mp,
+                })
+
+            chol = np.asarray(blocks.get("chol"), dtype=float)
+            K = int(spec_rp.Kr_cor)
+            L = np.zeros((K, K), dtype=float)
+            chol_idx = 0
+            for i in range(K):
+                for j in range(i + 1):
+                    raw = float(chol[chol_idx])
+                    estimate = float(np.exp(raw)) if i == j else raw
+                    raw_se = float(se_chol[chol_idx]) if se_chol is not None and chol_idx < len(se_chol) else np.nan
+                    estimate_se = raw_se * estimate if i == j and np.isfinite(raw_se) else raw_se
+                    z = estimate / estimate_se if (np.isfinite(estimate_se) and estimate_se > 1e-15) else 0.0
+                    p = float(2.0 * (1.0 - _norm_cdf(abs(z))))
+                    L[i, j] = estimate
+                    rows_param.append({
+                        "Parameter": f"L[{i},{j}]",
+                        "Role": "Random-Cor Cholesky",
+                        "Estimate": estimate,
+                        "Std.Err": estimate_se,
+                        "z-value": z,
+                        "p-value": p,
+                    })
+                    chol_idx += 1
+
+            covariance = L @ L.T
+            std = np.sqrt(np.clip(np.diag(covariance), 1e-30, None))
+            correlation = covariance / np.outer(std, std)
+            names = [VARIABLE_LABELS.get(name, name) for name in spec_rp.random_cor_names]
+            corr_lines = ["CORRELATED RANDOM VAR-COV", "  Variables: " + ", ".join(names)]
+            corr_lines.append("  Covariance matrix:")
+            corr_lines.extend("    " + " ".join(f"{value:+.6f}" for value in row) for row in covariance)
+            corr_lines.append("  Correlation matrix:")
+            corr_lines.extend("    " + " ".join(f"{value:+.6f}" for value in row) for row in correlation)
+            corr_matrix_str = "\n".join(corr_lines)
+
+            coef_df = pd.DataFrame(rows_param)
+            coef_str = _format_coef_table_journal(coef_df, title="RANDOM-PARAMETERS NB2 — FINAL COEFFICIENTS")
+
         ll  = float(-model_rp.objective(params_vec))
         n   = data_rp["y"].size
         k   = int(_pindex["total_params"])
@@ -3344,7 +3403,8 @@ def _jax_random_params_refit(
 
         return {
             "coef_str": coef_str,
-            "corr_matrix_str": "",   # no rdm_cor_terms in this refit
+            "coef_df": coef_df,
+            "corr_matrix_str": corr_matrix_str,
             "loglik": ll,
             "bic": bic,
             "aic": aic,

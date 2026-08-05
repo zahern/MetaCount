@@ -579,6 +579,13 @@ def evaluate_model(solution,
     active_baseline = [v for v, m in zip(baseline_vars, baseline_mask) if m]
     active_local    = [v for v, m in zip(local_vars,    local_mask)    if m]
 
+    if rand_baseline_all is None:
+        rand_baseline_all = [False] * k_base
+    if rand_local_all is None:
+        rand_local_all = [False] * k_loc
+    if len(rand_baseline_all) != k_base or len(rand_local_all) != k_loc:
+        raise ValueError("Random-parameter flags must match the candidate variable lists.")
+
     rand_baseline = tuple(r for r, m in zip(rand_baseline_all, baseline_mask) if m)
     rand_local    = tuple(r for r, m in zip(rand_local_all,    local_mask)    if m)
 
