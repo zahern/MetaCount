@@ -40,7 +40,9 @@ from typing import Union, Optional
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, REPO_ROOT)
-os.chdir(os.path.join(REPO_ROOT, "metacountregressor"))
+_pkg_dir = os.path.join(REPO_ROOT, "metacountregressor")
+if os.path.isdir(_pkg_dir):
+    os.chdir(_pkg_dir)
 
 jax.config.update("jax_enable_x64", True)
 
@@ -728,10 +730,14 @@ if __name__ == "__main__":
         print(f"Best RMSE (test): {best_rmse:.4f}")
 
     # ── Save & plot SA fit trace ─────────────────────────────────
+    nclass = int(getattr(evaluator, "max_latent_classes", 2))
+    out_dir = os.path.join(REPO_ROOT, f"results_{nclass}class")
+    os.makedirs(out_dir, exist_ok=True)
+
     if evaluator._fit_trace:
         import csv as _csv
         import json as _json
-        trace_csv = os.path.join(REPO_ROOT, "results", "lc_search_trace.csv")
+        trace_csv = os.path.join(out_dir, "lc_search_trace.csv")
         os.makedirs(os.path.dirname(trace_csv), exist_ok=True)
         with open(trace_csv, "w", newline="") as f:
             writer = _csv.DictWriter(f, fieldnames=evaluator._fit_trace[0].keys())
@@ -759,7 +765,7 @@ if __name__ == "__main__":
             ax1.set_xlabel("Fit evaluation #")
             ax1.set_ylabel("BIC (lower = better)")
             ax1.set_title(f"SA Structure Search: BIC per Evaluation\n"
-                          f"(2-class LC-NB2, DE warm-up, best={best_score:.1f})")
+                          f"({nclass}-class LC-NB2, DE warm-up, best={best_score:.1f})")
             ax1.legend(fontsize=8)
             ax1.grid(True, alpha=0.3)
 
@@ -776,22 +782,42 @@ if __name__ == "__main__":
             ax2.grid(True, alpha=0.3)
 
             fig.suptitle("SA Structure Search Convergence\n"
-                         "(2-class LC-NB2, FC held out)",
+                         f"({nclass}-class LC-NB2, FC held out)",
                          fontsize=11, fontweight="bold")
             _plt.tight_layout()
-            trace_png = os.path.join(REPO_ROOT, "results", "lc_search_trace.png")
+            trace_png = os.path.join(out_dir, "lc_search_trace.png")
             _plt.savefig(trace_png, dpi=150, bbox_inches="tight")
             _plt.close()
             print(f"Search trace plot saved to:  {trace_png}")
         except Exception as exc:
             print(f"  [warn] Search trace plot failed: {exc}")
 
+        try:
+            import json as _jcsv
+            bics_ser = [r["bic"] for r in evaluator._fit_trace]
+            fits_ser = [r["fit"] for r in evaluator._fit_trace]
+            best_sofar = list(map(float, np.minimum.accumulate(bics_ser)))
+            conv_path = os.path.join(out_dir, "convergence.json")
+            with open(conv_path, "w") as fc:
+                _jcsv.dump({
+                    "latent_classes": nclass,
+                    "n_evaluations": len(evaluator._fit_trace),
+                    "best_bic": best_score,
+                    "best_iteration": int(np.argmin(best_sofar)),
+                    "best_so_far_bic_series": best_sofar,
+                    "bic_series": [float(b) for b in bics_ser],
+                    "fit_series": [float(b) for b in fits_ser],
+                }, fc, indent=2)
+            print(f"Convergence summary saved to:  {conv_path}")
+        except Exception as exc:
+            print(f"  [warn] Convergence summary failed: {exc}")
+
     spec_dict = evaluator.build_spec(best_sol)
     if spec_dict:
         spec_dict["latent_classes"] = spec_dict.get("latent_classes", 2)
         # ── Save best spec for Phase 2 ─────────────────────────────
         import json as _json
-        spec_path = os.path.join(REPO_ROOT, "results", "best_model_spec.json")
+        spec_path = os.path.join(out_dir, "best_model_spec.json")
         os.makedirs(os.path.dirname(spec_path), exist_ok=True)
         with open(spec_path, "w") as fp:
             _json.dump(spec_dict, fp, indent=2, default=str)
