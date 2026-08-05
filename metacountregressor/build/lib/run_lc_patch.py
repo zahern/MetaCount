@@ -195,6 +195,92 @@ def _de_warmup_lc(
 
 
 # ────────────────────────────────────────────────────────────────
+# FC -> truth-class mapping (matches the ground truth to the number
+# of latent classes being searched).
+#
+# The FC column is the observed roadway functional class.  When the
+# search fits C latent classes we want an apple-to-apples recovery
+# comparison, so the FC ground truth is re-coded to exactly C classes:
+#   * more distinct FCs than C  -> merge the most-similar FCs first
+#   * fewer distinct FCs than C -> keep every present FC
+# Similarity is measured on standardised covariate profiles so the
+# merged classes are the ones that look most alike in the data.
+# ────────────────────────────────────────────────────────────────
+
+_FC_PROFILE_COLS = ["URB", "SPEED", "AADT", "CURVES", "MINRAD",
+                    "ACCESS", "FRICTION"]
+
+
+def _fc_truth_merge(df, C):
+    """Map observed functional classes to ``C`` truth labels.
+
+    Returns ``(mapping, truth)`` where ``mapping`` is a dict
+    ``{FC_value: truth_label}`` and ``truth`` is the per-row label
+    array aligned with ``df``.  Returns ``(None, None)`` if there are
+    no usable FC values.
+    """
+    fc_vals = sorted(int(v) for v in df["FC"].dropna().unique())
+    if not fc_vals:
+        return None, None
+    if C is None or C < 1:
+        C = len(fc_vals)
+
+    cols = [c for c in _FC_PROFILE_COLS if c in df.columns]
+    if cols:
+        prof_df = df[df["FC"].isin(fc_vals)].groupby("FC")[cols].mean()
+        prof = prof_df.apply(
+            lambda s: (s - s.mean()) / s.std() if s.std() > 1e-12 else s * 0.0,
+            axis=0,
+        ).reindex(fc_vals).fillna(0.0).to_numpy()
+    else:
+        prof = np.zeros((len(fc_vals), 1))
+
+    # Agglomerative merging of the closest FC pairs until C groups remain.
+    groups = [[i] for i in range(len(fc_vals))]      # member profile-row idxs
+    vecs   = [prof[i].copy() for i in range(len(fc_vals))]
+    while len(groups) > C:
+        best = min(
+            ((np.linalg.norm(vecs[i] - vecs[j]), i, j)
+             for i in range(len(groups))
+             for j in range(i + 1, len(groups))),
+            key=lambda t: t[0],
+        )
+        _, i, j = best
+        members = groups[i] + groups[j]
+        groups[i] = members
+        vecs[i] = prof[members].mean(axis=0)
+        del groups[j]
+        del vecs[j]
+
+    mapping = {}
+    for label, group in enumerate(groups, start=1):
+        for row_idx in group:
+            mapping[fc_vals[row_idx]] = label
+    truth = df["FC"].map(mapping).fillna(-1).astype(int).to_numpy()
+    return mapping, truth
+
+
+def _fc_recovery_stats(hard_class, truth, C):
+    """Best RMSE / accuracy over all label permutations (1..C)."""
+    hard_class = np.asarray(hard_class, dtype=int)
+    truth = np.asarray(truth, dtype=int)
+    valid = truth >= 1
+    if not valid.any():
+        return float("nan"), float("nan")
+    hc = hard_class[valid]
+    tr = truth[valid]
+    import itertools
+    best_rmse, best_acc = None, 0.0
+    for perm in itertools.permutations(range(1, C + 1)):
+        mapped = np.array([perm[v - 1] for v in tr])
+        rmse = float(np.sqrt(np.mean((hc - mapped) ** 2)))
+        if best_rmse is None or rmse < best_rmse:
+            best_rmse = rmse
+            best_acc = float(np.mean(hc == mapped))
+    return best_rmse, best_acc
+
+
+# ────────────────────────────────────────────────────────────────
 # Evaluator with DE warm-up injected into the LC fitness pipeline
 # ────────────────────────────────────────────────────────────────
 
@@ -456,23 +542,24 @@ class StructureEvaluatorLC_DE(StructureEvaluatorLC):
                     print()
 
                     # ── FC classification RMSE ─────────────────
-                    # FC 0,1 → class 1  |  FC 2,3,5 → class 2
-                    fc_target = np.where(
-                        df_join["FC"].isin([0, 1]), 1, 2
-                    )
-                    # Align: try both mappings, pick lower RMSE
-                    err_direct = (hard_class - fc_target) ** 2
-                    err_swapped = (hard_class - (3 - fc_target)) ** 2
-                    fc_rmse_direct = np.sqrt(np.mean(err_direct))
-                    fc_rmse_swapped = np.sqrt(np.mean(err_swapped))
-                    if fc_rmse_direct <= fc_rmse_swapped:
-                        fc_rmse = fc_rmse_direct
-                        fc_acc = np.mean(hard_class == fc_target)
-                    else:
-                        fc_rmse = fc_rmse_swapped
-                        fc_acc = np.mean(hard_class == (3 - fc_target))
-                    print(f"  FC-LC RECOVERY  RMSE={fc_rmse:.4f}  "
-                          f"Accuracy={fc_acc:.1%}")
+                    # Re-code the observed FC ground truth to C classes
+                    # (merging the most-similar FCs), then compare against
+                    # the latent-class assignments under the best label
+                    # permutation.
+                    fc_mapping, fc_truth = _fc_truth_merge(df_join, C)
+                    if fc_mapping is not None:
+                        fc_rmse, fc_acc = _fc_recovery_stats(
+                            hard_class, fc_truth, C
+                        )
+                        print(f"  FC-LC RECOVERY  RMSE={fc_rmse:.4f}  "
+                              f"Accuracy={fc_acc:.1%}")
+                        merged_desc = ", ".join(
+                            f"{{FC {','.join(str(v) for v in
+                            sorted(k for k, lbl in fc_mapping.items()
+                                   if lbl == label))}}}->{label}"
+                            for label in sorted(set(fc_mapping.values()))
+                        )
+                        print(f"  FC truth re-code: {merged_desc}")
                     print()
                 except Exception as exc:
                     import traceback
@@ -823,15 +910,19 @@ if __name__ == "__main__":
                 "ids", evaluator.df_test[["ID"]]
                 .drop_duplicates()["ID"].to_numpy()
             )).ravel()
-            fc_test = evaluator.df_test.set_index("ID").loc[
-                test_ids, "FC"
-            ].values
-            fc_target_test = np.where(
-                np.isin(fc_test, [0, 1]), 1, 2
-            )
-            err_d = (hard_test - fc_target_test) ** 2
-            err_s = (hard_test - (3 - fc_target_test)) ** 2
-            fc_rmse_v = float(np.sqrt(min(np.mean(err_d), np.mean(err_s))))
-            print(f"  FC-LC RECOVERY (test)  RMSE={fc_rmse_v:.4f}")
+            fc_mapping_test, _ = _fc_truth_merge(evaluator.df_test, C)
+            if fc_mapping_test is not None:
+                _id_to_fc = dict(zip(evaluator.df_test["ID"],
+                                     evaluator.df_test["FC"]))
+                fc_by_id = np.array([_id_to_fc.get(int(i), np.nan)
+                                     for i in test_ids])
+                fc_truth_test = np.array([
+                    fc_mapping_test.get(int(v), -1) if pd.notna(v) else -1
+                    for v in fc_by_id
+                ], dtype=int)
+                fc_rmse_v, _acc = _fc_recovery_stats(
+                    hard_test, fc_truth_test, C
+                )
+                print(f"  FC-LC RECOVERY (test)  RMSE={fc_rmse_v:.4f}")
 
     print("\nDone.")
