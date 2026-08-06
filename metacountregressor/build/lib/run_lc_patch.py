@@ -52,7 +52,6 @@ jax.config.update("jax_enable_x64", True)
 from metacountregressor import main_hpc_lc_patch  # noqa: E402, F401
 
 from metacountregressor.main_hpc import (  # noqa: E402
-    experiment_washington,
     build_base_index,
     populate_allowed_roles,
     populate_allowed_distributions,
@@ -628,7 +627,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # ── Load data ────────────────────────────────────────────────
-    _, df, all_vars = experiment_washington()
+    _data_csv = os.path.join(REPO_ROOT, "data", "Ex-16-3.csv")
+    df = pd.read_csv(_data_csv)
+    df["EXPOSE"] = df["LENGTH"] * df["AADT"] * 365 / 100000000
+    df["OFFSET"] = 0
+    df.rename(columns={"FREQ": "Y"}, inplace=True)
+    all_vars = [
+        "INCLANES", "DECLANES", "WIDTH", "SPEED", "URB", "FC",
+        "SINGLE", "DOUBLE", "TRAIN", "PEAKHR", "GRADEBR", "TANGENT",
+        "CURVES", "MINRAD", "ACCESS", "MEDWIDTH", "SLOPE", "INTECHAG",
+        "AVEPRE", "AVESNOW", "LOWPRE", "GBRPM", "EXPOSE", "INTPM",
+        "CPM", "HISNOW", "FRICTION",
+    ]
     D = len(all_vars)
     print(f"Data:  {len(df)} segments  |  {D} variables")
     print(f"URB:   {df['URB'].mean():.1%} urban   |  "
