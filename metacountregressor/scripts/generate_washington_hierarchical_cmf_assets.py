@@ -3149,7 +3149,7 @@ def _jax_random_params_refit(
         fe_upper = list(dict.fromkeys(
             [v for v in fixed_terms if v != log_aadt_col] + list(rdm_terms)
         ))
-        fe_lower = [v.replace(f"_{v2}_x_logaadt", v2) for v in fixed_terms
+        fe_lower = [v for v in fixed_terms
                     if v.endswith("_x_logaadt") or v.endswith("_Z_x_logaadt")]
         fe_fit = _fit_model(
             df_train=df,
@@ -3173,7 +3173,8 @@ def _jax_random_params_refit(
             id_col="_id", y_col=y_col, offset_col=offset_col,
             R=max(200, int(rp_draws)),
         )
-        spec_rp.model = "nb"
+        # NB: build_model_from_manual_spec already sets model via dataclasses.replace
+        # (ModelSpec is frozen), so no reassignment here.
         model_rp = CountModel(spec_rp, data_rp)
 
         # Build initial parameter vector from FE fit
