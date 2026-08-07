@@ -769,6 +769,16 @@ def _random_search(
     harmony_hmcr: float = 0.90,
     harmony_par: float = 0.35,
     top_k: int = 5,             # keep top-K models for random-params sweep
+    rp_in_search: bool = False, # RP hybrid scoring inside the search (per-candidate)
+    df_train_raw: pd.DataFrame | None = None,  # raw pre-standardisation train frame for RP
+    scaler_stats: dict | None = None,          # scaler stats for RP _Z reconstruction
+    binary_vars_rp: set | None = None,         # binary vars for RP term selection
+    rp_max_random_terms: int = 6,
+    rp_draws: int = 500,
+    rp_include_lower_interactions: bool = True,
+    convergence_early_stop: bool = True,       # stop refinement when no improvement
+    conv_patience: int = 25,                   # consecutive non-improving iterations to stop
+    conv_harmony_spread: float = 2.0,          # BIC spread (abs) for harmony population conformity
 ) -> tuple[FittedModel, pd.DataFrame, list[FittedModel]]:
     rng = np.random.default_rng(seed)
     tested: set[tuple[tuple[str, ...], tuple[str, ...], str]] = set()
@@ -783,6 +793,12 @@ def _random_search(
     import heapq as _hq
     top_k_heap: list[tuple[float, int, FittedModel]] = []  # (bic, counter, fit)
     _counter = [0]   # mutable counter for heap tie-breaking
+    # Convergence: consecutive evaluated candidates with no improvement to the
+    # global best hybrid BIC.  Reset by _eval on any improvement; consulted by
+    # the SA/harmony loops to trigger early termination once the recorded
+    # best is stable / final temperature is reached / the population conforms.
+    _stall = [0]
+    _stall_reached = [False]
 
     # Seeds: use at least MIN_UPPER/MIN_LOWER variables to match main search
     baseline_upper = upper_candidates[:2] if len(upper_candidates) >= 2 else upper_candidates
@@ -793,8 +809,52 @@ def _random_search(
         (tuple(upper_candidates[:2]), tuple(lower_candidates[:1])),  # different pair
     ]
 
+    def _rp_bic_for_candidate(fit: FittedModel) -> float:
+        """Return the best random-params BIC for a candidate spec, or NaN.
+
+        Only runs when RP-in-search is enabled and the raw/scaler/binary
+        inputs are available.  Model vars are de-suffixed (_Z) back to raw
+        names before the RP refit.  Returns NaN when RP is disabled or the
+        refit fails, so the fixed-effects score remains authoritative.
+        """
+        if not rp_in_search:
+            return float("nan")
+        if df_train_raw is None or scaler_stats is None or binary_vars_rp is None:
+            return float("nan")
+
+        cand_upper_raw = sorted({n[:-2] if n.endswith("_Z") else n for n in fit.upper_vars})
+        cand_lower_raw = sorted({n[:-2] if n.endswith("_Z") else n for n in fit.lower_vars})
+        cand_upper_raw = [v for v in cand_upper_raw if v in df_train_raw.columns]
+        cand_lower_raw = [v for v in cand_lower_raw if v in df_train_raw.columns]
+        if not cand_upper_raw:
+            return float("nan")
+
+        best_rp_bic = float("nan")
+        for _try_cor in [True, False]:
+            _rp = _jax_random_params_refit(
+                df_trainval_raw=df_train_raw,
+                best_upper_raw=cand_upper_raw,
+                best_lower_raw=cand_lower_raw,
+                y_col=y_col,
+                aadt_col=aadt_col,
+                offset_col=offset_col,
+                scaler_stats=scaler_stats,
+                binary_vars=binary_vars_rp,
+                include_lower_interactions=bool(rp_include_lower_interactions),
+                max_random_terms=int(rp_max_random_terms),
+                rp_draws=int(rp_draws),
+                try_correlated=_try_cor,
+            )
+            if _rp is None:
+                continue
+            _rb = float(_rp.get("bic", float("nan")))
+            if np.isfinite(_rb):
+                if not np.isfinite(best_rp_bic) or _rb < best_rp_bic:
+                    best_rp_bic = _rb
+        return float(best_rp_bic)
+
     def _eval(fit: FittedModel, y_val_arr: np.ndarray, phase: str = "random") -> None:
-        """Score fit, append to history, update bests and top-K heap."""
+        """Score a candidate, append to history, update bests and top-K heap."""
         pred_val   = _predict(df_val, fit)
         score      = _poisson_deviance(y_val_arr, pred_val)
         val_rmse   = _metrics(y_val_arr, pred_val)["rmse"]
@@ -812,6 +872,17 @@ def _random_search(
         # Soft penalty only: models with insignificant vars can still compete
         # if their BIC improvement outweighs the penalty
 
+        # ── Random-params hybrid scoring (opt-in) ───────────────────────
+        # Each candidate is scored by min(BIC_fixed, BIC_rp).  The RP refit
+        # is the partial-pooling fit (random-parameter specialisations), so
+        # a candidate that is mediocre under complete pooling can win the
+        # search if its random-parameter variant fits materially better.
+        rp_bic = _rp_bic_for_candidate(fit)
+        if np.isfinite(rp_bic) and rp_bic < bic:
+            bic = rp_bic
+            bic_penalised = bic + PVALUE_PENALTY_PER_INSIG * n_insig if np.isfinite(bic) else bic
+        fit._rp_bic = float(rp_bic) if np.isfinite(rp_bic) else None
+
         history_rows.append({
             "Iteration": len(history_rows) + 1,
             "Family":    fit.family,
@@ -820,6 +891,7 @@ def _random_search(
             "Lower Vars": ", ".join(fit.lower_vars) if fit.lower_vars else "(none)",
             "Val Poisson Dev": score, "Val RMSE": val_rmse,
             "AIC": aic, "BIC": bic,
+            "BIC (RP)": fit._rp_bic if getattr(fit, "_rp_bic", None) is not None else None,
             "BIC (p-value penalised)": bic_penalised,
             "N Insignificant (p>0.05)": n_insig,
             "AADT elasticity min":            es["aadt_elasticity_min"],
@@ -830,6 +902,7 @@ def _random_search(
             "Monotonic AADT (e>0 all segs)": "yes" if mono_ok else "no",
         })
         nonlocal best_fit, best_score, best_fit_any, best_score_any
+        _improved = False
         _entered_pareto = False
         _all_sig = (n_insig == 0)
 
@@ -840,10 +913,22 @@ def _random_search(
             best_score_any = bic_penalised
             best_fit_any   = fit
             _entered_pareto = True
+            _improved = True
         if _all_sig and (not enforce_aadt_increase or mono_ok) and bic_penalised < best_score:
             best_score = bic_penalised
             best_fit   = fit
             _entered_pareto = True
+            _improved = True
+
+        # Convergence stall tracking: any all-sig/monotonic improvement resets
+        # the patience counter; otherwise it increments (capped).
+        if _all_sig and np.isfinite(bic_penalised) and (not enforce_aadt_increase or mono_ok):
+            if _improved:
+                _stall[0] = 0
+            else:
+                _stall[0] += 1
+            if _stall[0] >= conv_patience:
+                _stall_reached[0] = True
 
         # top-K heap: only all-sig models
         _counter[0] += 1
@@ -866,8 +951,12 @@ def _random_search(
             if _in_heap: _flags.append(f"Top-{top_k}")
             if _all_sig: _flags.append("ALL-SIG")
             _flag_str = " | ".join(_flags) if _flags else "N_INSIG"
-            print(f"  [{_iters:5d}] {phase:7s} {fit.family:2s} | BIC={bic:.1f} (pen={bic_penalised:.1f}) | "
-                  f"RMSE={val_rmse:.4f} | N_insig={n_insig} | {_flag_str}")
+            if getattr(fit, "_rp_bic", None) is not None:
+                print(f"  [{_iters:5d}] {phase:7s} {fit.family:2s} | BIC={bic:.1f} (pen={bic_penalised:.1f}) | "
+                      f"RP={fit._rp_bic:.1f} | RMSE={val_rmse:.4f} | N_insig={n_insig} | {_flag_str}")
+            else:
+                print(f"  [{_iters:5d}] {phase:7s} {fit.family:2s} | BIC={bic:.1f} (pen={bic_penalised:.1f}) | "
+                      f"RMSE={val_rmse:.4f} | N_insig={n_insig} | {_flag_str}")
             if _upper_str != "(none)":
                 print(f"           upper: {_upper_str}")
             if _lower_str != "(none)":
@@ -1172,6 +1261,21 @@ def _random_search(
                         sa_upper, sa_lower, sa_fam = nu, nl, nf
                         sa_bic = new_bic
 
+                # Harmony convergence: terminate when the memory population
+                # conforms (all member BICs within conv_harmony_spread) after
+                # conv_patience consecutive non-improving iterations.
+                if (convergence_early_stop and _stall_reached[0]
+                        and len(harmony_memory) >= hms):
+                    _hm_bics = [float(m[0]) for m in harmony_memory]
+                    _hm_spread = max(_hm_bics) - min(_hm_bics)
+                    if _hm_spread <= float(conv_harmony_spread):
+                        print(
+                            f"  Harmony converged: population conformed "
+                            f"(BIC spread={_hm_spread:.3f}) after {len(history_rows)} candidates. "
+                            f"Best hybrid BIC={best_score:.3f}."
+                        )
+                        break
+
             # Always produce a directly comparable SA trace when running harmony.
             # This enables explicit SA-vs-Harmony diagnostics in reports.
             print(f"  Simulated Annealing comparison run: iters={n_sa}")
@@ -1235,6 +1339,16 @@ def _random_search(
                 # Reheat: jump temperature back up every 25% of iterations
                 if _i_sa > 0 and _i_sa % reheat_every == 0:
                     T_cmp = max(T_cmp, T * T_reheat_frac)
+
+                # SA comparison trace convergence (same criteria as standalone SA)
+                if (convergence_early_stop and T_cmp <= T_cmp_min * 1.01
+                        and _stall_reached[0]):
+                    print(
+                        f"  SA comparison converged: final temperature reached "
+                        f"(T={T_cmp:.3f}) with no improvement for "
+                        f"{conv_patience} candidates. Best hybrid BIC={best_score:.3f}."
+                    )
+                    break
         else:
             # Standalone SA (no harmony comparison)
             cooling = (T_min / T) ** (1.0 / max(n_sa, 1))
@@ -1262,6 +1376,18 @@ def _random_search(
                 T = max(T * cooling, T_min)
                 if _i_sa > 0 and _i_sa % reheat_every == 0:
                     T = max(T, 50.0 * T_reheat_frac)  # reheat to 25
+
+                # SA convergence: stop refining once the temperature has cooled
+                # to its floor AND the global best has been stable for
+                # conv_patience consecutive evaluated candidates.
+                if (convergence_early_stop and T <= T_min * 1.01
+                        and _stall_reached[0]):
+                    print(
+                        f"  SA converged: final temperature reached "
+                        f"(T={T:.3f}<=T_min={T_min}) with no improvement for "
+                        f"{conv_patience} candidates. Best hybrid BIC={best_score:.3f}."
+                    )
+                    break
 
     if best_fit is None and best_fit_any is None:
         raise RuntimeError("Search failed to fit any candidate model.")
@@ -5256,6 +5382,36 @@ def main() -> None:
         default=500,
         help="Halton draws for random-parameter fit integration (default: 500).",
     )
+    parser.add_argument(
+        "--rp-in-search",
+        action="store_true",
+        default=False,
+        help="Score every search candidate by min(BIC fixed-effects, BIC random-params). "
+             "Each RP refit is expensive (~57s/candidate); only enable with a modest "
+             "--search-iter budget (<=200) or convergence-based early termination.",
+    )
+    parser.add_argument(
+        "--convergence-early-stop",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Terminate SA/harmony refinement when no improvement occurs for "
+             "--conv-patience consecutive candidates AND the method's convergence "
+             "criterion is met (final temperature for SA; population conformity "
+             "for harmony). Turns --search-iter into a maximum rather than a "
+             "fixed budget.",
+    )
+    parser.add_argument(
+        "--conv-patience",
+        type=int,
+        default=25,
+        help="Consecutive non-improving candidates tolerated before early stop (default: 25).",
+    )
+    parser.add_argument(
+        "--conv-harmony-spread",
+        type=float,
+        default=2.0,
+        help="Max absolute BIC spread across harmony memory for population conformity (default: 2.0).",
+    )
 
     args = parser.parse_args()
 
@@ -5350,6 +5506,16 @@ def main() -> None:
         harmony_hms=int(args.harmony_hms),
         harmony_hmcr=float(args.harmony_hmcr),
         harmony_par=float(args.harmony_par),
+        rp_in_search=bool(getattr(args, "rp_in_search", False)),
+        df_train_raw=df_train_raw if getattr(args, "rp_in_search", False) else None,
+        scaler_stats=scaler_train if getattr(args, "rp_in_search", False) else None,
+        binary_vars_rp=binary_vars if getattr(args, "rp_in_search", False) else None,
+        rp_max_random_terms=int(args.rp_max_random_terms),
+        rp_draws=int(args.rp_draws),
+        rp_include_lower_interactions=bool(args.rp_include_lower_interactions),
+        convergence_early_stop=bool(getattr(args, "convergence_early_stop", True)),
+        conv_patience=int(getattr(args, "conv_patience", 25)),
+        conv_harmony_spread=float(getattr(args, "conv_harmony_spread", 2.0)),
     )
 
     # Pareto selection over (BIC, validation RMSE), then require benchmark
