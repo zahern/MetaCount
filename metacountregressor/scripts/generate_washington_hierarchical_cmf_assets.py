@@ -945,11 +945,15 @@ def _random_search(
         # is the partial-pooling fit (random-parameter specialisations), so
         # a candidate that is mediocre under complete pooling can win the
         # search if its random-parameter variant fits materially better.
-        rp_bic = _rp_bic_for_candidate(fit)
-        if np.isfinite(rp_bic) and rp_bic < bic:
-            bic = rp_bic
-            bic_penalised = bic + PVALUE_PENALTY_PER_INSIG * n_insig if np.isfinite(bic) else bic
-        fit._rp_bic = float(rp_bic) if np.isfinite(rp_bic) else None
+        #
+        # RP is only applied in refinement phases (harmony / sa), not during
+        # the random exploration phase, to keep the broad first-pass cheap.
+        if rp_in_search and phase != "random":
+            rp_bic = _rp_bic_for_candidate(fit)
+            if np.isfinite(rp_bic) and rp_bic < bic:
+                bic = rp_bic
+                bic_penalised = bic + PVALUE_PENALTY_PER_INSIG * n_insig if np.isfinite(bic) else bic
+            fit._rp_bic = float(rp_bic) if np.isfinite(rp_bic) else None
 
         history_rows.append({
             "Iteration": len(history_rows) + 1,
