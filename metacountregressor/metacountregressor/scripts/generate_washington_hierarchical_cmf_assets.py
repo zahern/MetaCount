@@ -779,6 +779,9 @@ def _random_search(
     convergence_early_stop: bool = True,       # stop refinement when no improvement
     conv_patience: int = 25,                   # consecutive non-improving iterations to stop
     conv_harmony_spread: float = 2.0,          # BIC spread (abs) for harmony population conformity
+    max_insig_in_search: int = 0,              # max insignificant (p>0.05) vars allowed for a candidate
+                                               # to enter the incumbent / top-K pool (0 = strict all-sig;
+                                               # relax for sparse responses like QLD head-on crashes)
 ) -> tuple[FittedModel, pd.DataFrame, list[FittedModel]]:
     rng = np.random.default_rng(seed)
     tested: set[tuple[tuple[str, ...], tuple[str, ...], str]] = set()
@@ -908,11 +911,14 @@ def _random_search(
         nonlocal best_fit, best_score, best_fit_any, best_score_any
         _improved = False
         _entered_pareto = False
-        _all_sig = (n_insig == 0)
+        _all_sig = (n_insig <= max_insig_in_search)
 
-        # Only all-significant models can enter the Pareto frontier.
-        # Insignificant models are still evaluated (SA can explore through them
-        # via temperature acceptance) but are filtered out of best/top-K.
+        # Only (near-)all-significant models can enter the Pareto frontier.
+        # max_insig_in_search relaxes the strict all-sig requirement for sparse
+        # responses (e.g. QLD head-on crashes, mostly zero) where no candidate
+        # ever reaches n_insig==0 and the search would otherwise raise at the
+        # end.  Insignificant models are still evaluated (SA can explore through
+        # them via temperature acceptance) but are filtered out of best/top-K.
         if _all_sig and bic_penalised < best_score_any:
             best_score_any = bic_penalised
             best_fit_any   = fit
@@ -4597,6 +4603,61 @@ def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tupl
             # ADTLANE excluded — collinear with AADT and lane count; causes
             # instability and multicollinearity in the hierarchical CMF model.
         ]
+    elif {"Nlanes", "Curve50", "RSHS", "Headon"}.issubset(df.columns):
+        # QLD heavy-vehicle (head-on crash) schema.  Candidate sets follow
+        # the historically used QLD specification (fixed: US, RSMS, MCV;
+        # random: RSHS, AADT, Curve50) plus the geometry / terrain variables
+        # available in this Stage-5A dataset.  LENGTH-like columns (Length,
+        # Len_Gz, LEN_YR) are intentionally excluded — they are the exposure
+        # captured by the log-exposure OFFSET, not predictors.
+        core_upper = [
+            "US",        # undivided single carriageway
+            "RSMS",      # right shoulder, medium seal
+            "RSLS",      # right shoulder, low seal
+            "MCV",       # multi-combination vehicle volume
+            "Nlanes",
+            "Lwidth",
+            "Curve50",
+            "Curve",
+            "Median",
+            "ATLM",
+            "F_W",
+            "SP",
+        ]
+        core_lower = [
+            "Curve50",   # random-parameter candidate (historical)
+            "RSHS",      # random-parameter candidate (historical)
+            "MCV",       # traffic-composition / AADT-elasticity modifier
+            "ArtVeh",
+            "Nlanes",
+            "Lwidth",
+            "ATLM",
+            "SP",
+        ]
+        expanded_only_upper: list[str] = [
+            "HSP",
+            "MSP",
+            "LSP",
+            "St_Curve",
+            "M_Curve",
+            "S_Curve",
+            "Roll_Ter",
+            "Mt_Ter",
+            "WC_W",
+            "SW_PS",
+            "SW_DS",
+            "SSW_PS",
+            "SSW_DS",
+        ]
+        expanded_only_lower: list[str] = [
+            "US",
+            "RSMS",
+            "Median",
+            "Curve",
+            "ATLM_PS",
+            "Roll_Ter",
+            "Mt_Ter",
+        ]
     else:
         core_upper = [
             "segment_length",
@@ -5416,6 +5477,15 @@ def main() -> None:
         default=2.0,
         help="Max absolute BIC spread across harmony memory for population conformity (default: 2.0).",
     )
+    parser.add_argument(
+        "--max-insig-in-search",
+        type=int,
+        default=0,
+        help="Max insignificant (p>0.05) variables a candidate may retain and still enter "
+             "the incumbent / top-K pool. Default 0 = strict all-significant. Relax (e.g. 2) "
+             "for sparse responses like QLD head-on crashes so the search can complete instead "
+             "of raising 'Search failed to fit any candidate model'.",
+    )
 
     args = parser.parse_args()
 
@@ -5520,6 +5590,7 @@ def main() -> None:
         convergence_early_stop=bool(getattr(args, "convergence_early_stop", True)),
         conv_patience=int(getattr(args, "conv_patience", 25)),
         conv_harmony_spread=float(getattr(args, "conv_harmony_spread", 2.0)),
+        max_insig_in_search=int(getattr(args, "max_insig_in_search", 0)),
     )
 
     # Pareto selection over (BIC, validation RMSE), then require benchmark
