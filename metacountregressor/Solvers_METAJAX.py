@@ -933,6 +933,14 @@ class AdvancedSimulatedAnnealing:
         archive_sizes = []
         self.update_archive(current, current_score)
 
+        # Track the best-so-far so we can announce genuine improvements
+        # (the per-generation "nbr fitness" line is just the proposed neighbour,
+        # not the incumbent best -- previously the best was never printed).
+        best_ever = None
+        if not self.is_multiobjective(current_score):
+            best_ever = float(self.archive_scores[0])
+            print(f"[NEW BEST] gen 0 | score={best_ever:.4f}")
+
         no_improve = 0
 
         for gen in range(self.max_iter):
@@ -1010,6 +1018,17 @@ class AdvancedSimulatedAnnealing:
                 self.update_archive(current, current_score)
                 archive_sizes.append(len(self.archive))
                 no_improve = 0
+
+                # Announce a genuine improvement in the incumbent best model.
+                if not self.is_multiobjective(current_score):
+                    cur_best = float(self.archive_scores[0])
+                    if best_ever is None or cur_best < best_ever - self.tol:
+                        best_ever = cur_best
+                        n_active = int(np.count_nonzero(
+                            np.asarray(self.archive[0])[:self.dim_core]))
+                        print(f"[NEW BEST] gen {gen} | score={cur_best:.4f} "
+                              f"| active_vars={n_active} | elapsed={elapsed:.0f}s",
+                              flush=True)
             else:
                 no_improve += 1
 

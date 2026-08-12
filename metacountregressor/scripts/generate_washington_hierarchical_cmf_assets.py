@@ -850,6 +850,9 @@ def _random_search(
     max_insig_in_search: int = 0,              # max insignificant (p>0.05) vars allowed for a candidate
                                                # to enter the incumbent / top-K pool (0 = strict all-sig;
                                                # relax for sparse responses like QLD head-on crashes)
+    auto_save_dir: str | None = None,          # if set, incrementally persist notable candidates
+                                               # (JSONL archive + best-fit pickles) during the search so a
+                                               # crash/walltime never loses the top models
 ) -> tuple[FittedModel, pd.DataFrame, list[FittedModel]]:
     rng = np.random.default_rng(seed)
     tested: set[tuple[tuple[str, ...], tuple[str, ...], str]] = set()
@@ -871,6 +874,102 @@ def _random_search(
     _stall = [0]
     _stall_reached = [False]
 
+    # Incremental auto-save: persist notable candidates (PARETO / top-K /
+    # ALL-SIG) as JSONL during the search so results survive crashes and the
+    # user can inspect candidate models (with coefficients) at any time.
+    _auto_dir: Path | None = None
+    if auto_save_dir:
+        try:
+            _auto_dir = Path(auto_save_dir)
+            _auto_dir.mkdir(parents=True, exist_ok=True)
+            _auto_archive = _auto_dir / "search_models_archive.jsonl"
+            if not _auto_archive.exists():
+                _auto_archive.write_text("", encoding="utf-8")
+        except Exception:
+            _auto_dir = None
+
+    def _auto_save_candidate(
+        fit: FittedModel,
+        phase: str,
+        iteration: int,
+        bic: float,
+        bic_penalised: float,
+        val_rmse: float,
+        n_insig: int,
+        flags: list[str],
+        pval_info: dict,
+    ) -> None:
+        """Append one candidate record (metadata + full coefficient table)
+        to search_models_archive.jsonl and refresh best-fit pickles."""
+        if _auto_dir is None:
+            return
+        try:
+            rows: list[dict] = []
+            _res = fit.result
+            _bse = getattr(_res, "bse", pd.Series(np.nan, index=_res.params.index))
+            _pinfo = pval_info.get("pvals", {})
+            for _i, (_nm, _v) in enumerate(_res.params.items()):
+                if _i >= getattr(_res, "Kf", len(_res.params)) or _nm == "const":
+                    continue
+                _se = float(_bse.get(_nm, np.nan)) if hasattr(_bse, 'get') else np.nan
+                rows.append({
+                    "parameter": str(_nm),
+                    "role": "fixed",
+                    "estimate": float(_v),
+                    "std_err": _se,
+                    "p_value": float(_pinfo.get(_nm, np.nan)),
+                    "distribution": "",
+                })
+            rpr = getattr(fit, "_rp_result", None)
+            if rpr is not None:
+                rdf = rpr.get("coef_df")
+                if rdf is not None and not rdf.empty:
+                    for _, rprow in rdf.iterrows():
+                        try:
+                            rows.append({
+                                "parameter": str(rprow["Parameter"]),
+                                "role": str(rprow["Role"]),
+                                "estimate": float(rprow["Estimate"]),
+                                "std_err": float(rprow.get("Std.Err", float("nan"))),
+                                "p_value": float(rprow.get("p-value", float("nan"))),
+                                "distribution": str(rprow.get("distribution", "")),
+                            })
+                        except Exception:
+                            continue
+            record = {
+                "iteration": int(iteration),
+                "phase": phase,
+                "family": fit.family,
+                "upper_vars": list(fit.upper_vars),
+                "lower_vars": list(fit.lower_vars),
+                "bic": float(bic) if np.isfinite(bic) else None,
+                "bic_penalised": float(bic_penalised) if np.isfinite(bic_penalised) else None,
+                "rp_bic": float(fit._rp_bic) if getattr(fit, "_rp_bic", None) is not None and np.isfinite(fit._rp_bic) else None,
+                "val_rmse": float(val_rmse),
+                "n_insig": int(n_insig),
+                "flags": flags,
+                "rp_terms": list(rpr.get("rdm_terms", [])) if rpr is not None else [],
+                "rp_mode": "correlated" if rpr is not None and (rpr.get("corr_matrix_str") or "").strip() else "independent",
+                "coefficients": rows,
+            }
+            with _auto_archive.open("a", encoding="utf-8") as _f:
+                _f.write(json.dumps(record) + "\n")
+            best_pkl = _auto_dir / "best_fit.pkl"
+            best_any_pkl = _auto_dir / "best_fit_any.pkl"
+            if fit is best_fit:
+                with best_pkl.open("wb") as _f:
+                    pickle.dump({"fit": fit, "bic": bic, "bic_penalised": bic_penalised}, _f)
+            if fit is best_fit_any:
+                with best_any_pkl.open("wb") as _f:
+                    pickle.dump({"fit": fit, "bic": bic, "bic_penalised": bic_penalised}, _f)
+            topk_pkl = _auto_dir / "top_k_fits.pkl"
+            if _in_heap and len(top_k_heap) >= 0:
+                _topk_snap = [h[2] for h in sorted(top_k_heap, key=lambda t: t[0], reverse=True)]
+                with topk_pkl.open("wb") as _f:
+                    pickle.dump(_topk_snap, _f)
+        except Exception:
+            pass
+
     # Seeds: use at least MIN_UPPER/MIN_LOWER variables to match main search
     baseline_upper = upper_candidates[:2] if len(upper_candidates) >= 2 else upper_candidates
     baseline_lower = lower_candidates[:1] if lower_candidates else []
@@ -880,27 +979,30 @@ def _random_search(
         (tuple(upper_candidates[:2]), tuple(lower_candidates[:1])),  # different pair
     ]
 
-    def _rp_bic_for_candidate(fit: FittedModel) -> float:
-        """Return the best random-params BIC for a candidate spec, or NaN.
+    def _rp_bic_for_candidate(fit: FittedModel) -> tuple[float, dict | None]:
+        """Return (best random-params BIC, best RP result dict) for a candidate spec.
 
         Only runs when RP-in-search is enabled and the raw/scaler/binary
         inputs are available.  Model vars are de-suffixed (_Z) back to raw
-        names before the RP refit.  Returns NaN when RP is disabled or the
-        refit fails, so the fixed-effects score remains authoritative.
+        names before the RP refit.  Returns (NaN, None) when RP is disabled
+        or the refit fails, so the fixed-effects score remains authoritative.
+        The best RP result dict carries the winning random terms, distribution
+        types, and coefficient table for inline logging.
         """
         if not rp_in_search:
-            return float("nan")
+            return float("nan"), None
         if df_train_raw is None or scaler_stats is None or binary_vars_rp is None:
-            return float("nan")
+            return float("nan"), None
 
         cand_upper_raw = sorted({n[:-2] if n.endswith("_Z") else n for n in fit.upper_vars})
         cand_lower_raw = sorted({n[:-2] if n.endswith("_Z") else n for n in fit.lower_vars})
         cand_upper_raw = [v for v in cand_upper_raw if v in df_train_raw.columns]
         cand_lower_raw = [v for v in cand_lower_raw if v in df_train_raw.columns]
         if not cand_upper_raw:
-            return float("nan")
+            return float("nan"), None
 
         best_rp_bic = float("nan")
+        best_rp_result: dict | None = None
         for _try_cor in [True, False]:
             _rp = _jax_random_params_refit(
                 df_trainval_raw=df_train_raw,
@@ -922,7 +1024,8 @@ def _random_search(
             if np.isfinite(_rb):
                 if not np.isfinite(best_rp_bic) or _rb < best_rp_bic:
                     best_rp_bic = _rb
-        return float(best_rp_bic)
+                    best_rp_result = _rp
+        return float(best_rp_bic), best_rp_result
 
     def _eval(fit: FittedModel, y_val_arr: np.ndarray, phase: str = "random") -> None:
         """Score a candidate, append to history, update bests and top-K heap."""
@@ -952,11 +1055,15 @@ def _random_search(
         # RP is only applied in refinement phases (harmony / sa), not during
         # the random exploration phase, to keep the broad first-pass cheap.
         if rp_in_search and phase != "random":
-            rp_bic = _rp_bic_for_candidate(fit)
+            rp_bic, rp_result = _rp_bic_for_candidate(fit)
             if np.isfinite(rp_bic) and rp_bic < bic:
                 bic = rp_bic
                 bic_penalised = bic + PVALUE_PENALTY_PER_INSIG * n_insig if np.isfinite(bic) else bic
             fit._rp_bic = float(rp_bic) if np.isfinite(rp_bic) else None
+            if rp_result is not None:
+                fit._rp_result = rp_result
+            else:
+                fit._rp_result = None
 
         history_rows.append({
             "Iteration": len(history_rows) + 1,
@@ -1039,7 +1146,29 @@ def _random_search(
                 print(f"           upper: {_upper_str}")
             if _lower_str != "(none)":
                 print(f"           lower: {_lower_str}")
-            # Print coefficient summary for Pareto/ALL-SIG entries
+            # ── Print full random-parameter details when a model enters PARETO ──
+            if _entered_pareto and getattr(fit, "_rp_result", None) is not None:
+                _rpr = fit._rp_result
+                _rrdm = _rpr.get("rdm_terms", [])
+                _rcor = _rpr.get("corr_matrix_str", "")
+                _rpr_ll = float(_rpr.get("loglik", float("nan")))
+                _rpr_bic = float(_rpr.get("bic", float("nan")))
+                _rpr_n = len(_rrdm)
+                _rpr_cor = "correlated" if _rcor.strip() else "independent"
+                print(f"           RANDOM PARAMETERS [{_rpr_n} terms, {_rpr_cor}] | LL={_rpr_ll:.2f} | BIC={_rpr_bic:.2f}")
+                if _rrdm:
+                    _rpr_df = _rpr.get("coef_df")
+                    if _rpr_df is not None and not _rpr_df.empty:
+                        _rparams = _rpr_df[_rpr_df["Role"].str.contains("Random", na=False)]
+                        if not _rparams.empty:
+                            for _, rprow in _rparams.iterrows():
+                                _pval = float(rprow.get("p-value", 1))
+                                _stars = "***" if _pval < 0.01 else "**" if _pval < 0.05 else "*" if _pval < 0.10 else ""
+                                print(f"             {rprow['Parameter']:30s} "
+                                      f"{float(rprow['Estimate']):+11.4f}  "
+                                      f"SE={float(rprow.get('Std.Err', 0)):.4f}  "
+                                      f"p={_pval:.4f}{_stars}")
+            # Print fixed-effects coefficient summary for Pareto/ALL-SIG entries
             if _entered_pareto or _all_sig:
                 _res = fit.result
                 _bse = getattr(_res, "bse", pd.Series(np.nan, index=_res.params.index))
@@ -1051,8 +1180,10 @@ def _random_search(
                     _p = _pinfo.get(_nm, np.nan)
                     _sig = "***" if np.isfinite(_p) and _p < 0.01 else ("**" if _p < 0.05 else ("*" if _p < 0.10 else "  "))
                     print(f"           {_nm:<30s} {float(_v):+10.4f}  p={_p:.4f} {_sig}")
-            if _lower_str != "(none)":
-                print(f"           lower: {_lower_str}")
+
+            # Incremental persist of notable candidates (PARETO / top-K / ALL-SIG)
+            _auto_save_candidate(fit, phase, _iters, bic, bic_penalised, val_rmse,
+                                 n_insig, _flags, pval_info)
 
     y_val_np = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
 
@@ -3377,7 +3508,8 @@ def _jax_random_params_refit(
 
         try:
             params_parte, se_parte, _ = _parte_cre(
-                params_vec, _objective, _pindex, variant="k3d3"
+                params_vec, _objective, _pindex, variant="k3d3",
+                check_multicollinearity=False,
             )
             params_vec = np.asarray(params_parte)
             _se_all = np.asarray(se_parte)
@@ -3621,7 +3753,8 @@ def _fit_literature_benchmark_with_metacount(
 
         try:
             params_parte, se_parte, _ = _parte_cre(
-                params_vec, _objective, _pindex, variant="k3d3"
+                params_vec, _objective, _pindex, variant="k3d3",
+                check_multicollinearity=False,
             )
             params_vec = np.asarray(params_parte)
             _se_all = np.asarray(se_parte)
@@ -5693,6 +5826,7 @@ def main() -> None:
         conv_patience=int(getattr(args, "conv_patience", 25)),
         conv_harmony_spread=float(getattr(args, "conv_harmony_spread", 2.0)),
         max_insig_in_search=int(getattr(args, "max_insig_in_search", 0)),
+        auto_save_dir=str(output_dir),
     )
 
     # Pareto selection over (BIC, validation RMSE), then require benchmark

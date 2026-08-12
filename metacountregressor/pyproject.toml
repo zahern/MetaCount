@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "metacountregressor"
-version = "1.0.112"
+dynamic = ["version"]
 description = "JAX-first hierarchical search and fitting for count, CMF, duration, linear, and pavement CLR models."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -28,6 +28,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+
+# Single source of truth for the version: _version.py (__version__).
+# Bump the number there only; the build metadata and runtime
+# metacountregressor.__version__ both read from it, so they can no longer desync.
+[tool.setuptools.dynamic]
+version = { attr = "_version.__version__" }
 
 [tool.setuptools]
 include-package-data = true

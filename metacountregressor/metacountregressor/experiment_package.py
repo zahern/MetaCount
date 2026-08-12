@@ -46,10 +46,15 @@ from __future__ import annotations
 # ── Apply patches FIRST ─────────────────────────────────────────────────
 try:
     from . import main_hpc_lc_patch as _patch  # type: ignore[attr-defined]
-except ImportError as exc:
-    if "attempted relative import with no known parent package" in str(exc):
+except ImportError:
+    # Relative import can fail either because there is no parent package
+    # (flat/top-level use) OR because the inner package does not ship
+    # main_hpc_lc_patch and the name cannot be resolved. In both cases the
+    # flat top-level module is the correct fallback; only raise the helpful
+    # dependency error if that flat import also fails.
+    try:
         import main_hpc_lc_patch as _patch   # patches main_hpc in-place
-    else:
+    except ImportError as exc:
         raise ImportError(
             "Unable to import the JAX backend for metacountregressor. "
             "Install package dependencies including 'jax' and 'jaxlib'."
@@ -131,6 +136,7 @@ try:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
+        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -170,6 +176,7 @@ except ImportError:
         build_param_index,
         build_model_from_manual_spec,
         mixed_model_loglik,
+        mixed_model_loglik_reg,
         print_summary,
         _seed_classes_from_clusters,
         _tobit_ols_init,
@@ -496,6 +503,26 @@ class StructureEvaluatorLC(StructureEvaluator):
                     ]
                     class_var_sets[drop_class] = class_var_sets[drop_class] - {var}
 
+            # ── Force membership uniqueness across classes ──────────
+            # When all non-reference classes share identical membership
+            # variable sets, deterministically differentiate them to
+            # avoid a constant class-probability model.
+            if struct_lc > 1 and class_membership and len(class_membership) >= 2:
+                mem_var_sets = [frozenset(cm) for cm in class_membership]
+                if mem_var_sets[0] and all(s == mem_var_sets[0] for s in mem_var_sets[1:]):
+                    eligible = sorted(mem_var_sets[0])
+                    n_diff = min(2, len(eligible))
+                    for d in range(n_diff):
+                        avail = sorted(set(eligible) & mem_var_sets[0])
+                        if not avail:
+                            break
+                        var = avail[int(rng.integers(len(avail)))]
+                        drop_class = (d + int(rng.integers(len(class_membership)))) % len(class_membership)
+                        class_membership[drop_class] = [
+                            v for v in class_membership[drop_class] if v != var
+                        ]
+                        mem_var_sets[drop_class] = mem_var_sets[drop_class] - {var}
+
         spec = {
             "fixed_terms":      fixed,
             "rdm_terms":        rdm_ind,
@@ -692,7 +719,8 @@ class StructureEvaluatorLC(StructureEvaluator):
                 K_base    = build_param_index(spec_1)["total_params"]
 
                 # Pre-build spec_c and pindex for per-class sizes
-                spec_c = replace(spec, latent_classes=C)
+                spec_c = replace(spec, latent_classes=C,
+                                 l2_penalty=0.1)
                 pindex_c = build_param_index(spec_c)
                 _class_K_base = list(pindex_c.get("class_K_base", [K_base] * C))
 
@@ -729,9 +757,9 @@ class StructureEvaluatorLC(StructureEvaluator):
                 except Exception:
                     params_em = init_params
 
-                # Step 4 — MLE polish (JAX-native optimizer, regularised if l2_penalty > 0)
+                # Step 4 — MLE polish (JAX-native optimizer with L2 penalty)
                 polish = LBFGS(
-                    fun=lambda p: mixed_model_loglik(p, data_train, spec_c),
+                    fun=lambda p: mixed_model_loglik_reg(p, data_train, spec_c),
                     maxiter=500,
                 )
                 result_c = polish.run(jnp.array(params_em))
@@ -782,7 +810,9 @@ class StructureEvaluatorLC(StructureEvaluator):
             return value
 
         except Exception as e:
+            import traceback
             print(f"  [fitness error] {e}")
+            traceback.print_exc()
             if sig is not None:
                 self._failed_structures.add(sig)
                 # Cap at 2000 entries to prevent unbounded growth during
@@ -1564,7 +1594,7 @@ class ExperimentBuilder:
         print_report: bool = False,
         use_prefit_start: bool = True,
         continuous_de_warm_start: bool = True,
-        use_slsqp: bool = False,
+        use_slsqp: bool = True,
         de_maxiter: int = 12,
         de_popsize: int = 8,
         de_rel_span: float = 1.5,

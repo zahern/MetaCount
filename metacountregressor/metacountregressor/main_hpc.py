@@ -3459,6 +3459,10 @@ class CountModel:
         self.param_index = build_param_index(spec)
         self.params = None
         self.last_de_report = None
+        # Default lower-level optimiser: JAX-based jaxopt.ScipyMinimize with the
+        # SLSQP method (gradients via JAX autodiff). Set to False for pure-JAX
+        # LBFGS on a per-instance basis if needed.
+        self._use_slsqp = True
 
     def objective(self, params):
         return mixed_model_loglik(params, self.data, self.spec)
@@ -3687,7 +3691,7 @@ class CountModel:
         # --------------------------------------------------
         # 2️⃣ OPTIMIZE
         # --------------------------------------------------
-        if getattr(self, "_use_slsqp", False):
+        if getattr(self, "_use_slsqp", True):
             import jaxopt
             solver = jaxopt.ScipyMinimize(
                 fun=self.objective, method="SLSQP", maxiter=3000, tol=1e-8
@@ -3876,6 +3880,57 @@ def compute_scaler(df, cols, exclude_binary=True):
             continue
         scaler[col] = (mu, sd)
     return scaler
+
+
+def compute_skewed_transforms(df, cols, skew_threshold=1.5):
+    """Detect right-skewed continuous predictors and return {col: 'log1p'}.
+    Only columns where >= 95 % of values are non-negative are considered.
+    Call ``apply_transforms`` before ``compute_scaler`` and ``apply_scaler``
+    so that standardisation operates on the transformed (more Gaussian) scale."""
+    try:
+        from scipy.stats import skew as _scipy_skew
+    except ImportError:
+        return {}
+    transforms = {}
+    for col in cols:
+        if col == "__INTERCEPT__" or col not in df.columns:
+            continue
+        vals = df[col].dropna()
+        if len(vals) < 10:
+            continue
+        # Skip binary columns
+        unique_vals = set(float(v) for v in vals.unique())
+        if unique_vals.issubset({0.0, 1.0}):
+            continue
+        neg_frac = float((vals < 0).mean())
+        if neg_frac > 0.05:
+            continue
+        try:
+            s = float(_scipy_skew(vals))
+        except Exception:
+            continue
+        if abs(s) < skew_threshold:
+            continue
+        transforms[col] = "log1p"
+    return transforms
+
+
+def apply_transforms(df, transform_map):
+    """Apply per-column transforms (log1p) in a new DataFrame copy."""
+    df = df.copy()
+    for col in transform_map:
+        if col not in df.columns:
+            continue
+        vals = df[col].to_numpy(dtype=float)
+        min_val = float(np.nanmin(vals)) if len(vals) > 0 else 0.0
+        if min_val < 0:
+            shift = abs(min_val) + 1e-6
+            transformed = np.log1p(vals + shift)
+        else:
+            transformed = np.log1p(np.clip(vals, 0, None))
+        if np.all(np.isfinite(transformed)):
+            df[col] = transformed
+    return df
 
 
 def apply_scaler(df, scaler):
@@ -4382,6 +4437,9 @@ def generate_draws(dist_name, shape):
 
     elif dist_name == "lognormal":
         return np.random.lognormal(mean=0, sigma=1, size=shape)
+
+    elif dist_name == "negative_lognormal":
+        return -np.random.lognormal(mean=0, sigma=1, size=shape)
 
     elif dist_name == "triangular":
         return np.random.triangular(-1, 0, 1, size=shape)
