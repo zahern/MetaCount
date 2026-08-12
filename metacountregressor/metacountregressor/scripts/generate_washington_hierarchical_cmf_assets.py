@@ -838,6 +838,10 @@ def _random_search(
     harmony_par: float = 0.35,
     top_k: int = 5,             # keep top-K models for random-params sweep
     rp_in_search: bool = False, # RP hybrid scoring inside the search (per-candidate)
+    rp_in_random_phase: bool = True,  # also run RP during the broad `random` exploration
+                                      # phase (not just harmony/sa refinement). Expensive
+                                      # (~1 RP refit per candidate); pair with a modest
+                                      # --search-iter budget.
     df_train_raw: pd.DataFrame | None = None,  # raw pre-standardisation train frame for RP
     scaler_stats: dict | None = None,          # scaler stats for RP _Z reconstruction
     binary_vars_rp: set | None = None,         # binary vars for RP term selection
@@ -1052,9 +1056,12 @@ def _random_search(
         # a candidate that is mediocre under complete pooling can win the
         # search if its random-parameter variant fits materially better.
         #
-        # RP is only applied in refinement phases (harmony / sa), not during
-        # the random exploration phase, to keep the broad first-pass cheap.
-        if rp_in_search and phase != "random":
+        # RP is applied in refinement phases (harmony / sa) and, when
+        # rp_in_random_phase is set, in the broad `random` exploration phase too
+        # so random-parameter variants compete from the first pass. Disable
+        # rp_in_random_phase to keep the broad first-pass cheap (RP only in refinement).
+        _rp_this_phase = rp_in_search and (rp_in_random_phase or phase != "random")
+        if _rp_this_phase:
             rp_bic, rp_result = _rp_bic_for_candidate(fit)
             if np.isfinite(rp_bic) and rp_bic < bic:
                 bic = rp_bic
@@ -1146,8 +1153,12 @@ def _random_search(
                 print(f"           upper: {_upper_str}")
             if _lower_str != "(none)":
                 print(f"           lower: {_lower_str}")
-            # ── Print full random-parameter details when a model enters PARETO ──
-            if _entered_pareto and getattr(fit, "_rp_result", None) is not None:
+            # ── Print full random-parameter details whenever an RP variant was
+            # actually fit for this candidate.  Previously gated on _entered_pareto,
+            # which almost never coincided with a valid RP result, so RP models
+            # were effectively invisible in the log.  We now also mark whether the
+            # RP variant beat the fixed-effects fit (RP-WIN) or not.
+            if getattr(fit, "_rp_result", None) is not None:
                 _rpr = fit._rp_result
                 _rrdm = _rpr.get("rdm_terms", [])
                 _rcor = _rpr.get("corr_matrix_str", "")
@@ -1155,7 +1166,11 @@ def _random_search(
                 _rpr_bic = float(_rpr.get("bic", float("nan")))
                 _rpr_n = len(_rrdm)
                 _rpr_cor = "correlated" if _rcor.strip() else "independent"
-                print(f"           RANDOM PARAMETERS [{_rpr_n} terms, {_rpr_cor}] | LL={_rpr_ll:.2f} | BIC={_rpr_bic:.2f}")
+                _fixed_bic = float(getattr(fit.result, "bic", float("nan")))
+                _rp_win = "RP-WIN" if (np.isfinite(_rpr_bic) and np.isfinite(_fixed_bic)
+                                       and _rpr_bic < _fixed_bic) else "rp>fixed"
+                print(f"           RANDOM PARAMETERS [{_rpr_n} terms, {_rpr_cor}] | "
+                      f"LL={_rpr_ll:.2f} | BIC={_rpr_bic:.2f} | {_rp_win}")
                 if _rrdm:
                     _rpr_df = _rpr.get("coef_df")
                     if _rpr_df is not None and not _rpr_df.empty:
@@ -3670,6 +3685,21 @@ def _jax_random_params_refit(
         bic = float(k * np.log(max(n, 1)) - 2.0 * ll)
         aic = float(2.0 * k - 2.0 * ll)
 
+        # ── Divergence guard ────────────────────────────────────────────────
+        # The RP model is warm-started from — and approximately nests — the
+        # fixed-effects NB fit (sd -> 0 recovers complete pooling), so a
+        # converged RP fit lands within a modest band of the FE BIC.  A blow-up
+        # far above it (the RP=1e5-1e6 lines seen in earlier logs) means SLSQP
+        # walked off to a garbage optimum; discard it so it neither pollutes the
+        # log nor is mistaken for a real candidate.  The fixed-effects score
+        # remains authoritative when this returns None.
+        if not np.isfinite(bic):
+            return None
+        _fe_bic = float(getattr(getattr(fe_fit, "result", None), "bic", np.nan)) \
+            if fe_fit is not None else np.nan
+        if np.isfinite(_fe_bic) and bic > _fe_bic + 500.0:
+            return None
+
         return {
             "coef_str": coef_str,
             "coef_df": coef_df,
@@ -5682,6 +5712,18 @@ def main() -> None:
              "--search-iter budget (<=200) or convergence-based early termination.",
     )
     parser.add_argument(
+        "--rp-in-random-phase",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="With --rp-in-search, also refit random-parameters during the broad "
+             "`random` exploration phase (not only harmony/sa refinement), so RP "
+             "variants compete from the first pass. On by default; use "
+             "--no-rp-in-random-phase to restrict RP to the refinement phases and "
+             "keep the exploration sweep cheap. WARNING: with ~57s/RP refit this "
+             "multiplies exploration cost — pair with a small --search-iter or "
+             "convergence early-stop.",
+    )
+    parser.add_argument(
         "--convergence-early-stop",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -5816,6 +5858,7 @@ def main() -> None:
         harmony_hmcr=float(args.harmony_hmcr),
         harmony_par=float(args.harmony_par),
         rp_in_search=bool(getattr(args, "rp_in_search", False)),
+        rp_in_random_phase=bool(getattr(args, "rp_in_random_phase", True)),
         df_train_raw=df_train_raw if getattr(args, "rp_in_search", False) else None,
         scaler_stats=scaler_train if getattr(args, "rp_in_search", False) else None,
         binary_vars_rp=binary_vars if getattr(args, "rp_in_search", False) else None,

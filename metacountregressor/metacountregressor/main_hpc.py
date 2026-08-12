@@ -37,9 +37,15 @@ DIST_MAP = {
     "normal": 0,
     "lognormal": 1,
     "triangular": 2,
-    'uniform':3,
-    
+    'uniform': 3,
+    "negative_lognormal": 4,
 }
+
+# Canonical order of the beta columns produced by ``transform_draws``.  The
+# integer code stored in ``DIST_MAP`` must equal the position of that
+# distribution's beta in the stacked array, so keep the two in lock-step when
+# adding a new distribution.
+N_DISTRIBUTIONS = len(DIST_MAP)
 
 def lognormal_loglik(y, eta, sigma):
 
@@ -770,22 +776,30 @@ def transform_draws(draws, mean, scale, dist_codes):
     # Lognormal
     beta_lognormal = jnp.exp(mean + scale * z)
 
-    # Triangular (using inverse CDF of symmetric triangular)
-    # Assume draws are uniform in (-1,1)
-    u = jsp.stats.norm.cdf(z)
-    beta_tri = mean + scale * (2*u - 1)
-    
+    # Triangular — symmetric triangular on (-1, 1), mode 0 (inverse-CDF map).
+    u = jnp.clip(jsp.stats.norm.cdf(z), 1e-7, 1.0 - 1e-7)
+    tri = jnp.where(u < 0.5,
+                    -1.0 + jnp.sqrt(2.0 * u),
+                     1.0 - jnp.sqrt(2.0 * (1.0 - u)))
+    beta_tri = mean + scale * tri
+
         # Uniform (mean + scale * u) where u in (-1,1)
     u = jsp.stats.norm.cdf(z) * 2 - 1
     beta_uniform = mean + scale * u
 
-    # Stack and select
-    betas = jnp.stack([beta_normal, beta_lognormal, beta_tri, beta_uniform], axis=-1)
+    # Negative lognormal (strictly negative)
+    beta_neg_lognormal = -jnp.exp(mean + scale * z)
+
+    # Stack and select (order matches DIST_MAP codes)
+    betas = jnp.stack(
+        [beta_normal, beta_lognormal, beta_tri, beta_uniform, beta_neg_lognormal],
+        axis=-1,
+    )
 
     # dist_codes shape (K,)
-    selector = jax.nn.one_hot(dist_codes, 4)  # (K,3)
+    selector = jax.nn.one_hot(dist_codes, betas.shape[-1])
 
-    selector = selector[None, :, None, :]  # (1,K,1,3)
+    selector = selector[None, :, None, :]
 
     beta = jnp.sum(betas * selector, axis=-1)
 
@@ -814,28 +828,48 @@ def transform_draws(draws, mean, scale, dist_codes):
 
     z = draws
 
-    # Normal
+    # Normal                          (code 0)
     beta_normal = mean + scale * z
 
-    # Lognormal
+    # Lognormal                       (code 1)  strictly positive
     beta_lognormal = jnp.exp(mean + scale * z)
 
-    # Triangular (using inverse CDF of symmetric triangular)
-    # Assume draws are uniform in (-1,1)
-    u = jsp.stats.norm.cdf(z)
-    beta_tri = mean + scale * (2*u - 1)
-    
-        # Uniform (mean + scale * u) where u in (-1,1)
+    # Triangular  (code 2) — symmetric triangular on (-1, 1), mode 0.
+    # Map the normal draw z to a uniform u via its CDF, then apply the inverse
+    # CDF (quantile function) of the symmetric triangular:
+    #     u < 0.5 : t = -1 + sqrt(2u)
+    #     u >= 0.5: t =  1 - sqrt(2(1-u))
+    # (Previously this returned mean + scale*(2u-1), i.e. a plain uniform draw
+    # identical to the `uniform` branch below — the density was never triangular.)
+    # u is clipped off {0,1} so the sqrt's gradient stays finite for the optimiser.
+    u = jnp.clip(jsp.stats.norm.cdf(z), 1e-7, 1.0 - 1e-7)
+    tri = jnp.where(u < 0.5,
+                    -1.0 + jnp.sqrt(2.0 * u),
+                     1.0 - jnp.sqrt(2.0 * (1.0 - u)))
+    beta_tri = mean + scale * tri
+
+    # Uniform (mean + scale * u) where u in (-1,1)             (code 3)
     u = jsp.stats.norm.cdf(z) * 2 - 1
     beta_uniform = mean + scale * u
 
-    # Stack and select
-    betas = jnp.stack([beta_normal, beta_lognormal, beta_tri, beta_uniform], axis=-1)
+    # Negative lognormal              (code 4)  strictly negative
+    # Mirror image of the lognormal: sign-constrains the coefficient to be
+    # <= 0, the usual choice for effects known a priori to be protective.
+    beta_neg_lognormal = -jnp.exp(mean + scale * z)
+
+    # Stack and select.  The order here MUST match the integer codes in
+    # DIST_MAP; the one-hot width is derived from the stack so adding a new
+    # beta column (and its DIST_MAP entry) is all that a new distribution needs.
+    betas = jnp.stack(
+        [beta_normal, beta_lognormal, beta_tri, beta_uniform, beta_neg_lognormal],
+        axis=-1,
+    )
+    n_dists = betas.shape[-1]
 
     # dist_codes shape (K,)
-    selector = jax.nn.one_hot(dist_codes, 4)  # (K,3)
+    selector = jax.nn.one_hot(dist_codes, n_dists)  # (K, n_dists)
 
-    selector = selector[None, :, None, :]  # (1,K,1,3)
+    selector = selector[None, :, None, :]  # (1, K, 1, n_dists)
 
     beta = jnp.sum(betas * selector, axis=-1)
 
@@ -4729,7 +4763,8 @@ def populate_allowed_distributions(all_variables,
                                    default_dist=None):
 
     if default_dist is None:
-        default_dist = ["normal", 'uniform', 'lognormal', 'triangular']
+        default_dist = ["normal", 'uniform', 'lognormal', 'triangular',
+                        'negative_lognormal']
 
     full = {}
 
