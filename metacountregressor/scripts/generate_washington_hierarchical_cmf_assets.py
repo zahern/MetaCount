@@ -838,6 +838,10 @@ def _random_search(
     harmony_par: float = 0.35,
     top_k: int = 5,             # keep top-K models for random-params sweep
     rp_in_search: bool = False, # RP hybrid scoring inside the search (per-candidate)
+    rp_in_random_phase: bool = True,  # also run RP during the broad `random` exploration
+                                      # phase (not just harmony/sa refinement). Expensive
+                                      # (~1 RP refit per candidate); pair with a modest
+                                      # --search-iter budget.
     df_train_raw: pd.DataFrame | None = None,  # raw pre-standardisation train frame for RP
     scaler_stats: dict | None = None,          # scaler stats for RP _Z reconstruction
     binary_vars_rp: set | None = None,         # binary vars for RP term selection
@@ -1052,9 +1056,12 @@ def _random_search(
         # a candidate that is mediocre under complete pooling can win the
         # search if its random-parameter variant fits materially better.
         #
-        # RP is only applied in refinement phases (harmony / sa), not during
-        # the random exploration phase, to keep the broad first-pass cheap.
-        if rp_in_search and phase != "random":
+        # RP is applied in refinement phases (harmony / sa) and, when
+        # rp_in_random_phase is set, in the broad `random` exploration phase too
+        # so random-parameter variants compete from the first pass. Disable
+        # rp_in_random_phase to keep the broad first-pass cheap (RP only in refinement).
+        _rp_this_phase = rp_in_search and (rp_in_random_phase or phase != "random")
+        if _rp_this_phase:
             rp_bic, rp_result = _rp_bic_for_candidate(fit)
             if np.isfinite(rp_bic) and rp_bic < bic:
                 bic = rp_bic
@@ -1129,8 +1136,8 @@ def _random_search(
         # ── Verbose logging ──────────────────────────────────────────
         if _entered_pareto or _in_heap or _all_sig:
             _iters = len(history_rows)
-            _upper_str = ", ".join(fit.upper_vars[:5]) if fit.upper_vars else "(none)"
-            _lower_str = ", ".join(fit.lower_vars[:3]) if fit.lower_vars else "(none)"
+            _upper_str = ", ".join(fit.upper_vars) if fit.upper_vars else "(none)"
+            _lower_str = ", ".join(fit.lower_vars) if fit.lower_vars else "(none)"
             _flags = []
             if _entered_pareto: _flags.append("PARETO")
             if _in_heap: _flags.append(f"Top-{top_k}")
@@ -1146,8 +1153,12 @@ def _random_search(
                 print(f"           upper: {_upper_str}")
             if _lower_str != "(none)":
                 print(f"           lower: {_lower_str}")
-            # ── Print full random-parameter details when a model enters PARETO ──
-            if _entered_pareto and getattr(fit, "_rp_result", None) is not None:
+            # ── Print full random-parameter details whenever an RP variant was
+            # actually fit for this candidate.  Previously gated on _entered_pareto,
+            # which almost never coincided with a valid RP result, so RP models
+            # were effectively invisible in the log.  We now also mark whether the
+            # RP variant beat the fixed-effects fit (RP-WIN) or not.
+            if getattr(fit, "_rp_result", None) is not None:
                 _rpr = fit._rp_result
                 _rrdm = _rpr.get("rdm_terms", [])
                 _rcor = _rpr.get("corr_matrix_str", "")
@@ -1155,7 +1166,11 @@ def _random_search(
                 _rpr_bic = float(_rpr.get("bic", float("nan")))
                 _rpr_n = len(_rrdm)
                 _rpr_cor = "correlated" if _rcor.strip() else "independent"
-                print(f"           RANDOM PARAMETERS [{_rpr_n} terms, {_rpr_cor}] | LL={_rpr_ll:.2f} | BIC={_rpr_bic:.2f}")
+                _fixed_bic = float(getattr(fit.result, "bic", float("nan")))
+                _rp_win = "RP-WIN" if (np.isfinite(_rpr_bic) and np.isfinite(_fixed_bic)
+                                       and _rpr_bic < _fixed_bic) else "rp>fixed"
+                print(f"           RANDOM PARAMETERS [{_rpr_n} terms, {_rpr_cor}] | "
+                      f"LL={_rpr_ll:.2f} | BIC={_rpr_bic:.2f} | {_rp_win}")
                 if _rrdm:
                     _rpr_df = _rpr.get("coef_df")
                     if _rpr_df is not None and not _rpr_df.empty:
@@ -1168,18 +1183,32 @@ def _random_search(
                                       f"{float(rprow['Estimate']):+11.4f}  "
                                       f"SE={float(rprow.get('Std.Err', 0)):.4f}  "
                                       f"p={_pval:.4f}{_stars}")
-            # Print fixed-effects coefficient summary for Pareto/ALL-SIG entries
-            if _entered_pareto or _all_sig:
-                _res = fit.result
-                _bse = getattr(_res, "bse", pd.Series(np.nan, index=_res.params.index))
-                _pinfo = pval_info.get("pvals", {})
-                for _i, (_nm, _v) in enumerate(_res.params.items()):
-                    if _i >= getattr(_res, "Kf", len(_res.params)) or _nm == "const":
-                        continue
-                    _se = float(_bse.get(_nm, np.nan)) if hasattr(_bse, 'get') else np.nan
-                    _p = _pinfo.get(_nm, np.nan)
-                    _sig = "***" if np.isfinite(_p) and _p < 0.01 else ("**" if _p < 0.05 else ("*" if _p < 0.10 else "  "))
-                    print(f"           {_nm:<30s} {float(_v):+10.4f}  p={_p:.4f} {_sig}")
+            # Print the full fixed-effects coefficient table for every logged model
+            # (Pareto / top-K / ALL-SIG).  Uses the journal formatter so the log
+            # shows Estimate, SE, z, p and significance for each coefficient.
+            _res = fit.result
+            _bse = getattr(_res, "bse", pd.Series(np.nan, index=_res.params.index))
+            _info = pval_info.get("pvals", {})
+            _full_rows = []
+            for _i, (_nm, _v) in enumerate(_res.params.items()):
+                if _i >= getattr(_res, "Kf", len(_res.params)) or _nm == "const":
+                    continue
+                _se = float(_bse.get(_nm, np.nan)) if hasattr(_bse, 'get') else np.nan
+                _z = _v / _se if (np.isfinite(_se) and _se > 1e-15) else np.nan
+                _p = float(_info.get(_nm, np.nan))
+                if not np.isfinite(_p) and np.isfinite(_z):
+                    _p = float(2.0 * (1.0 - _norm_cdf(abs(_z))))
+                _full_rows.append({
+                    "Parameter": VARIABLE_LABELS.get(_nm, _nm),
+                    "Role": "Fixed",
+                    "Estimate": float(_v),
+                    "Std.Err": _se,
+                    "z-value": _z,
+                    "p-value": _p,
+                })
+            if _full_rows:
+                _fe_df = pd.DataFrame(_full_rows)
+                print(_format_coef_table_journal(_fe_df, title=f"FIXED-EFFECTS COEFFICIENTS (iter {_iters}, {phase}, BIC={bic:.1f})"))
 
             # Incremental persist of notable candidates (PARETO / top-K / ALL-SIG)
             _auto_save_candidate(fit, phase, _iters, bic, bic_penalised, val_rmse,
@@ -3294,12 +3323,13 @@ def _jax_random_params_refit(
     max_random_terms: int,
     rp_draws: int,
     try_correlated: bool = False,
+    dist: str = "normal",
 ) -> dict[str, Any] | None:
     """Attempt a random-parameters (partial-pooling) refit using ExperimentBuilder.
 
     Continuous upper-level variables (up to max_random_terms, excluding
-    binary_vars) are fit as independent random parameters (rdm_terms, normal
-    distribution) — each segment effectively draws its own coefficient. This
+    binary_vars) are fit as independent random parameters (rdm_terms, given
+    ``dist`` distribution) — each segment effectively draws its own coefficient. This
     is the partial-pooling mechanism: segment-level effects are shrunk toward
     the population mean rather than forced identical (complete pooling, the
     plain fixed-effects fit elsewhere in this script) or estimated with no
@@ -3399,10 +3429,10 @@ def _jax_random_params_refit(
 
         builder = ExperimentBuilder(df=df, id_col="_id", y_col=y_col, offset_col=offset_col)
         # Build independent terms by default, or use the correlated block.
-        rdm_ind_terms = [f"{v}:normal" for v in rdm_terms]
+        rdm_ind_terms = [f"{v}:{dist}" for v in rdm_terms]
         rdm_cor_terms = []
         if try_correlated and len(rdm_terms) >= 2:
-            rdm_cor_terms = [f"{v}:normal" for v in rdm_terms]
+            rdm_cor_terms = [f"{v}:{dist}" for v in rdm_terms]
             rdm_ind_terms = []
 
         spec = builder.make_manual_spec(
@@ -3670,6 +3700,21 @@ def _jax_random_params_refit(
         bic = float(k * np.log(max(n, 1)) - 2.0 * ll)
         aic = float(2.0 * k - 2.0 * ll)
 
+        # ── Divergence guard ────────────────────────────────────────────────
+        # The RP model is warm-started from — and approximately nests — the
+        # fixed-effects NB fit (sd -> 0 recovers complete pooling), so a
+        # converged RP fit lands within a modest band of the FE BIC.  A blow-up
+        # far above it (the RP=1e5-1e6 lines seen in earlier logs) means SLSQP
+        # walked off to a garbage optimum; discard it so it neither pollutes the
+        # log nor is mistaken for a real candidate.  The fixed-effects score
+        # remains authoritative when this returns None.
+        if not np.isfinite(bic):
+            return None
+        _fe_bic = float(getattr(getattr(fe_fit, "result", None), "bic", np.nan)) \
+            if fe_fit is not None else np.nan
+        if np.isfinite(_fe_bic) and bic > _fe_bic + 500.0:
+            return None
+
         return {
             "coef_str": coef_str,
             "coef_df": coef_df,
@@ -3680,6 +3725,10 @@ def _jax_random_params_refit(
             "fit": None,
             "fixed_terms": fixed_terms,
             "rdm_terms": rdm_terms,
+            "dist": dist,
+            "mode": "correlated" if try_correlated else "independent",
+            "random_ind_names": list(spec_rp.random_ind_names),
+            "random_cor_names": list(spec_rp.random_cor_names),
         }
     except Exception:
         return None
@@ -4115,7 +4164,8 @@ def _fit_literature_benchmark_with_metacount(
         # lognormal — positive-skewed; useful if coefficient should be one-signed
         # triangular — bounded, flexible shape
         # uniform   — bounded, equal-weight prior
-        _DISTS = ["normal", "lognormal", "triangular", "uniform"]
+        # negative_lognormal — strictly negative; sign-constrains the coefficient
+        _DISTS = ["normal", "lognormal", "negative_lognormal", "triangular", "uniform"]
 
         # ── Try each distribution for independent random params ──────────
         if rdm_names:
@@ -5682,6 +5732,18 @@ def main() -> None:
              "--search-iter budget (<=200) or convergence-based early termination.",
     )
     parser.add_argument(
+        "--rp-in-random-phase",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="With --rp-in-search, also refit random-parameters during the broad "
+             "`random` exploration phase (not only harmony/sa refinement), so RP "
+             "variants compete from the first pass. On by default; use "
+             "--no-rp-in-random-phase to restrict RP to the refinement phases and "
+             "keep the exploration sweep cheap. WARNING: with ~57s/RP refit this "
+             "multiplies exploration cost — pair with a small --search-iter or "
+             "convergence early-stop.",
+    )
+    parser.add_argument(
         "--convergence-early-stop",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -5816,6 +5878,7 @@ def main() -> None:
         harmony_hmcr=float(args.harmony_hmcr),
         harmony_par=float(args.harmony_par),
         rp_in_search=bool(getattr(args, "rp_in_search", False)),
+        rp_in_random_phase=bool(getattr(args, "rp_in_random_phase", True)),
         df_train_raw=df_train_raw if getattr(args, "rp_in_search", False) else None,
         scaler_stats=scaler_train if getattr(args, "rp_in_search", False) else None,
         binary_vars_rp=binary_vars if getattr(args, "rp_in_search", False) else None,
@@ -6212,32 +6275,38 @@ def main() -> None:
             _n_avail = min(int(args.rp_max_random_terms), len(_cont_upper))
             print(f"\n  [RP] Trying: upper={_cand_upper}, lower={_cand_lower}")
             print(f"       Continuous upper vars available for random: {_cont_upper} ({_n_avail} max)")
-            # Try correlated random params first, then independent fallback
-            for _try_cor in [True, False]:
-                _rp = _jax_random_params_refit(
-                    df_trainval_raw=df_trainval_raw,
-                    best_upper_raw=_cand_upper,
-                    best_lower_raw=_cand_lower,
-                    y_col=args.y_col,
-                    aadt_col=args.aadt_col,
-                    offset_col=offset_col,
-                    scaler_stats=scaler_trainval,
-                    binary_vars=binary_vars,
-                    include_lower_interactions=bool(args.rp_include_lower_interactions),
-                    max_random_terms=int(args.rp_max_random_terms),
-                    rp_draws=int(args.rp_draws),
-                    try_correlated=_try_cor,
-                )
-                if _rp is not None:
+            # Sweep over random-parameter distributions, trying correlated random
+            # params first, then independent fallback, keeping the best-BIC winner.
+            _RP_DISTS = ["normal", "lognormal", "negative_lognormal", "triangular", "uniform"]
+            _cand_best: dict | None = None
+            for _dist in _RP_DISTS:
+                for _try_cor in [True, False]:
+                    _rp = _jax_random_params_refit(
+                        df_trainval_raw=df_trainval_raw,
+                        best_upper_raw=_cand_upper,
+                        best_lower_raw=_cand_lower,
+                        y_col=args.y_col,
+                        aadt_col=args.aadt_col,
+                        offset_col=offset_col,
+                        scaler_stats=scaler_trainval,
+                        binary_vars=binary_vars,
+                        include_lower_interactions=bool(args.rp_include_lower_interactions),
+                        max_random_terms=int(args.rp_max_random_terms),
+                        rp_draws=int(args.rp_draws),
+                        try_correlated=_try_cor,
+                        dist=_dist,
+                    )
+                    if _rp is None:
+                        continue
                     _mode = "correlated" if _try_cor else "independent"
-                    print(f"       [RP] {_mode:12s} OK: BIC={_rp.get('bic', float('nan')):.1f}, "
+                    _rp_b = _rp.get("bic", float("nan"))
+                    print(f"       [RP] {_mode:12s} {_dist:18s} BIC={_rp_b:.1f}, "
                           f"LL={_rp.get('loglik', float('nan')):.2f}")
-                    break
-                else:
-                    _mode = "correlated" if _try_cor else "independent"
-                    print(f"       [RP] {_mode:12s} FAILED")
+                    if _cand_best is None or (np.isfinite(_rp_b) and _rp_b < _cand_best.get("bic", float("inf"))):
+                        _cand_best = _rp
+            _rp = _cand_best
             if _rp is None:
-                print(f"       [RP] All modes failed for this candidate")
+                print(f"       [RP] All modes/distributions failed for this candidate")
                 continue
             _rp_bic = _rp.get("bic", float("nan"))
             if not np.isfinite(_rp_bic):
@@ -6246,6 +6315,13 @@ def main() -> None:
                 best_rp_bic    = _rp_bic
                 best_rp_result = _rp
                 print(f"       [RP] *** NEW BEST RP BIC={best_rp_bic:.1f} ***")
+            # Print the full coefficient table of this candidate's best RP model
+            # so random-parameter details are visible in the log.
+            _win_coef = _rp.get("coef_str")
+            if _win_coef:
+                print(_win_coef)
+                if _rp.get("dist"):
+                    print(f"       [RP] WInner dist={_rp['dist']} mode={_rp['mode']}")
         except Exception as _rp_exc:
             print(f"       [RP] Exception: {_rp_exc}")
             continue
@@ -6318,11 +6394,21 @@ def main() -> None:
             )
 
             (output_dir / "random_params_note.md").write_text(rp_txt, encoding="utf-8")
+            _win_dist  = jax_result.get("dist", "unknown")
+            _win_mode  = jax_result.get("mode", "unknown")
             (output_dir / "random_params_summary.json").write_text(
-                json.dumps({"summary": rp_txt, "loglik": rp_ll, "bic": rp_bic}, indent=2),
+                json.dumps({
+                    "summary": rp_txt,
+                    "loglik": rp_ll,
+                    "bic": rp_bic,
+                    "dist": _win_dist,
+                    "mode": _win_mode,
+                    "random_ind_names": list(jax_result.get("random_ind_names", [])),
+                    "random_cor_names": list(jax_result.get("random_cor_names", [])),
+                }, indent=2),
                 encoding="utf-8",
             )
-            print("  random_params_summary.json written.")
+            print(f"  random_params_summary.json written (dist={_win_dist}, mode={_win_mode}).")
 
             # Use random-params predictions for the AADT obs/pred plot
             rp_fit = jax_result.get("fit")
