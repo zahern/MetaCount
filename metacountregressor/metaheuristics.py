@@ -331,6 +331,83 @@ def harmony_search(objective_function, initial_harmonies=None, hyperparameters=N
         return HarmonySearchResults(elapsed_time, harmony, fitness, harmony_memory, harmony_history)
 
 
+# ---------------------------------------------------------------------- #
+#  SparseEA-AGDS: NSGA-III reference-point helpers (numpy, self-contained)#
+# ---------------------------------------------------------------------- #
+def _agds_reference_points(n_obj, divisions):
+    """Das-Dennis structured reference points on the (n_obj-1)-simplex."""
+    def _recurse(left, depth):
+        if depth == n_obj - 1:
+            return [[left]]
+        pts = []
+        for i in range(left + 1):
+            for tail in _recurse(left - i, depth + 1):
+                pts.append([i] + tail)
+        return pts
+    if n_obj == 1:
+        return np.array([[1.0]])
+    raw = _recurse(divisions, 0)
+    return np.array(raw, dtype=float) / float(divisions)
+
+
+def _agds_perp_distance(points, ref, assoc):
+    """Perpendicular distance of each point to its associated reference line."""
+    d = np.empty(len(points))
+    for i, p in enumerate(points):
+        w = ref[assoc[i]]
+        wn = w / (np.linalg.norm(w) + 1e-12)
+        proj = np.dot(p, wn) * wn
+        d[i] = np.linalg.norm(p - proj)
+    return d
+
+
+def _agds_associate(points, ref):
+    """Associate each point with the nearest reference line (index into ref)."""
+    if len(points) == 0:
+        return np.array([], dtype=int)
+    ref_norm = ref / (np.linalg.norm(ref, axis=1, keepdims=True) + 1e-12)
+    assoc = np.empty(len(points), dtype=int)
+    for i, p in enumerate(points):
+        proj = points[i] @ ref_norm.T                     # scalar projections
+        perp = np.linalg.norm(
+            p[None, :] - proj[:, None] * ref_norm, axis=1)
+        assoc[i] = int(np.argmin(perp))
+    return assoc
+
+
+def sparse_ea_agds(objective_function, initial_slns=None, **kwargs):
+    """ Worker for the SparseEA-AGDS solution algorithm (single process).
+
+    Mirrors :func:`harmony_search`: builds a :class:`SparseEA_AGDS`, runs it,
+    and returns a :class:`HarmonySearchResults` so ``helperprocess.results_printer``
+    works unchanged for both single- and multi-objective searches.
+    """
+    if kwargs.get('_hms') is not None:
+        objective_function._hms = kwargs.get('_hms')
+    try:
+        objective_function.instance_name = f"run_agds_{str(0)}"
+    except Exception:
+        pass
+
+    man = None
+    if kwargs.get('Manual_Fit') is not None:
+        man = kwargs['Manual_Fit']
+
+    start = datetime.now()
+    agds = SparseEA_AGDS(objective_function, **kwargs)
+    results = agds.run(initial_slns, mod_init=man)
+    elapsed_time = datetime.now() - start
+
+    if objective_function.is_multi:
+        best_layout, best_struct, pareto_memory, history = results
+        return HarmonySearchResults(elapsed_time=elapsed_time, best_harmony=best_layout,
+                                    best_fitness=best_struct, harmony_memories=pareto_memory,
+                                    harmony_histories=history)
+    else:
+        best_layout, best_fitness, memory, history, _it, _inc, _bst = results
+        return HarmonySearchResults(elapsed_time, best_layout, best_fitness, memory, history)
+
+
 class Metaheuristic(object):
     def __init__(self, objective_function, **kwargs):
         self._obj_fun = objective_function
@@ -1830,6 +1907,423 @@ class HarmonySearch(object):
             for harmony, fitness in self._harmony_memory:
                 choice.append(harmony[j])
             return random.choice(choice)
+
+
+class SparseEA_AGDS(object):
+    """
+        SparseEA-AGDS: Evolution algorithm with Adaptive Genetic operator and
+        Dynamic Scoring mechanism, after Wang et al. (Scientific Reports, 2025,
+        "Evolution algorithm with adaptive genetic operator and dynamic scoring
+        mechanism for large-scale sparse many-objective optimization").
+
+        The SparseEA representation X = dec x mask is mapped onto the model
+        specification search: ``mask_d`` is whether term ``d`` is included
+        (solution value != 0) and ``dec_d`` is which discrete choice
+        (distribution / transform / model-type) that term takes.  Three
+        stackable strategies are implemented:
+
+          (A) Adaptive genetic operator - per-individual crossover / mutation
+              probabilities scale with the individual's non-dominated rank:
+              ``P_s,i = (maxr - r_i + 1)/maxr`` (Eq. 5),
+              ``P_c,i = pc0 * P_s,i`` (Eq. 6), ``P_m,i = pm0 * P_s,i`` (Eq. 7).
+          (B) Dynamic scoring mechanism - each generation the decision-variable
+              score is recomputed from the current layers:
+              ``S_i_r = maxr - r_i + 1`` (Eq. 8), ``sumS = S_r^T x mask``
+              (Eq. 9), ``S_d = maxS - sumS_d + 1`` (Eq. 10); a binary
+              tournament on ``S_d`` picks which mask bits to flip.
+          (C) Reference-point-based environmental selection (NSGA-III niching)
+              maintains selection pressure under many objectives; for the
+              single-objective case it degenerates to best-N-by-objective.
+
+        The class mirrors the ``HarmonySearch`` interface: it takes an
+        ``ObjectiveFunction`` and exposes ``run()`` returning the same shape the
+        module-level wrapper expects.
+    """
+
+    def __init__(self, objective_function, **kwargs):
+        objective_function.algorithm = 'agds'
+        self._obj_fun = objective_function
+        if self._obj_fun._obj_1 is None:
+            print('no objective found, automatically selecting BIC')
+            self._obj_fun._obj_1 = 'bic'
+
+        self._pop_size = int(kwargs.get('_pop_size', kwargs.get('_hms', 20)))
+        if self._pop_size < 4:
+            self._pop_size = 4
+        self._num_intl_slns = self._pop_size
+        self.iter = int(kwargs.get('_max_iter', kwargs.get('MAX_ITERATIONS', 100)))
+        self._D = self._obj_fun.get_num_parameters()
+        # pc0 / pm0 are the paper's fixed base probabilities (Figs. 1-2 use
+        # 0.9 and 0.03); pm0 defaults to 1/D following Table 2's SparseEA row.
+        self.pc0 = float(kwargs.get('_pc0', 0.9))
+        self.pm0 = float(kwargs.get('_pm0', 1.0 / max(self._D, 1)))
+        self.ref_divisions = int(kwargs.get('_ref_divisions', 12))
+        self.print_verbose = kwargs.get('verbose', False)
+
+        try:
+            self.instance_name = str(objective_function.instance_name)
+        except Exception:
+            self.instance_name = str(kwargs.get('instance_name', 1))
+            objective_function.instance_name = self.instance_name
+        self.get_directory()
+
+        self._sa_memory = list()
+        self._history = list()
+        if objective_function.is_multi:
+            self.obj_1 = objective_function._get_obj1()
+            self.obj_2 = objective_function._get_obj2()
+            self.pf = Pareto(self.obj_1, self.obj_2, True)
+        else:
+            self.obj_1 = objective_function._get_obj1()
+            self.obj_2 = objective_function._get_obj2()
+            self.pf = Pareto(self.obj_1, self.obj_2, False)
+
+    # ------------------------------------------------------------------ #
+    #  bookkeeping (mirrors HarmonySearch / DifferentialEvolution)       #
+    # ------------------------------------------------------------------ #
+    def get_directory(self):
+        if not os.path.isdir(self.instance_name):
+            os.makedirs(self.instance_name)
+
+    def get_instance_name(self):
+        return str(self.instance_name) + '/log.csv'
+
+    def _random_selection(self, sln, i):
+        sln.append(self._obj_fun.get_value(i))
+
+    # ------------------------------------------------------------------ #
+    #  dec x mask representation helpers                                 #
+    # ------------------------------------------------------------------ #
+    def _maskable(self, i):
+        """A position is a sparsity gene (can be switched off) when 0 is one of
+        its discrete choices - e.g. feature-selection positions.  Positions
+        such as the constant or the model-type carry no 0 and stay active."""
+        try:
+            if not self._obj_fun.is_discrete(i):
+                return False
+            return 0 in self._obj_fun._discrete_values[i]
+        except Exception:
+            return False
+
+    def _nonzero_choices(self, i):
+        try:
+            choices = [v for v in self._obj_fun._discrete_values[i] if v != 0]
+        except Exception:
+            choices = []
+        return choices
+
+    @staticmethod
+    def _is_active(val):
+        return val != 0
+
+    def _maskable_indices(self):
+        return [i for i in range(self._D) if self._maskable(i)]
+
+    def _mask_vector(self, layout):
+        return [1 if self._is_active(layout[i]) else 0 for i in range(self._D)]
+
+    # ------------------------------------------------------------------ #
+    #  fitness evaluation -> "Struct" dict (layout + objective keys)      #
+    # ------------------------------------------------------------------ #
+    def _penalty_struct(self, layout):
+        pen = {'layout': list(layout), self.obj_1: 10 ** 9}
+        if self._obj_fun.is_multi:
+            pen[self.obj_2] = 10 ** 9
+        return pen
+
+    def _evaluate(self, layout):
+        try:
+            fitness = self._obj_fun.get_fitness(
+                layout, multi=self._obj_fun.is_multi, max_routine=2)
+            if not isinstance(fitness, dict):
+                return self._penalty_struct(layout)
+            if self.obj_1 not in fitness or fitness[self.obj_1] is None \
+                    or (isinstance(fitness[self.obj_1], float) and np.isnan(fitness[self.obj_1])):
+                return self._penalty_struct(layout)
+            if 'layout' not in fitness:
+                fitness['layout'] = list(layout)
+            try:
+                self._sa_memory.append(self._obj_fun.Last_Sol)
+            except Exception:
+                pass
+            return fitness
+        except Exception as e:
+            if self.print_verbose:
+                print('agds fitness error', e)
+            return self._penalty_struct(layout)
+
+    def _obj_vector(self, struct):
+        if self._obj_fun.is_multi:
+            return [float(struct[self.obj_1]), float(struct[self.obj_2])]
+        return [float(struct[self.obj_1])]
+
+    # ------------------------------------------------------------------ #
+    #  non-dominated ranking (r_i, maxr)  -- Eq. 5 / Eq. 8               #
+    # ------------------------------------------------------------------ #
+    def _compute_ranks(self, structs):
+        """Return (ranks, maxr) where ranks[i] is the 1-indexed non-dominated
+        layer of ``structs[i]``.  Multi-objective uses the package's front
+        builder; single-objective groups equal-objective ties into layers."""
+        n = len(structs)
+        if n == 0:
+            return [], 1
+        if self._obj_fun.is_multi:
+            try:
+                fronts = self.pf.get_fronts(structs)
+                ranks = [1] * n
+                for layer, (_, idxs) in enumerate(fronts.items(), start=1):
+                    for idx in idxs:
+                        ranks[idx] = layer
+                maxr = max(ranks)
+                return ranks, maxr
+            except Exception:
+                pass
+        order = sorted(range(n), key=lambda i: self._obj_vector(structs[i])[0])
+        ranks = [1] * n
+        layer = 1
+        prev = None
+        for pos, i in enumerate(order):
+            val = self._obj_vector(structs[i])[0]
+            if prev is not None and val > prev:
+                layer += 1
+            ranks[i] = layer
+            prev = val
+        return ranks, max(ranks)
+
+    # ------------------------------------------------------------------ #
+    #  (B) dynamic decision-variable score  -- Eqs. 8-10                 #
+    # ------------------------------------------------------------------ #
+    def _dynamic_scores(self, structs, ranks, maxr):
+        si_r = [maxr - r + 1 for r in ranks]                 # Eq. 8
+        sumS = [0.0] * self._D
+        for i, struct in enumerate(structs):
+            mask = self._mask_vector(struct['layout'])
+            for d in range(self._D):
+                sumS[d] += si_r[i] * mask[d]                  # Eq. 9
+        maxS = max(sumS) if sumS else 0.0
+        S_d = [maxS - sumS[d] + 1 for d in range(self._D)]    # Eq. 10 (lower is better)
+        return S_d
+
+    def _tournament_dim(self, S_d, candidates):
+        """Binary tournament on the (dynamic) score - the smaller S_d wins,
+        i.e. dimensions frequently non-zero among superior individuals are
+        favoured for crossover / mutation of the mask (paper, Figs. 3-4)."""
+        if not candidates:
+            return None
+        a = random.choice(candidates)
+        b = random.choice(candidates)
+        return a if S_d[a] <= S_d[b] else b
+
+    # ------------------------------------------------------------------ #
+    #  (A) adaptive genetic operator + mask operator  -> one offspring   #
+    # ------------------------------------------------------------------ #
+    def _make_offspring(self, parent, partner, ps_i, S_d):
+        pc_i = self.pc0 * ps_i                                # Eq. 6
+        pm_i = self.pm0 * ps_i                                # Eq. 7
+        child = list(parent['layout'])
+        p_layout = partner['layout']
+
+        # ---- dec: adaptive per-position crossover / mutation ----------
+        # position index matrix K (Alg. 1): each dimension independently
+        # selected; whether it actually changes is gated by pc_i / pm_i.
+        for d in range(self._D):
+            if random.random() < pc_i:                        # crossover of dec
+                child[d] = p_layout[d]
+            if random.random() < pm_i:                        # mutation of dec
+                nz = self._nonzero_choices(d)
+                if nz:
+                    child[d] = random.choice(nz)
+                else:
+                    child[d] = self._obj_fun.get_value(d)
+
+        # ---- mask: dynamic-scoring driven crossover + mutation --------
+        maskable = self._maskable_indices()
+        # mask crossover: at a tournament-chosen dimension where activity
+        # differs from the partner, adopt the partner's value.
+        differing = [d for d in maskable
+                     if self._is_active(child[d]) != self._is_active(p_layout[d])]
+        if differing and random.random() < self.pc0 * ps_i:
+            d = self._tournament_dim(S_d, differing)
+            if d is not None:
+                child[d] = p_layout[d]
+        # mask mutation: invert activity at a tournament-chosen dimension.
+        if maskable and random.random() < max(pm_i, self.pm0):
+            d = self._tournament_dim(S_d, maskable)
+            if d is not None:
+                if self._is_active(child[d]):
+                    child[d] = 0
+                else:
+                    nz = self._nonzero_choices(d)
+                    child[d] = random.choice(nz) if nz else child[d]
+        return child
+
+    def _reproduce(self, structs):
+        ranks, maxr = self._compute_ranks(structs)
+        S_d = self._dynamic_scores(structs, ranks, maxr)
+        n = len(structs)
+        children = []
+        for i in range(n):
+            ps_i = (maxr - ranks[i] + 1) / maxr               # Eq. 5
+            j = random.randrange(n)
+            while j == i and n > 1:
+                j = random.randrange(n)
+            child_layout = self._make_offspring(structs[i], structs[j], ps_i, S_d)
+            children.append(self._evaluate(child_layout))
+        return children
+
+    # ------------------------------------------------------------------ #
+    #  (C) reference-point-based environmental selection (NSGA-III)       #
+    # ------------------------------------------------------------------ #
+    def _environmental_selection(self, combined, n_select):
+        if len(combined) <= n_select:
+            return list(combined)
+        if not self._obj_fun.is_multi:
+            combined = sorted(combined, key=lambda s: self._obj_vector(s)[0])
+            return combined[:n_select]
+
+        # non-dominated fronts (reuse the package builder)
+        fronts = self.pf.get_fronts(combined)
+        selected, critical = [], None
+        for _, idxs in fronts.items():
+            if len(selected) + len(idxs) <= n_select:
+                selected.extend(idxs)
+            else:
+                critical = idxs
+                break
+        if len(selected) == n_select or critical is None:
+            return [combined[i] for i in selected[:n_select]]
+
+        F = np.array([self._obj_vector(combined[i]) for i in range(len(combined))],
+                     dtype=float)
+        M = F.shape[1]
+        ideal = F.min(axis=0)
+        Fn = F - ideal
+        nadir = Fn.max(axis=0)
+        nadir[nadir == 0] = 1.0
+        Fn = Fn / nadir
+
+        ref = _agds_reference_points(M, self.ref_divisions)
+        sel_assoc = _agds_associate(Fn[selected], ref) if selected else np.array([], dtype=int)
+        niche = np.zeros(len(ref), dtype=int)
+        for a in sel_assoc:
+            niche[a] += 1
+        crit_assoc = _agds_associate(Fn[critical], ref)
+        crit_dist = _agds_perp_distance(Fn[critical], ref, crit_assoc)
+
+        chosen = list(selected)
+        available = list(range(len(critical)))
+        while len(chosen) < n_select and available:
+            rmin = None
+            for k in set(crit_assoc[c] for c in available):
+                if rmin is None or niche[k] < niche[rmin]:
+                    rmin = k
+            members = [c for c in available if crit_assoc[c] == rmin]
+            if niche[rmin] == 0:
+                pick = min(members, key=lambda c: crit_dist[c])
+            else:
+                pick = random.choice(members)
+            chosen.append(critical[pick])
+            niche[rmin] += 1
+            available.remove(pick)
+        return [combined[i] for i in chosen[:n_select]]
+
+    # ------------------------------------------------------------------ #
+    #  initial population (Alg. 3 lines 6-11)                            #
+    # ------------------------------------------------------------------ #
+    def _initialize(self, initial_slns=None, model_nature=None):
+        vector = None
+        if model_nature is not None:
+            try:
+                a = self._obj_fun.modify_initial_fit(model_nature)
+                vector = self._obj_fun.reconstruct_vector(a)
+            except Exception as e:
+                if self.print_verbose:
+                    print('agds model_nature seed failed', e)
+        if initial_slns is None:
+            initial_slns = []
+            for _ in range(self._num_intl_slns):
+                sln = []
+                for j in range(self._D):
+                    self._random_selection(sln, j)
+                initial_slns.append(sln)
+        if vector is not None and initial_slns:
+            initial_slns[0] = vector
+
+        population = []
+        for k in range(len(initial_slns)):
+            if self.print_verbose:
+                print('evaluating initial sln', k)
+            struct = self._evaluate(initial_slns[k])
+            population.append(struct)
+            if self._obj_fun.is_multi:
+                self.pf.add_Structs(struct)
+        if self._obj_fun.is_multi:
+            self.pf.run()
+        return population
+
+    # ------------------------------------------------------------------ #
+    #  main loop (Alg. 3 lines 12-17)                                    #
+    # ------------------------------------------------------------------ #
+    def run(self, initial_slns=None, mod_init=None):
+        start_time = datetime.now()
+        if self._obj_fun.use_random_seed():
+            self._obj_fun.set_random_seed()
+
+        population = self._initialize(initial_slns, mod_init)
+        best_key = self.obj_1
+
+        def _best_of(structs):
+            return min(structs, key=lambda s: self._obj_vector(s)[0])
+
+        incumbent = _best_of(population)
+        best_collection, incumbent_collection, iter_axis = [], [], []
+
+        for gen in range(self.iter):
+            children = self._reproduce(population)
+            if self._obj_fun.is_multi:
+                for c in children:
+                    self.pf.add_Structs(c)
+            else:
+                for c in children:
+                    self._sa_memory.append(c)
+
+            population = self._environmental_selection(
+                population + children, self._pop_size)
+
+            gen_best = _best_of(population)
+            if self._obj_vector(gen_best)[0] < self._obj_vector(incumbent)[0]:
+                incumbent = gen_best
+
+            iter_axis.append(gen)
+            best_collection.append(self._obj_vector(gen_best)[0])
+            incumbent_collection.append(self._obj_vector(incumbent)[0])
+            self._history.append({'gen': gen, 'pop': copy.deepcopy(population)})
+
+            try:
+                logger(gen, gen_best, incumbent, name=self.get_instance_name(),
+                       local_best1=gen_best)
+            except Exception:
+                pass
+            if self.print_verbose:
+                print(f'gen {gen}: best {best_key}={self._obj_vector(gen_best)[0]:.4f}')
+
+            elapsed = (datetime.now() - start_time).total_seconds()
+            try:
+                if elapsed > self._obj_fun.get_max_time():
+                    break
+            except Exception:
+                pass
+
+        if self._obj_fun.is_multi:
+            pareto_memory = self.pf.pareto_run(population, True)
+            best = _best_of(pareto_memory) if pareto_memory else incumbent
+            return best['layout'], best, pareto_memory, self._history
+        else:
+            population = sorted(population, key=lambda s: self._obj_vector(s)[0])
+            best = population[0]
+            best_fitness = self._obj_vector(best)[0]
+            return (best['layout'], best_fitness, population, self._history,
+                    iter_axis, incumbent_collection, best_collection)
 
 
 class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearch):

@@ -191,6 +191,11 @@ _LEGACY_EXPORTS = {
         "simulated_annealing",
         "Legacy metaheuristics are deprecated; use ExperimentBuilder.run(..., algo='sa').",
     ),
+    "sparse_ea_agds": (
+        "metaheuristics",
+        "sparse_ea_agds",
+        "Legacy metaheuristics are deprecated; use ExperimentBuilder.run(..., algo='agds').",
+    ),
 }
 
 

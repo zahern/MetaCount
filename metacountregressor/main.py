@@ -12,7 +12,8 @@ from pandas.io.parsers import TextFileReader
 import helperprocess
 from metaheuristics import (differential_evolution,
                             harmony_search,
-                            simulated_annealing)
+                            simulated_annealing,
+                            sparse_ea_agds)
 from solution import ObjectiveFunction
 
 
@@ -440,6 +441,31 @@ def main(args, **kwargs):
             results = differential_evolution(obj_fun, None, **args_hyperparameters)
             helperprocess.results_printer(results, args['algorithm'], int(args['is_multi'])) #TODO FIX This
 
+    elif args['algorithm'] == 'agds':
+        # SparseEA-AGDS: adaptive genetic operator + dynamic scoring + reference
+        # point selection (Wang et al. 2025). Mirrors the 'hs' branch.
+        args['_mpai'] = 1
+        args['must_include'] = args.get('force', [])
+        obj_fun = ObjectiveFunction(x_df, y_df, **args)
+        args_hyperparameters = {
+            '_pop_size': int(args.get('_hms', 20)),
+            '_max_iter': int(args.get('_max_imp', 100)),
+            '_pc0': float(args.get('_pc0', 0.9)),
+            'Manual_Fit': args['Manual_Fit'],
+            'MP': int(args['MP']),
+        }
+        if args.get('_pm0') is not None:
+            args_hyperparameters['_pm0'] = float(args['_pm0'])
+
+        results = sparse_ea_agds(obj_fun, None, **args_hyperparameters)
+        helperprocess.results_printer(results, args['algorithm'], int(args['is_multi']))
+
+        if args.get('dual_complexities', 0):
+            args['complexity_level'] = args['secondary_complexity']
+            obj_fun = ObjectiveFunction(x_df, y_df, **args)
+            results = sparse_ea_agds(obj_fun, None, **args_hyperparameters)
+            helperprocess.results_printer(results, args['algorithm'], int(args['is_multi']))
+
 
 if __name__ == '__main__':
     """Loading in command line args.  """
@@ -487,7 +513,9 @@ if __name__ == '__main__':
 
         if 'algorithm' not in args:
             parser.add_argument('-algorithm', type=str, default='hs',
-                                help='optimization algorithm')
+                                help="optimization algorithm: 'hs' (harmony search), "
+                                     "'sa' (simulated annealing), 'de' (differential "
+                                     "evolution), 'agds' (SparseEA-AGDS)")
         elif 'Manual_Fit' not in args:
             parser.add_argument('-Manual_Fit', action='store_false', default=None,
                                 help='To fit a model manually if desired.')
