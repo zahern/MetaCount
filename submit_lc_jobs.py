@@ -66,39 +66,20 @@ ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 ssh.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=30)
 print("Connected.\n")
 
-# ── 1. Install the NEWEST metacountregressor from GitHub (always latest) ────
-#     We install straight from the git master HEAD so the HPC always gets the
-#     code you just pushed -- PyPI only refreshes when a release is published,
-#     and the publish workflow is gated on the (non-existent) `main` branch.
-#     --force-reinstall guarantees a fresh copy even if the version number is
-#     unchanged, and --no-deps avoids reinstalling the whole dependency tree.
-print("Installing latest metacountregressor (git HEAD) into conda env '%s' ..." % CONDA_ENV)
-GIT_URL = "https://github.com/zahern/MetaCount.git@master"
-install_cmd = (
+# ── 1. Upgrade metacountregressor in zigenv (always latest from PyPI) ──────
+#     The publish workflow bumps the version and uploads to PyPI on every
+#     push to master, so `pip install --upgrade` here always grabs the newest
+#     commit you pushed.
+print("Upgrading metacountregressor (PyPI) in conda env '%s' ..." % CONDA_ENV)
+upgrade_cmd = (
     f"source /home/{USER}/miniconda3/etc/profile.d/conda.sh && "
     f"conda activate {CONDA_ENV} && "
-    f"pip install --upgrade --force-reinstall --no-deps "
-    f"git+{GIT_URL} 2>&1"
+    f"pip install --upgrade metacountregressor 2>&1"
 )
-out, err = run_cmd(ssh, install_cmd, timeout=600)
+out, err = run_cmd(ssh, upgrade_cmd, timeout=300)
 lines = [l for l in out.splitlines() if l.strip()]
 for line in lines[-6:]:
     print(f"  {line}")
-git_ok = ("Successfully installed" in out or "Successfully upgraded" in out) \
-    and "ERROR" not in out and "fatal" not in out and "Could not find" not in out
-
-if not git_ok:
-    # Fallback: try PyPI (only useful once a release is published)
-    print("  [warn] git install did not succeed; falling back to PyPI ...")
-    fb = (
-        f"source /home/{USER}/miniconda3/etc/profile.d/conda.sh && "
-        f"conda activate {CONDA_ENV} && "
-        f"pip install --upgrade metacountregressor 2>&1"
-    )
-    out, err = run_cmd(ssh, fb, timeout=300)
-    for line in [l for l in out.splitlines() if l.strip()][-6:]:
-        print(f"  {line}")
-
 if err:
     for line in err.splitlines()[-3:]:
         print(f"  [stderr] {line}")
