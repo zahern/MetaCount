@@ -74,7 +74,7 @@ print("Upgrading metacountregressor (PyPI) in conda env '%s' ..." % CONDA_ENV)
 upgrade_cmd = (
     f"source /home/{USER}/miniconda3/etc/profile.d/conda.sh && "
     f"conda activate {CONDA_ENV} && "
-    f"pip install --upgrade metacountregressor 2>&1"
+    f"pip install --upgrade --index-url https://pypi.org/simple metacountregressor 2>&1"
 )
 out, err = run_cmd(ssh, upgrade_cmd, timeout=300)
 lines = [l for l in out.splitlines() if l.strip()]

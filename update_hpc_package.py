@@ -52,7 +52,7 @@ def main():
     install_cmd = (
         f"source /home/{USER}/miniconda3/etc/profile.d/conda.sh && "
         f"conda activate {CONDA_ENV} && "
-        f"pip install --upgrade metacountregressor 2>&1"
+        f"pip install --upgrade --index-url https://pypi.org/simple metacountregressor 2>&1"
     )
     out, err = run_cmd(ssh, install_cmd, timeout=300)
     for line in [l for l in out.splitlines() if l.strip()][-8:]:
