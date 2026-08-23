@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 import pickle
@@ -429,8 +430,9 @@ def _safe_predict(result: Any, exog: pd.DataFrame, offset: np.ndarray | None) ->
         pred = result.predict(exog)
     else:
         pred = result.predict(exog, offset=offset)
-    arr = np.asarray(pred, dtype=float).reshape(-1)
-    return np.clip(arr, 1e-9, None)
+    arr = np.clip(np.asarray(pred, dtype=float).reshape(-1), 1e-9, None)
+    arr = np.where(np.isfinite(arr), arr, np.nan)
+    return arr
 
 
 def _poisson_deviance(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -838,10 +840,6 @@ def _random_search(
     harmony_par: float = 0.35,
     top_k: int = 5,             # keep top-K models for random-params sweep
     rp_in_search: bool = False, # RP hybrid scoring inside the search (per-candidate)
-    rp_in_random_phase: bool = True,  # also run RP during the broad `random` exploration
-                                      # phase (not just harmony/sa refinement). Expensive
-                                      # (~1 RP refit per candidate); pair with a modest
-                                      # --search-iter budget.
     df_train_raw: pd.DataFrame | None = None,  # raw pre-standardisation train frame for RP
     scaler_stats: dict | None = None,          # scaler stats for RP _Z reconstruction
     binary_vars_rp: set | None = None,         # binary vars for RP term selection
@@ -1056,12 +1054,9 @@ def _random_search(
         # a candidate that is mediocre under complete pooling can win the
         # search if its random-parameter variant fits materially better.
         #
-        # RP is applied in refinement phases (harmony / sa) and, when
-        # rp_in_random_phase is set, in the broad `random` exploration phase too
-        # so random-parameter variants compete from the first pass. Disable
-        # rp_in_random_phase to keep the broad first-pass cheap (RP only in refinement).
-        _rp_this_phase = rp_in_search and (rp_in_random_phase or phase != "random")
-        if _rp_this_phase:
+        # RP is only applied in refinement phases (harmony / sa), not during
+        # the random exploration phase, to keep the broad first-pass cheap.
+        if rp_in_search and phase != "random":
             rp_bic, rp_result = _rp_bic_for_candidate(fit)
             if np.isfinite(rp_bic) and rp_bic < bic:
                 bic = rp_bic
@@ -1093,28 +1088,30 @@ def _random_search(
         nonlocal best_fit, best_score, best_fit_any, best_score_any
         _improved = False
         _entered_pareto = False
-        _all_sig = (n_insig <= max_insig_in_search)
-
-        # Only (near-)all-significant models can enter the Pareto frontier.
-        # max_insig_in_search relaxes the strict all-sig requirement for sparse
+        # Strictly all-significant: for labeling purposes
+        _all_sig_strict = (n_insig == 0)
+        # Relaxed threshold: for acceptance into Pareto frontier
+        # max_insig_in_search allows models with a few non-sig parameters for sparse
         # responses (e.g. QLD head-on crashes, mostly zero) where no candidate
         # ever reaches n_insig==0 and the search would otherwise raise at the
         # end.  Insignificant models are still evaluated (SA can explore through
         # them via temperature acceptance) but are filtered out of best/top-K.
-        if _all_sig and bic_penalised < best_score_any:
+        _acceptable = (n_insig <= max_insig_in_search)
+
+        if _acceptable and bic_penalised < best_score_any:
             best_score_any = bic_penalised
             best_fit_any   = fit
             _entered_pareto = True
             _improved = True
-        if _all_sig and (not enforce_aadt_increase or mono_ok) and bic_penalised < best_score:
+        if _acceptable and (not enforce_aadt_increase or mono_ok) and bic_penalised < best_score:
             best_score = bic_penalised
             best_fit   = fit
             _entered_pareto = True
             _improved = True
 
-        # Convergence stall tracking: any all-sig/monotonic improvement resets
+        # Convergence stall tracking: any acceptable/monotonic improvement resets
         # the patience counter; otherwise it increments (capped).
-        if _all_sig and np.isfinite(bic_penalised) and (not enforce_aadt_increase or mono_ok):
+        if _acceptable and np.isfinite(bic_penalised) and (not enforce_aadt_increase or mono_ok):
             if _improved:
                 _stall[0] = 0
             else:
@@ -1122,10 +1119,10 @@ def _random_search(
             if _stall[0] >= conv_patience:
                 _stall_reached[0] = True
 
-        # top-K heap: only all-sig models
+        # top-K heap: only acceptable models (n_insig <= max_insig_in_search)
         _counter[0] += 1
         _in_heap = False
-        if _all_sig and np.isfinite(bic_penalised) and (not enforce_aadt_increase or mono_ok):
+        if _acceptable and np.isfinite(bic_penalised) and (not enforce_aadt_increase or mono_ok):
             if len(top_k_heap) < top_k:
                 _hq.heappush(top_k_heap, (-bic_penalised, _counter[0], fit))
                 _in_heap = True
@@ -1134,14 +1131,14 @@ def _random_search(
                 _in_heap = True
 
         # ── Verbose logging ──────────────────────────────────────────
-        if _entered_pareto or _in_heap or _all_sig:
+        if _entered_pareto or _in_heap or _all_sig_strict:
             _iters = len(history_rows)
-            _upper_str = ", ".join(fit.upper_vars) if fit.upper_vars else "(none)"
-            _lower_str = ", ".join(fit.lower_vars) if fit.lower_vars else "(none)"
+            _upper_str = ", ".join(fit.upper_vars[:5]) if fit.upper_vars else "(none)"
+            _lower_str = ", ".join(fit.lower_vars[:3]) if fit.lower_vars else "(none)"
             _flags = []
             if _entered_pareto: _flags.append("PARETO")
             if _in_heap: _flags.append(f"Top-{top_k}")
-            if _all_sig: _flags.append("ALL-SIG")
+            if _all_sig_strict: _flags.append("ALL-SIG")
             _flag_str = " | ".join(_flags) if _flags else "N_INSIG"
             if getattr(fit, "_rp_bic", None) is not None:
                 print(f"  [{_iters:5d}] {phase:7s} {fit.family:2s} | BIC={bic:.1f} (pen={bic_penalised:.1f}) | "
@@ -1153,12 +1150,8 @@ def _random_search(
                 print(f"           upper: {_upper_str}")
             if _lower_str != "(none)":
                 print(f"           lower: {_lower_str}")
-            # ── Print full random-parameter details whenever an RP variant was
-            # actually fit for this candidate.  Previously gated on _entered_pareto,
-            # which almost never coincided with a valid RP result, so RP models
-            # were effectively invisible in the log.  We now also mark whether the
-            # RP variant beat the fixed-effects fit (RP-WIN) or not.
-            if getattr(fit, "_rp_result", None) is not None:
+            # ── Print full random-parameter details when a model enters PARETO ──
+            if _entered_pareto and getattr(fit, "_rp_result", None) is not None:
                 _rpr = fit._rp_result
                 _rrdm = _rpr.get("rdm_terms", [])
                 _rcor = _rpr.get("corr_matrix_str", "")
@@ -1166,11 +1159,7 @@ def _random_search(
                 _rpr_bic = float(_rpr.get("bic", float("nan")))
                 _rpr_n = len(_rrdm)
                 _rpr_cor = "correlated" if _rcor.strip() else "independent"
-                _fixed_bic = float(getattr(fit.result, "bic", float("nan")))
-                _rp_win = "RP-WIN" if (np.isfinite(_rpr_bic) and np.isfinite(_fixed_bic)
-                                       and _rpr_bic < _fixed_bic) else "rp>fixed"
-                print(f"           RANDOM PARAMETERS [{_rpr_n} terms, {_rpr_cor}] | "
-                      f"LL={_rpr_ll:.2f} | BIC={_rpr_bic:.2f} | {_rp_win}")
+                print(f"           RANDOM PARAMETERS [{_rpr_n} terms, {_rpr_cor}] | LL={_rpr_ll:.2f} | BIC={_rpr_bic:.2f}")
                 if _rrdm:
                     _rpr_df = _rpr.get("coef_df")
                     if _rpr_df is not None and not _rpr_df.empty:
@@ -1183,36 +1172,24 @@ def _random_search(
                                       f"{float(rprow['Estimate']):+11.4f}  "
                                       f"SE={float(rprow.get('Std.Err', 0)):.4f}  "
                                       f"p={_pval:.4f}{_stars}")
-            # Print the full fixed-effects coefficient table for every logged model
-            # (Pareto / top-K / ALL-SIG).  Uses the journal formatter so the log
-            # shows Estimate, SE, z, p and significance for each coefficient.
-            _res = fit.result
-            _bse = getattr(_res, "bse", pd.Series(np.nan, index=_res.params.index))
-            _info = pval_info.get("pvals", {})
-            _full_rows = []
-            for _i, (_nm, _v) in enumerate(_res.params.items()):
-                if _i >= getattr(_res, "Kf", len(_res.params)) or _nm == "const":
-                    continue
-                _se = float(_bse.get(_nm, np.nan)) if hasattr(_bse, 'get') else np.nan
-                _z = _v / _se if (np.isfinite(_se) and _se > 1e-15) else np.nan
-                _p = float(_info.get(_nm, np.nan))
-                if not np.isfinite(_p) and np.isfinite(_z):
-                    _p = float(2.0 * (1.0 - _norm_cdf(abs(_z))))
-                _full_rows.append({
-                    "Parameter": VARIABLE_LABELS.get(_nm, _nm),
-                    "Role": "Fixed",
-                    "Estimate": float(_v),
-                    "Std.Err": _se,
-                    "z-value": _z,
-                    "p-value": _p,
-                })
-            if _full_rows:
-                _fe_df = pd.DataFrame(_full_rows)
-                print(_format_coef_table_journal(_fe_df, title=f"FIXED-EFFECTS COEFFICIENTS (iter {_iters}, {phase}, BIC={bic:.1f})"))
+            # Print fixed-effects coefficient summary for Pareto/ALL-SIG entries
+            if _entered_pareto or _all_sig_strict:
+                _res = fit.result
+                _bse = getattr(_res, "bse", pd.Series(np.nan, index=_res.params.index))
+                _pinfo = pval_info.get("pvals", {})
+                for _i, (_nm, _v) in enumerate(_res.params.items()):
+                    if _i >= getattr(_res, "Kf", len(_res.params)) or _nm == "const":
+                        continue
+                    _se = float(_bse.get(_nm, np.nan)) if hasattr(_bse, 'get') else np.nan
+                    _p = _pinfo.get(_nm, np.nan)
+                    _sig = "***" if np.isfinite(_p) and _p < 0.01 else ("**" if _p < 0.05 else ("*" if _p < 0.10 else "  "))
+                    print(f"           {_nm:<30s} {float(_v):+10.4f}  p={_p:.4f} {_sig}")
 
             # Incremental persist of notable candidates (PARETO / top-K / ALL-SIG)
             _auto_save_candidate(fit, phase, _iters, bic, bic_penalised, val_rmse,
                                  n_insig, _flags, pval_info)
+
+        return float(bic_penalised)
 
     y_val_np = pd.to_numeric(df_val[y_col], errors="coerce").to_numpy(dtype=float)
 
@@ -1250,8 +1227,274 @@ def _random_search(
     MIN_UPPER = 2
     MIN_LOWER = 1
 
-    n_random = max(6, int(search_iter * 0.30))   # 30% random, more refinement
-    n_sa     = search_iter - n_random
+    _ga_mode = str(search_method).strip().lower() == "ga-adaptive"
+    n_random = 0 if _ga_mode else max(6, int(search_iter * 0.30))   # 30% random, more refinement
+    n_sa     = 0 if _ga_mode else search_iter - n_random
+
+    # ── Phase 0 (GA-adaptive): SparseEA-AGDS genetic search ──────────────
+    #
+    # Self-contained implementation of the AGDS engine (Wang et al., 2025,
+    # "Evolution algorithm with adaptive genetic operator and dynamic scoring
+    # mechanism for large-scale sparse many-objective optimization"):
+    #
+    #   * Genes = one binary bit per candidate variable (upper + lower) plus
+    #     family bits.  Candidate spec = the active-variable mask.
+    #   * (A) Adaptive genetic operator: per-individual crossover / mutation
+    #     probabilities scale with the fitness tier  P_s,i = (maxr - r_i + 1)/maxr
+    #     (Eq. 5),  P_c,i = pc0*P_s,i (Eq. 6),  P_m,i = pm0*P_s,i (Eq. 7).
+    #   * (B) Dynamic scoring:  S_i_r = maxr - r_i + 1 (Eq. 8),
+    #     sumS_d = sum_i S_i_r * genes_{i,d} (Eq. 9),
+    #     S_d = maxS - sumS_d + 1 (Eq. 10).  Mutation flips are picked by a
+    #     binary tournament on S_d (genes frequently active among superior
+    #     models are perturbed preferentially).
+    #   * (C) Elitist + binary-tournament survival (single-objective case;
+    #     the many-objective NSGA-III reference-point survival degenerates
+    #     to the same selection when fitness is scalar).
+    #
+    # Every individual is scored with the same `_eval` machinery used by the
+    # random / SA / harmony phases (penalised BIC, optional RP-in-search
+    # hybrid scoring, top-K heap, auto-save), so GA winners are directly
+    # comparable to the other search methods.  Budget: pop_size*n_generations
+    # fits (pop_size=40, n_generations=10 => ~400 evaluations).
+    if _ga_mode:
+        ga_pop_size = int(os.environ.get("GA_AGDS_POP", "40"))
+        ga_n_gen    = int(os.environ.get("GA_AGDS_GEN", "10"))
+        ga_pc0      = float(os.environ.get("GA_AGDS_PC0", "0.9"))
+        _env_pm0    = os.environ.get("GA_AGDS_PM0", "").strip()
+        ga_pm0      = float(_env_pm0) if _env_pm0 else 1.0 / max(len(upper_candidates) + len(lower_candidates) + max(1, int(np.ceil(np.log2(len(families))))), 1)
+        ga_elitism  = max(1, ga_pop_size // 10)
+        ga_tourn    = 4
+        ga_ref_div  = 12
+
+        n_ga_up = len(upper_candidates)
+        n_ga_lo = len(lower_candidates)
+        n_fam_bits = max(1, int(np.ceil(np.log2(max(len(families), 2)))))
+        n_features = n_ga_up + n_ga_lo + n_fam_bits
+
+        print(f"  GA-ADAPTIVE (SparseEA-AGDS) search: {n_features} genes "
+              f"({n_ga_up} upper + {n_ga_lo} lower + {n_fam_bits} family bits), "
+              f"pop={ga_pop_size}, gen={ga_n_gen}, pc0={ga_pc0:.2f}, pm0={ga_pm0:.5f}")
+
+        def _ga_decode(genes: np.ndarray) -> tuple:
+            up   = sorted(upper_candidates[i] for i in range(n_ga_up) if genes[i] == 1)
+            lo   = sorted(lower_candidates[i] for i in range(n_ga_lo) if genes[n_ga_up + i] == 1)
+            fam_bits = genes[n_ga_up + n_ga_lo:]
+            fam_idx  = int(np.dot(fam_bits, 1 << np.arange(n_fam_bits))) % max(len(families), 1)
+            return up, lo, families[fam_idx]
+
+        def _ga_encode(u: list, l: list, fam: str) -> np.ndarray:
+            genes = np.zeros(n_features, dtype=int)
+            u_set, l_set = set(u), set(l)
+            for i, v in enumerate(upper_candidates):
+                if v in u_set:
+                    genes[i] = 1
+            for i, v in enumerate(lower_candidates):
+                if v in l_set:
+                    genes[n_ga_up + i] = 1
+            fam_idx = families.index(fam) if fam in families else 0
+            for b in range(n_fam_bits):
+                genes[n_ga_up + n_ga_lo + b] = (fam_idx >> b) & 1
+            return genes
+
+        def _ga_repair(genes: np.ndarray) -> np.ndarray:
+            g = genes.copy()
+            up = [i for i in range(n_ga_up) if g[i] == 1]
+            lo = [i for i in range(n_ga_lo) if g[n_ga_up + i] == 1]
+            while len(up) < MIN_UPPER:
+                cand = [i for i in range(n_ga_up) if g[i] == 0]
+                if not cand:
+                    break
+                i = cand[int(rng.integers(len(cand)))]
+                g[i] = 1; up.append(i)
+            while len(up) > max_upper_terms and len(up) > MIN_UPPER:
+                i = int(rng.integers(len(up)))
+                g[up[i]] = 0; up.pop(i)
+            while len(lo) < MIN_LOWER:
+                cand = [i for i in range(n_ga_lo) if g[n_ga_up + i] == 0]
+                if not cand:
+                    break
+                i = cand[int(rng.integers(len(cand)))]
+                g[n_ga_up + i] = 1; lo.append(i)
+            while len(lo) > max_lower_terms and len(lo) > MIN_LOWER:
+                i = int(rng.integers(len(lo)))
+                g[n_ga_up + lo[i]] = 0; lo.pop(i)
+            return g
+
+        def _ga_random_genes() -> np.ndarray:
+            k_up = int(rng.integers(MIN_UPPER, max_upper_terms + 1))
+            k_lo = int(rng.integers(MIN_LOWER, max_lower_terms + 1))
+            genes = np.zeros(n_features, dtype=int)
+            if upper_candidates:
+                for i in rng.choice(n_ga_up, size=min(k_up, n_ga_up), replace=False):
+                    genes[i] = 1
+            if lower_candidates:
+                for i in rng.choice(n_ga_lo, size=min(k_lo, n_ga_lo), replace=False):
+                    genes[n_ga_up + i] = 1
+            fam_idx = int(rng.integers(0, max(len(families), 1)))
+            for b in range(n_fam_bits):
+                genes[n_ga_up + n_ga_lo + b] = (fam_idx >> b) & 1
+            return _ga_repair(genes)
+
+        _ga_cache: dict[bytes, float] = {}
+
+        def _ga_fitness(genes: np.ndarray) -> float:
+            """Fit + score one individual (cached by gene mask). Returns
+            penalised hybrid BIC (lower is better; larger = worse)."""
+            key = genes.tobytes()
+            if key in _ga_cache:
+                return _ga_cache[key]
+            up, lo, fam = _ga_decode(genes)
+            spec_key = (tuple(up), tuple(lo), fam)
+            tested.add(spec_key)
+            fit = _fit_model(df_train, aadt_col=aadt_col, y_col=y_col,
+                             upper_vars=up, lower_vars=lo,
+                             family=fam, offset_col=offset_col)
+            if fit is None:
+                _ga_cache[key] = float("inf")
+                return float("inf")
+            score = _eval(fit, y_val_np, phase="ga")
+            _ga_cache[key] = float(score)
+            return float(score)
+
+        # ── initial population: seeds + random ─────────────────────────
+        pop: list[dict] = []
+        seen_spec: set[tuple] = set()
+        for init_upper, init_lower in seeds:
+            for fam in families:
+                g = _ga_encode(list(init_upper), list(init_lower), fam)
+                if tuple(g) in seen_spec:
+                    continue
+                seen_spec.add(tuple(g))
+                s = _ga_fitness(g)
+                if np.isfinite(s):
+                    pop.append({"genes": g, "score": s, "ps": 1.0})
+        while len(pop) < ga_pop_size:
+            g = _ga_random_genes()
+            if tuple(g) in seen_spec:
+                continue
+            seen_spec.add(tuple(g))
+            s = _ga_fitness(g)
+            if np.isfinite(s):
+                pop.append({"genes": g, "score": s, "ps": 1.0})
+
+        best_ga_score = float("inf")
+
+        # ── AGDS evolutionary loop ─────────────────────────────────────
+        for _gen in range(ga_n_gen):
+            if len(pop) < 2:
+                break
+            n = len(pop)
+            scores = np.array([ind["score"] for ind in pop], dtype=float)
+
+            # fitness tiers (single-objective: strictly decreasing score =
+            # new tier, matching the engine's tier ranking for Eq. 5/8)
+            order = sorted(range(n), key=lambda i: scores[i])
+            ranks = [1] * n
+            layer, prev = 1, None
+            for i in order:
+                f = scores[i]
+                if prev is not None and f > prev:
+                    layer += 1
+                ranks[i] = layer
+                prev = f
+            maxr = max(ranks)
+            si_r = np.array([maxr - ranks[i] + 1 for i in range(n)], dtype=float)
+            for i in range(n):
+                pop[i]["ps"] = si_r[i] / maxr                                   # Eq. 5
+
+            # dynamic scoring (Eq. 8-10)
+            genes_mat = np.array([ind["genes"] for ind in pop], dtype=float)
+            sumS = (si_r[:, None] * genes_mat).sum(axis=0)                       # Eq. 9
+            maxS = float(sumS.max()) if sumS.size else 0.0
+            dyn_scores = maxS - sumS + 1.0                                       # Eq. 10
+
+            def _ga_tournament_parent() -> dict:
+                idx = rng.choice(n, size=min(ga_tourn, n), replace=False)
+                best = idx[int(np.argmin([pop[int(i)]["score"] for i in idx]))]
+                return pop[int(best)]
+
+            def _ga_mutate(ind: dict, rate: float) -> np.ndarray:
+                ps = ind.get("ps", 1.0)
+                pm = ga_pm0 * ps                                                # Eq. 7
+                eff = max(rate, pm)
+                genes = ind["genes"].copy()
+                mutable = [i for i in range(n_features)]
+                n_flips = max(1, int(round(eff * len(mutable))))
+                for _ in range(n_flips):
+                    a = int(rng.choice(mutable))
+                    b = int(rng.choice(mutable))
+                    d = a if dyn_scores[a] <= dyn_scores[b] else b
+                    genes[d] = 1 - genes[d]
+                return _ga_repair(genes)
+
+            def _ga_crossover(p1: dict, p2: dict) -> tuple:
+                ps = max(p1.get("ps", 1.0), p2.get("ps", 1.0))
+                pc = ga_pc0 * ps                                               # Eq. 6
+                g1, g2 = p1["genes"].copy(), p2["genes"].copy()
+                if rng.random() > pc:
+                    return g1, g2
+                mask = rng.integers(0, 2, size=n_features).astype(bool)
+                a = np.where(mask, g1, g2)
+                b = np.where(mask, g2, g1)
+                return _ga_repair(a), _ga_repair(b)
+
+            # generate offspring
+            offspring: list[dict] = []
+            _tries = 0
+            while len(offspring) < ga_pop_size and _tries < ga_pop_size * 8:
+                _tries += 1
+                p1 = _ga_tournament_parent()
+                p2 = _ga_tournament_parent()
+                c1, c2 = _ga_crossover(p1, p2)
+                for c in (c1, c2):
+                    cm = _ga_mutate({"genes": c, "ps": max(p1.get("ps", 1.0), p2.get("ps", 1.0))},
+                                    max(0.02, 1.0 / n_features))
+                    ck = tuple(cm)
+                    if ck in seen_spec:
+                        continue
+                    seen_spec.add(ck)
+                    cs = _ga_fitness(cm)
+                    if np.isfinite(cs):
+                        offspring.append({"genes": cm, "score": cs,
+                                          "ps": max(p1.get("ps", 1.0), p2.get("ps", 1.0))})
+                        if len(offspring) >= ga_pop_size:
+                            break
+            if not offspring:
+                continue
+
+            # survival: elitism + binary tournament (single-objective)
+            pool = pop + offspring
+            pool.sort(key=lambda d: d["score"])
+            new_pop = pool[:ga_elitism]
+            new_pop_ids = {id(d) for d in new_pop}
+            while len(new_pop) < ga_pop_size:
+                idx = rng.choice(len(pool), size=min(ga_tourn, len(pool)), replace=False)
+                best = idx[int(np.argmin([pool[int(i)]["score"] for i in idx]))]
+                cand = pool[int(best)]
+                if id(cand) not in new_pop_ids:
+                    new_pop.append(cand)
+                    new_pop_ids.add(id(cand))
+            pop = new_pop
+
+            gen_best = min(d["score"] for d in pop)
+            if gen_best < best_ga_score:
+                best_ga_score = gen_best
+            if (_gen + 1) % 2 == 0 or _gen == ga_n_gen - 1:
+                _best_ind = min(pop, key=lambda d: d["score"])
+                _bu = ", ".join(upper_candidates[i] for i in range(n_ga_up) if _best_ind["genes"][i] == 1)
+                _bl = ", ".join(lower_candidates[i] for i in range(n_ga_lo) if _best_ind["genes"][n_ga_up + i] == 1)
+                _bfam_bits = _best_ind["genes"][n_ga_up + n_ga_lo:]
+                _bfam_idx  = int(np.dot(_bfam_bits, 1 << np.arange(n_fam_bits))) % max(len(families), 1)
+                print(f"  AGDS gen {_gen + 1}/{ga_n_gen}: pop={len(pop)} | best pen.BIC={best_ga_score:.3f} "
+                      f"({families[_bfam_idx]}, upper=[{_bu if _bu else '(none)'}], lower=[{_bl if _bl else '(none)'}])")
+
+        _best_ga = min(pop, key=lambda d: d["score"])
+        _bgu = ", ".join(upper_candidates[i] for i in range(n_ga_up) if _best_ga["genes"][i] == 1)
+        _bgl = ", ".join(lower_candidates[i] for i in range(n_ga_lo) if _best_ga["genes"][n_ga_up + i] == 1)
+        _bgf_bits = _best_ga["genes"][n_ga_up + n_ga_lo:]
+        _bgf_idx  = int(np.dot(_bgf_bits, 1 << np.arange(n_fam_bits))) % max(len(families), 1)
+        print(f"  GA-ADAPTIVE search complete: best pen.BIC={best_ga_score:.3f} "
+              f"({families[_bgf_idx]}, upper=[{_bgu if _bgu else '(none)'}], lower=[{_bgl if _bgl else '(none)'}])")
 
     # ── Phase 1: random ────────────────────────────────────────────────────
     for _ in range(n_random):
@@ -1667,6 +1910,8 @@ def _pvalue_penalty_stats(fitted: FittedModel, p_threshold: float = 0.05) -> dic
     Kf = result.Kf if hasattr(result, "Kf") else len(params)
     n_insig = 0
     pvals = {}
+    
+    # Count non-significant fixed effects
     for i, (name, val) in enumerate(result.params.items()):
         if i >= Kf:
             break
@@ -1683,6 +1928,26 @@ def _pvalue_penalty_stats(fitted: FittedModel, p_threshold: float = 0.05) -> dic
             # Non-identifiable SE: penalise as fully insignificant (p=1)
             pvals[name] = 1.0
             n_insig += 1
+    
+    # Count non-significant random parameters (mean and sd, but NOT covariance L[i,j] terms)
+    rp_result = getattr(fitted, "_rp_result", None)
+    if rp_result is not None:
+        rp_df = rp_result.get("coef_df")
+        if rp_df is not None and not rp_df.empty:
+            # Only check random parameter means and standard deviations
+            # Skip covariance matrix elements (L[i,j]) as they're structural
+            rp_params = rp_df[rp_df["Role"].str.contains("Random", na=False)]
+            if not rp_params.empty:
+                for _, rprow in rp_params.iterrows():
+                    param_name = str(rprow.get("Parameter", ""))
+                    # Skip covariance matrix elements (e.g., "L[0,0]", "L[1,0]", etc.)
+                    if "L[" in param_name:
+                        continue
+                    _pval = float(rprow.get("p-value", 1.0))
+                    pvals[f"RP::{param_name}"] = _pval
+                    if _pval > p_threshold:
+                        n_insig += 1
+    
     return {"n_insig": n_insig, "pvals": pvals}
 
 
@@ -3323,13 +3588,12 @@ def _jax_random_params_refit(
     max_random_terms: int,
     rp_draws: int,
     try_correlated: bool = False,
-    dist: str = "normal",
 ) -> dict[str, Any] | None:
     """Attempt a random-parameters (partial-pooling) refit using ExperimentBuilder.
 
     Continuous upper-level variables (up to max_random_terms, excluding
-    binary_vars) are fit as independent random parameters (rdm_terms, given
-    ``dist`` distribution) — each segment effectively draws its own coefficient. This
+    binary_vars) are fit as independent random parameters (rdm_terms, normal
+    distribution) — each segment effectively draws its own coefficient. This
     is the partial-pooling mechanism: segment-level effects are shrunk toward
     the population mean rather than forced identical (complete pooling, the
     plain fixed-effects fit elsewhere in this script) or estimated with no
@@ -3429,10 +3693,10 @@ def _jax_random_params_refit(
 
         builder = ExperimentBuilder(df=df, id_col="_id", y_col=y_col, offset_col=offset_col)
         # Build independent terms by default, or use the correlated block.
-        rdm_ind_terms = [f"{v}:{dist}" for v in rdm_terms]
+        rdm_ind_terms = [f"{v}:normal" for v in rdm_terms]
         rdm_cor_terms = []
         if try_correlated and len(rdm_terms) >= 2:
-            rdm_cor_terms = [f"{v}:{dist}" for v in rdm_terms]
+            rdm_cor_terms = [f"{v}:normal" for v in rdm_terms]
             rdm_ind_terms = []
 
         spec = builder.make_manual_spec(
@@ -3700,21 +3964,6 @@ def _jax_random_params_refit(
         bic = float(k * np.log(max(n, 1)) - 2.0 * ll)
         aic = float(2.0 * k - 2.0 * ll)
 
-        # ── Divergence guard ────────────────────────────────────────────────
-        # The RP model is warm-started from — and approximately nests — the
-        # fixed-effects NB fit (sd -> 0 recovers complete pooling), so a
-        # converged RP fit lands within a modest band of the FE BIC.  A blow-up
-        # far above it (the RP=1e5-1e6 lines seen in earlier logs) means SLSQP
-        # walked off to a garbage optimum; discard it so it neither pollutes the
-        # log nor is mistaken for a real candidate.  The fixed-effects score
-        # remains authoritative when this returns None.
-        if not np.isfinite(bic):
-            return None
-        _fe_bic = float(getattr(getattr(fe_fit, "result", None), "bic", np.nan)) \
-            if fe_fit is not None else np.nan
-        if np.isfinite(_fe_bic) and bic > _fe_bic + 500.0:
-            return None
-
         return {
             "coef_str": coef_str,
             "coef_df": coef_df,
@@ -3725,10 +3974,6 @@ def _jax_random_params_refit(
             "fit": None,
             "fixed_terms": fixed_terms,
             "rdm_terms": rdm_terms,
-            "dist": dist,
-            "mode": "correlated" if try_correlated else "independent",
-            "random_ind_names": list(spec_rp.random_ind_names),
-            "random_cor_names": list(spec_rp.random_cor_names),
         }
     except Exception:
         return None
@@ -4164,8 +4409,7 @@ def _fit_literature_benchmark_with_metacount(
         # lognormal — positive-skewed; useful if coefficient should be one-signed
         # triangular — bounded, flexible shape
         # uniform   — bounded, equal-weight prior
-        # negative_lognormal — strictly negative; sign-constrains the coefficient
-        _DISTS = ["normal", "lognormal", "negative_lognormal", "triangular", "uniform"]
+        _DISTS = ["normal", "lognormal", "triangular", "uniform"]
 
         # ── Try each distribution for independent random params ──────────
         if rdm_names:
@@ -5223,44 +5467,71 @@ def _save_obs_pred_aadt_png(
     split_labels: list[str],
 ) -> None:
     """Matplotlib AADT obs/pred plot for PPTX."""
-    y, p, a  = (np.asarray(x, float) for x in (y_true, y_pred, aadt))
-    p_clip   = np.clip(p, 0, np.quantile(p, 0.99))
-    labels   = list(split_labels)
+    y, p, a = (np.asarray(x, float) for x in (y_true, y_pred, aadt))
+    labels = list(split_labels)
 
-    log_a = np.log(np.clip(a, 1.0, None))   # compute before loop
+    n = min(len(y), len(p), len(a), len(labels))
+    y, p, a, labels = y[:n], p[:n], a[:n], labels[:n]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), dpi=150)
-    color_map = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32",
-                 "test": "#7a3c8c", "all": "#1f5f8b"}
+    keep = np.isfinite(y) & np.isfinite(p) & np.isfinite(a) & np.isfinite(np.log(np.clip(a, 1.0, None)))
+    y, p, a = y[keep], p[keep], a[keep]
+    labels = [l for l, k in zip(labels, keep) if k]
 
-    for lbl in sorted(set(labels)):
-        mask = np.array([l == lbl for l in labels])
-        ax1.scatter(log_a[mask], y[mask], s=18, alpha=0.55,
-                    color=color_map.get(lbl, "#4a6785"), label=f"Observed ({lbl})", zorder=3)
+    if len(y) == 0:
+        fig, ax = plt.subplots(1, 1, figsize=(10, 4), dpi=150)
+        ax.axis("off")
+        ax.text(0.5, 0.5, "No finite obs/pred data to plot.", ha="center", va="center", fontsize=12)
+        fig.savefig(path, bbox_inches="tight")
+        plt.close(fig)
+        return
+
     try:
-        coeffs      = np.polyfit(log_a, p_clip, deg=3)
-        log_a_fine  = np.linspace(log_a.min(), log_a.max(), 200)
-        p_fine      = np.maximum(np.polyval(coeffs, log_a_fine), 0.0)
-    except Exception:
-        si         = np.argsort(log_a)
-        log_a_fine = log_a[si]
-        p_fine     = p_clip[si]
-    ax1.plot(log_a_fine, p_fine, color="#d96f32", lw=2.5, label="Predicted (polynomial smooth)")
-    ax1.set_xlabel("log(AADT)")
-    ax1.set_ylabel("Crashes"); ax1.set_title(title, fontsize=11, fontweight="bold")
-    ax1.legend(fontsize=8); ax1.grid(alpha=0.2)
+        p_clip   = np.clip(p, 0, np.quantile(p, 0.99))
+        log_a = np.log(np.clip(a, 1.0, None))   # compute before loop
 
-    resid        = (p - y) / np.maximum(y, 1.0)
-    resid_colors = ["#d96f32" if r > 0 else "#0a6c74" for r in resid]
-    ax2.scatter(log_a, resid, c=resid_colors, s=14, alpha=0.55)
-    ax2.axhline(0, color="#333", lw=1.5)
-    ax2.set_xlabel("log(AADT)")
-    ax2.set_ylabel("Norm. Residual"); ax2.set_title("Residuals = (pred-obs)/max(obs,1)", fontsize=10)
-    ax2.grid(alpha=0.2)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), dpi=150)
+        color_map = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32",
+                     "test": "#7a3c8c", "all": "#1f5f8b"}
 
-    fig.tight_layout()
-    fig.savefig(path, bbox_inches="tight")
-    plt.close(fig)
+        for lbl in sorted(set(labels)):
+            mask = np.array([l == lbl for l in labels])
+            ax1.scatter(log_a[mask], y[mask], s=18, alpha=0.55,
+                        color=color_map.get(lbl, "#4a6785"), label=f"Observed ({lbl})", zorder=3)
+        try:
+            coeffs      = np.polyfit(log_a, p_clip, deg=3)
+            log_a_fine  = np.linspace(log_a.min(), log_a.max(), 200)
+            p_fine      = np.maximum(np.polyval(coeffs, log_a_fine), 0.0)
+        except Exception:
+            si         = np.argsort(log_a)
+            log_a_fine = log_a[si]
+            p_fine     = p_clip[si]
+        ax1.plot(log_a_fine, p_fine, color="#d96f32", lw=2.5, label="Predicted (polynomial smooth)")
+        ax1.set_xlabel("log(AADT)")
+        ax1.set_ylabel("Crashes"); ax1.set_title(title, fontsize=11, fontweight="bold")
+        ax1.legend(fontsize=8); ax1.grid(alpha=0.2)
+
+        resid        = (p - y) / np.maximum(y, 1.0)
+        resid_colors = ["#d96f32" if r > 0 else "#0a6c74" for r in resid]
+        ax2.scatter(log_a, resid, c=resid_colors, s=14, alpha=0.55)
+        ax2.axhline(0, color="#333", lw=1.5)
+        ax2.set_xlabel("log(AADT)")
+        ax2.set_ylabel("Norm. Residual"); ax2.set_title("Residuals = (pred-obs)/max(obs,1)", fontsize=10)
+        ax2.grid(alpha=0.2)
+
+        fig.tight_layout()
+        fig.savefig(path, bbox_inches="tight")
+        plt.close(fig)
+    except Exception as _pexc:
+        print(f"  WARNING: obs/pred PNG plot failed ({_pexc}); writing placeholder.")
+        try:
+            plt.close("all")
+        except Exception:
+            pass
+        fig, ax = plt.subplots(1, 1, figsize=(10, 4), dpi=150)
+        ax.axis("off")
+        ax.text(0.5, 0.5, f"Plot failed: {_pexc}", ha="center", va="center", fontsize=12)
+        fig.savefig(path, bbox_inches="tight")
+        plt.close(fig)
 
 
 def _save_model_comparison_html(
@@ -5657,9 +5928,10 @@ def main() -> None:
                         help="Random search iterations (default 300 — more = better BIC exploration).")
     parser.add_argument(
         "--search-method",
-        choices=["random-sa", "harmony"],
+        choices=["random-sa", "harmony", "ga-adaptive"],
         default="random-sa",
-        help="Refinement method after random exploration: random-sa or harmony.",
+        help="Refinement method after random exploration: random-sa, harmony, or ga-adaptive "
+             "(SparseEA-AGDS genetic search).",
     )
     parser.add_argument("--harmony-hms", type=int, default=12, help="Harmony memory size (HMS).")
     parser.add_argument("--harmony-hmcr", type=float, default=0.90, help="Harmony memory consideration rate (HMCR).")
@@ -5732,16 +6004,14 @@ def main() -> None:
              "--search-iter budget (<=200) or convergence-based early termination.",
     )
     parser.add_argument(
-        "--rp-in-random-phase",
+        "--rp-sweep",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="With --rp-in-search, also refit random-parameters during the broad "
-             "`random` exploration phase (not only harmony/sa refinement), so RP "
-             "variants compete from the first pass. On by default; use "
-             "--no-rp-in-random-phase to restrict RP to the refinement phases and "
-             "keep the exploration sweep cheap. WARNING: with ~57s/RP refit this "
-             "multiplies exploration cost — pair with a small --search-iter or "
-             "convergence early-stop.",
+        help="Run the post-search random-parameters sweep over top-K candidates and "
+             "modes (default: enabled). Use --no-rp-sweep with --rp-in-search so the "
+             "RP hypothesis is tested per-candidate during the search instead of a "
+             "separate post-search sweep; the search's own RP winner is then used for "
+             "the final report.",
     )
     parser.add_argument(
         "--convergence-early-stop",
@@ -5878,7 +6148,6 @@ def main() -> None:
         harmony_hmcr=float(args.harmony_hmcr),
         harmony_par=float(args.harmony_par),
         rp_in_search=bool(getattr(args, "rp_in_search", False)),
-        rp_in_random_phase=bool(getattr(args, "rp_in_random_phase", True)),
         df_train_raw=df_train_raw if getattr(args, "rp_in_search", False) else None,
         scaler_stats=scaler_train if getattr(args, "rp_in_search", False) else None,
         binary_vars_rp=binary_vars if getattr(args, "rp_in_search", False) else None,
@@ -6244,42 +6513,50 @@ def main() -> None:
 
     # --- New outputs ---
 
-    # ── Random-parameters sweep — MANDATORY ──────────────────────────────
+    # ── Random-parameters result ─────────────────────────────────────────
     # Random parameters are a required output of this experiment.
-    # Sweep all top-K candidates; if none succeed, progressively simplify
-    # (fewer correlated terms, then independent-only, then just the best spec).
+    #
+    # Mode A (default, --rp-sweep): legacy post-search sweep — refit every
+    # top-K candidate (plus the selected spec) across correlated/independent
+    # modes, keeping the best-BIC winner.
+    #
+    # Mode B (--no-rp-sweep): no post-search sweep.  Used with --rp-in-search,
+    # where every candidate was already scored by min(BIC_fixed, BIC_rp) during
+    # the search — the RP hypothesis is tested inline as part of the search.
+    # The search's own RP winner (attached to the best / top-K fits) is reused
+    # for the final report; a single default-distribution refit on the selected
+    # spec is used as a fallback only.
     best_rp_result: dict | None = None
     best_rp_bic = float("nan")
 
-    # Candidates to sweep: top-K from search + the selected final spec
-    _rp_candidates_to_try = list(top_k_fits)
-    # Always include the primary selected spec as a fallback candidate
-    if best_fit_train not in _rp_candidates_to_try:
-        _rp_candidates_to_try.append(best_fit_train)
+    _rp_sweep_enabled = bool(getattr(args, "rp_sweep", True))
 
-    print(f"\n  {'='*60}")
-    print(f"  RANDOM-PARAMETERS SWEEP")
-    print(f"  {'='*60}")
-    print(f"  Candidates to sweep: {len(_rp_candidates_to_try)}")
-    for _ri, _rc in enumerate(_rp_candidates_to_try):
-        _ru = sorted({n[:-2] if n.endswith('_Z') else n for n in _rc.upper_vars})
-        _rl = sorted({n[:-2] if n.endswith('_Z') else n for n in _rc.lower_vars})
-        print(f"  [{_ri+1}] upper={_ru}, lower={_rl}")
-    print(f"  max_random_terms={int(args.rp_max_random_terms)}, rp_draws={int(args.rp_draws)}")
-    print(f"  {'='*60}")
-    for _rp_candidate in _rp_candidates_to_try:
-        try:
-            _cand_upper = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.upper_vars})
-            _cand_lower = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.lower_vars})
-            _cont_upper = [v for v in _cand_upper if v not in binary_vars]
-            _n_avail = min(int(args.rp_max_random_terms), len(_cont_upper))
-            print(f"\n  [RP] Trying: upper={_cand_upper}, lower={_cand_lower}")
-            print(f"       Continuous upper vars available for random: {_cont_upper} ({_n_avail} max)")
-            # Sweep over random-parameter distributions, trying correlated random
-            # params first, then independent fallback, keeping the best-BIC winner.
-            _RP_DISTS = ["normal", "lognormal", "negative_lognormal", "triangular", "uniform"]
-            _cand_best: dict | None = None
-            for _dist in _RP_DISTS:
+    if _rp_sweep_enabled:
+        # Candidates to sweep: top-K from search + the selected final spec
+        _rp_candidates_to_try = list(top_k_fits)
+        # Always include the primary selected spec as a fallback candidate
+        if best_fit_train not in _rp_candidates_to_try:
+            _rp_candidates_to_try.append(best_fit_train)
+
+        print(f"\n  {'='*60}")
+        print(f"  RANDOM-PARAMETERS SWEEP")
+        print(f"  {'='*60}")
+        print(f"  Candidates to sweep: {len(_rp_candidates_to_try)}")
+        for _ri, _rc in enumerate(_rp_candidates_to_try):
+            _ru = sorted({n[:-2] if n.endswith('_Z') else n for n in _rc.upper_vars})
+            _rl = sorted({n[:-2] if n.endswith('_Z') else n for n in _rc.lower_vars})
+            print(f"  [{_ri+1}] upper={_ru}, lower={_rl}")
+        print(f"  max_random_terms={int(args.rp_max_random_terms)}, rp_draws={int(args.rp_draws)}")
+        print(f"  {'='*60}")
+        for _rp_candidate in _rp_candidates_to_try:
+            try:
+                _cand_upper = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.upper_vars})
+                _cand_lower = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.lower_vars})
+                _cont_upper = [v for v in _cand_upper if v not in binary_vars]
+                _n_avail = min(int(args.rp_max_random_terms), len(_cont_upper))
+                print(f"\n  [RP] Trying: upper={_cand_upper}, lower={_cand_lower}")
+                print(f"       Continuous upper vars available for random: {_cont_upper} ({_n_avail} max)")
+                # Try correlated random params first, then independent fallback
                 for _try_cor in [True, False]:
                     _rp = _jax_random_params_refit(
                         df_trainval_raw=df_trainval_raw,
@@ -6294,59 +6571,112 @@ def main() -> None:
                         max_random_terms=int(args.rp_max_random_terms),
                         rp_draws=int(args.rp_draws),
                         try_correlated=_try_cor,
-                        dist=_dist,
+                    )
+                    if _rp is not None:
+                        _mode = "correlated" if _try_cor else "independent"
+                        print(f"       [RP] {_mode:12s} OK: BIC={_rp.get('bic', float('nan')):.1f}, "
+                              f"LL={_rp.get('loglik', float('nan')):.2f}")
+                        break
+                    else:
+                        _mode = "correlated" if _try_cor else "independent"
+                        print(f"       [RP] {_mode:12s} FAILED")
+                if _rp is None:
+                    print(f"       [RP] All modes failed for this candidate")
+                    continue
+                _rp_bic = _rp.get("bic", float("nan"))
+                if not np.isfinite(_rp_bic):
+                    continue
+                if best_rp_result is None or _rp_bic < best_rp_bic:
+                    best_rp_bic    = _rp_bic
+                    best_rp_result = _rp
+                    print(f"       [RP] *** NEW BEST RP BIC={best_rp_bic:.1f} ***")
+            except Exception as _rp_exc:
+                print(f"       [RP] Exception: {_rp_exc}")
+                continue
+
+        jax_result = best_rp_result
+
+        # If still no random-params result, force it on the selected spec with
+        # a single random variable (simplest possible random-params model).
+        if jax_result is None:
+            print("  [RP] Sweep yielded no result — forcing single-random-var fallback ...")
+            _cont_upper = [v for v in selected_upper_raw if v not in binary_vars]
+            if _cont_upper:
+                jax_result = _jax_random_params_refit(
+                    df_trainval_raw=df_trainval_raw,
+                    best_upper_raw=_cont_upper[:1],   # simplest: one random var
+                    best_lower_raw=selected_lower_raw,
+                    y_col=args.y_col,
+                    aadt_col=args.aadt_col,
+                    offset_col=offset_col,
+                    scaler_stats=scaler_trainval,
+                    binary_vars=binary_vars,
+                    include_lower_interactions=bool(args.rp_include_lower_interactions),
+                    max_random_terms=max(1, int(args.rp_max_random_terms)),
+                    rp_draws=int(args.rp_draws),
+                )
+    else:
+        # ── Mode B: reuse the search's RP winner (--no-rp-sweep) ─────────
+        # The selected spec was refit fresh (best_fit_train), so match it against
+        # the search's best / top-K fits which carry the per-candidate _rp_result
+        # computed by --rp-in-search.  Take the first match with a valid result;
+        # the tie-break is the stored _rp_bic so the best RP variant is preferred.
+        print(f"\n  {'='*60}")
+        print(f"  RANDOM-PARAMETERS (in-search hypothesis test)")
+        print(f"  {'='*60}")
+        print("  --no-rp-sweep: RP was scored per-candidate inside the search "
+              "(min BIC fixed vs random-params); reusing the search winner.")
+        _sel_upper_m = sorted(best_fit_train.upper_vars)
+        _sel_lower_m = sorted(best_fit_train.lower_vars)
+        _sel_fam_m = str(best_fit_train.family)
+        _search_fits: list = list(top_k_fits)
+        if _best_fit_seed is not None and _best_fit_seed not in _search_fits:
+            _search_fits.insert(0, _best_fit_seed)
+        _rp_pool = []
+        for _sf in _search_fits:
+            _rpr = getattr(_sf, "_rp_result", None)
+            if _rpr is None:
+                continue
+            if (sorted(_sf.upper_vars), sorted(_sf.lower_vars), str(_sf.family)) == (
+                _sel_upper_m, _sel_lower_m, _sel_fam_m,
+            ):
+                _rp_pool.append((getattr(_sf, "_rp_bic", float("nan")), _rpr))
+        if _rp_pool:
+            _rp_pool.sort(key=lambda z: (np.isfinite(z[0]), z[0]))
+            jax_result = _rp_pool[0][1]
+            best_rp_bic = float(jax_result.get("bic", float("nan")))
+            print(f"  [RP] Reused in-search RP winner: BIC={best_rp_bic:.1f}")
+        else:
+            print("  [RP] No in-search RP result matched the selected spec — "
+                  "single default-distribution refit on the selected spec ...")
+            _cont_upper = [v for v in selected_upper_raw if v not in binary_vars]
+            jax_result = None
+            if _cont_upper:
+                for _try_cor in [True, False]:
+                    _rp = _jax_random_params_refit(
+                        df_trainval_raw=df_trainval_raw,
+                        best_upper_raw=selected_upper_raw,
+                        best_lower_raw=selected_lower_raw,
+                        y_col=args.y_col,
+                        aadt_col=args.aadt_col,
+                        offset_col=offset_col,
+                        scaler_stats=scaler_trainval,
+                        binary_vars=binary_vars,
+                        include_lower_interactions=bool(args.rp_include_lower_interactions),
+                        max_random_terms=int(args.rp_max_random_terms),
+                        rp_draws=int(args.rp_draws),
+                        try_correlated=_try_cor,
                     )
                     if _rp is None:
                         continue
-                    _mode = "correlated" if _try_cor else "independent"
-                    _rp_b = _rp.get("bic", float("nan"))
-                    print(f"       [RP] {_mode:12s} {_dist:18s} BIC={_rp_b:.1f}, "
-                          f"LL={_rp.get('loglik', float('nan')):.2f}")
-                    if _cand_best is None or (np.isfinite(_rp_b) and _rp_b < _cand_best.get("bic", float("inf"))):
-                        _cand_best = _rp
-            _rp = _cand_best
-            if _rp is None:
-                print(f"       [RP] All modes/distributions failed for this candidate")
-                continue
-            _rp_bic = _rp.get("bic", float("nan"))
-            if not np.isfinite(_rp_bic):
-                continue
-            if best_rp_result is None or _rp_bic < best_rp_bic:
-                best_rp_bic    = _rp_bic
-                best_rp_result = _rp
-                print(f"       [RP] *** NEW BEST RP BIC={best_rp_bic:.1f} ***")
-            # Print the full coefficient table of this candidate's best RP model
-            # so random-parameter details are visible in the log.
-            _win_coef = _rp.get("coef_str")
-            if _win_coef:
-                print(_win_coef)
-                if _rp.get("dist"):
-                    print(f"       [RP] WInner dist={_rp['dist']} mode={_rp['mode']}")
-        except Exception as _rp_exc:
-            print(f"       [RP] Exception: {_rp_exc}")
-            continue
-
-    jax_result = best_rp_result
-
-    # If still no random-params result, force it on the selected spec with
-    # a single random variable (simplest possible random-params model).
-    if jax_result is None:
-        print("  [RP] Sweep yielded no result — forcing single-random-var fallback ...")
-        _cont_upper = [v for v in selected_upper_raw if v not in binary_vars]
-        if _cont_upper:
-            jax_result = _jax_random_params_refit(
-                df_trainval_raw=df_trainval_raw,
-                best_upper_raw=_cont_upper[:1],   # simplest: one random var
-                best_lower_raw=selected_lower_raw,
-                y_col=args.y_col,
-                aadt_col=args.aadt_col,
-                offset_col=offset_col,
-                scaler_stats=scaler_trainval,
-                binary_vars=binary_vars,
-                include_lower_interactions=bool(args.rp_include_lower_interactions),
-                max_random_terms=max(1, int(args.rp_max_random_terms)),
-                rp_draws=int(args.rp_draws),
-            )
+                    if jax_result is None or (np.isfinite(_rp.get("bic", float("nan")))
+                                              and _rp["bic"] < jax_result["bic"]):
+                        jax_result = _rp
+                if jax_result is not None:
+                    best_rp_bic = float(jax_result.get("bic", float("nan")))
+                    print(f"  [RP] Fallback refit OK: BIC={best_rp_bic:.1f}")
+            if jax_result is None:
+                print("  [RP] Fallback failed — no random-parameters result.")
 
     if jax_result is None:
         print("  [WARNING] Random-parameters model could not be fitted — "
@@ -6394,21 +6724,11 @@ def main() -> None:
             )
 
             (output_dir / "random_params_note.md").write_text(rp_txt, encoding="utf-8")
-            _win_dist  = jax_result.get("dist", "unknown")
-            _win_mode  = jax_result.get("mode", "unknown")
             (output_dir / "random_params_summary.json").write_text(
-                json.dumps({
-                    "summary": rp_txt,
-                    "loglik": rp_ll,
-                    "bic": rp_bic,
-                    "dist": _win_dist,
-                    "mode": _win_mode,
-                    "random_ind_names": list(jax_result.get("random_ind_names", [])),
-                    "random_cor_names": list(jax_result.get("random_cor_names", [])),
-                }, indent=2),
+                json.dumps({"summary": rp_txt, "loglik": rp_ll, "bic": rp_bic}, indent=2),
                 encoding="utf-8",
             )
-            print(f"  random_params_summary.json written (dist={_win_dist}, mode={_win_mode}).")
+            print("  random_params_summary.json written.")
 
             # Use random-params predictions for the AADT obs/pred plot
             rp_fit = jax_result.get("fit")
@@ -6636,14 +6956,15 @@ def main() -> None:
     # Compare best random-phase model vs best refinement-phase model and save
     # both a table and a PNG for side-by-side presentation.
     phase_compare_rows: list[dict[str, Any]] = []
-    phase_ref = "harmony" if str(args.search_method).lower() == "harmony" else "sa"
+    phase_ref = "harmony" if str(args.search_method).lower() == "harmony" else "ga" if str(args.search_method).lower() == "ga-adaptive" else "sa"
     _phase_label_map = {
         "sa": "Simulated Annealing",
         "harmony": "Harmony Search",
+        "ga": "GA-Adaptive (SparseEA-AGDS)",
         "random": "Random Exploration",
     }
     if "Phase" in search_history_ordered.columns:
-        for _phase in ["sa", "harmony"]:
+        for _phase in ["sa", "harmony", "ga"]:
             _phase_df = search_history_ordered[
                 search_history_ordered["Phase"].astype(str).str.lower().eq(_phase)
             ].copy()
@@ -6717,7 +7038,7 @@ def main() -> None:
     # reporting phase-level distributions and convergence pace.
     if "Phase" in search_history_ordered.columns:
         _phase_rows: list[dict[str, Any]] = []
-        for _phase in ["sa", "harmony"]:
+        for _phase in ["sa", "harmony", "ga"]:
             _dfp = search_history_ordered[
                 search_history_ordered["Phase"].astype(str).str.lower().eq(_phase)
             ].copy()
@@ -6788,16 +7109,17 @@ def main() -> None:
 
     if "Phase" in search_history_ordered.columns:
         harmony_phase_df = search_history_ordered[
-            search_history_ordered["Phase"].astype(str).str.lower().eq("harmony")
+            search_history_ordered["Phase"].astype(str).str.lower().eq(phase_ref)
         ].copy()
     else:
         harmony_phase_df = pd.DataFrame()
 
+    _phase_display = _phase_label_map.get(phase_ref, phase_ref)
     if harmony_phase_df.empty:
         harmony_summary_md = (
-            "Harmony search summary\n\n"
-            "- No harmony-phase candidates were evaluated in this run.\n"
-            "- Run with --search-method harmony to generate harmony search winners."
+            f"{_phase_display} summary\n\n"
+            f"- No {phase_ref}-phase candidates were evaluated in this run.\n"
+            f"- Run with --search-method {phase_ref} to generate {phase_ref} search winners."
         )
         (output_dir / "harmony_search_summary.csv").write_text("", encoding="utf-8")
     else:
@@ -6807,7 +7129,7 @@ def main() -> None:
         ]].copy()
         _winner = harmony_top_df.iloc[0]
         harmony_summary_md = "\n".join([
-            "Harmony search summary",
+            f"{_phase_display} summary",
             "",
             f"Winner iteration: {int(_winner.get('Iteration', -1))}",
             f"Winner family: {str(_winner.get('Family', ''))}",
@@ -6816,7 +7138,7 @@ def main() -> None:
             f"Winner upper vars: {str(_winner.get('Upper Vars', '(none)'))}",
             f"Winner lower vars: {str(_winner.get('Lower Vars', '(none)'))}",
             "",
-            "Top harmony candidates:",
+            f"Top {phase_ref} candidates:",
             _to_markdown(harmony_top_show),
         ])
         (output_dir / "harmony_search_summary.csv").write_text(
@@ -7025,10 +7347,19 @@ def main() -> None:
         "aadt_col": args.aadt_col,
         "y_col": args.y_col,
         "offset_col": offset_col,
-        "selected_upper_model_vars": best_fit_train.upper_vars,
-        "selected_lower_model_vars": best_fit_train.lower_vars,
-        "selected_upper_raw_vars": selected_upper_raw,
-        "selected_lower_raw_vars": selected_lower_raw,
+        # NOTE: must come from final_fit (the rescued FINAL model actually
+        # refit for reporting), NOT best_fit_train (the GA-selection winner).
+        # They can differ after the rescue pass, which previously produced
+        # final_model_spec.json whose var lists contradicted its own
+        # "coefficients" dict and broke downstream post-hoc Hessian rebuilds.
+        "selected_upper_model_vars": list(final_fit.upper_vars),
+        "selected_lower_model_vars": list(final_fit.lower_vars),
+        "selected_upper_raw_vars": [
+            v[:-2] if v.endswith("_Z") else v for v in final_fit.upper_vars
+        ],
+        "selected_lower_raw_vars": [
+            v[:-2] if v.endswith("_Z") else v for v in final_fit.lower_vars
+        ],
         "coefficients": {k: float(v) for k, v in pd.Series(final_fit.result.params).to_dict().items()},
         "aadt_monotonicity": {
             "trainval": elasticity_trainval,
