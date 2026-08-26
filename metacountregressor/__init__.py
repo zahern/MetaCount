@@ -87,6 +87,32 @@ __all__ = [
     "fit_cluster_nur",
     "forecast_deterioration",
     "forecast_to_threshold",
+    # JAX device / backend configuration (GPU support)
+    "configure_jax",
+    "device_summary",
+    "get_device_info",
+    # Pavement deterioration: continuous-outcome engine (functional forms,
+    # Markov transitions, hazard/survival, GP forms, pipeline evaluator)
+    "PavementConstraints",
+    "PavementDeteriorationEvaluator",
+    "PavementEvalResult",
+    "MetacountRegressorBridge",
+    "run_pavement_pipeline",
+    "run_pavement_multiobjective_search",
+    "run_pavement_sparse_agds",
+    "PavementMultiObjectiveEvaluator",
+    # pavement building blocks
+    "fit_form",
+    "build_design",
+    "transform_col",
+    "discretize",
+    "fit_transitions",
+    "forward_propagate",
+    "markov_bic",
+    "composite_bic",
+    "fit_hazard",
+    "GPSymbolicRegressor",
+    "tree_to_lambda",
 ]
 
 _EXPORTS = {
@@ -163,6 +189,35 @@ _EXPORTS = {
     "fit_cluster_nur": ("pavement_clr", "fit_cluster_nur"),
     "forecast_deterioration": ("pavement_clr", "forecast_deterioration"),
     "forecast_to_threshold": ("pavement_clr", "forecast_to_threshold"),
+    # JAX device / backend configuration (GPU support)
+    "configure_jax": ("_jax_config", "configure_jax"),
+    "device_summary": ("_jax_config", "device_summary"),
+    "get_device_info": ("_jax_config", "get_device_info"),
+    # Pavement deterioration: continuous-outcome engine
+    "PavementConstraints": ("pavement_pipeline", "Constraints"),
+    "PavementDeteriorationEvaluator": (
+        "pavement_pipeline", "PavementDeteriorationEvaluator"),
+    "PavementEvalResult": ("pavement_pipeline", "EvalResult"),
+    "MetacountRegressorBridge": ("pavement_pipeline", "MetacountRegressorBridge"),
+    "run_pavement_pipeline": ("pavement_pipeline", "run_pipeline"),
+    "run_pavement_multiobjective_search": (
+        "pavement_search", "run_pavement_multiobjective_search"),
+    "run_pavement_sparse_agds": (
+        "pavement_search", "run_pavement_sparse_agds"),
+    "PavementMultiObjectiveEvaluator": (
+        "pavement_search", "PavementMultiObjectiveEvaluator"),
+    # pavement building blocks
+    "fit_form": ("pavement_forms", "fit_form"),
+    "build_design": ("pavement_forms", "build_design"),
+    "transform_col": ("pavement_forms", "transform_col"),
+    "discretize": ("pavement_markov", "discretize"),
+    "fit_transitions": ("pavement_markov", "fit_transitions"),
+    "forward_propagate": ("pavement_markov", "forward_propagate"),
+    "markov_bic": ("pavement_markov", "markov_bic"),
+    "composite_bic": ("pavement_markov", "composite_bic"),
+    "fit_hazard": ("pavement_hazard", "fit_hazard"),
+    "GPSymbolicRegressor": ("pavement_gp", "GPSymbolicRegressor"),
+    "tree_to_lambda": ("pavement_gp", "tree_to_lambda"),
 }
 
 _LEGACY_EXPORTS = {

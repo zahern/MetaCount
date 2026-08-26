@@ -2,3 +2,5 @@ include README.md
 include version.txt
 recursive-include metacountregressor/metacountregressor/data *.csv
 recursive-include metacountregressor/metacountregressor/templates *.ipynb
+recursive-include metacountregressor/data *.csv
+recursive-include metacountregressor/examples *.py *.md

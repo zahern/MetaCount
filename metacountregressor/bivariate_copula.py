@@ -1,4 +1,4 @@
-"""
+﻿"""
 Bivariate Negative-Binomial Regression with Copula Dependence
 ==============================================================
 
@@ -45,16 +45,16 @@ Estimation strategy
 -------------------
 To get clean JAX autodiff we split the fit into two stages:
 
-    1. **Margins** — fit two univariate NB regressions (one per response)
+    1. **Margins** â€” fit two univariate NB regressions (one per response)
        via L-BFGS-B.  This delivers ``alpha_1, alpha_2`` along with the
        linear-predictor coefficients.
 
-    2. **Joint**  — keep ``alpha_1, alpha_2`` *fixed* and re-fit the
+    2. **Joint**  â€” keep ``alpha_1, alpha_2`` *fixed* and re-fit the
        copula-augmented joint likelihood, varying only the linear-
        predictor coefficients and the dependence parameter ``rho``.
 
 This is the standard "inference for marginals / parameter coupling"
-procedure (Joe, 1997, Ch. 10; see also Ahmad et al. 2023 §3.2 in
+procedure (Joe, 1997, Ch. 10; see also Ahmad et al. 2023 Â§3.2 in
 their Stata implementation).  Combining with a single shared
 ``alpha_1 == alpha_2`` also reproduces the Marshall-Olkin model.
 """
@@ -71,7 +71,11 @@ try:
     import jax.numpy as jnp
     import jax.scipy.special as jsp_special
     import jax.scipy.stats as jsp_stats
-    jax.config.update("jax_enable_x64", True)
+    try:
+        from ._jax_config import configure_jax
+    except ImportError:  # flat import (script run inside the package dir)
+        from _jax_config import configure_jax
+    configure_jax()
 except ImportError:
     jax = None
     jax_present = False
@@ -259,7 +263,7 @@ def bivariate_copula_loglik(
     alpha_1=None, alpha_2=None,
 ):
     """Joint log-likelihood for two NB marginals with copula
-    dependence. Parameters ``alpha_1`` and ``alpha_2`` are *fixed* —
+    dependence. Parameters ``alpha_1`` and ``alpha_2`` are *fixed* â€”
     fit them first by calling :func:`fit_univariate_nb` twice.
 
     Parameters

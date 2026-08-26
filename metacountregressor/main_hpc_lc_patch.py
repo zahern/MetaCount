@@ -132,7 +132,11 @@ except ImportError:
         DIST_MAP,
     )
 
-jax.config.update("jax_enable_x64", True)
+try:
+    from ._jax_config import configure_jax
+except ImportError:  # flat import (script run from inside the package dir)
+    from _jax_config import configure_jax
+configure_jax()
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1774,7 +1778,10 @@ def print_summary(result, objective, data, spec: ModelSpec,
             logits_cols.append(Z_c @ gamma_list[_c])
         logits_i    = np.column_stack(logits_cols)
         logits_full = np.concatenate([np.zeros((N, 1)), logits_i], axis=1)
-        pi = np.exp(logits_full) / np.exp(logits_full).sum(axis=1, keepdims=True)
+        # Max-subtracted softmax: identical probabilities, but stable when
+        # the membership logits are large (raw np.exp overflows to NaN).
+        pi = np.exp(logits_full - logits_full.max(axis=1, keepdims=True))
+        pi /= pi.sum(axis=1, keepdims=True)
         pi_mean = pi.mean(axis=0)  # marginal class probs
 
         print("\n" + "=" * 65)

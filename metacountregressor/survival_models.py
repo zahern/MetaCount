@@ -1,4 +1,4 @@
-"""
+﻿"""
 survival_models.py
 ==================
 JAX-native AFT (Accelerated Failure Time) models with full simulation-based
@@ -6,19 +6,19 @@ random parameters.  Borrows build_eta, build_jax_data, ModelSpec, Halton draws
 and the Cholesky-correlated random-effect machinery directly from main_hpc so
 that every feature available to count models is also available here:
 
-  • Fixed parameters
-  • Independent normal random parameters    (Kr_ind)
-  • Correlated normal random parameters     (Kr_cor, Cholesky factorisation)
-  • Heterogeneity in means                  (Kh)
-  • Latent-class survival (via LC wrapper)  – C > 1 supported
+  â€¢ Fixed parameters
+  â€¢ Independent normal random parameters    (Kr_ind)
+  â€¢ Correlated normal random parameters     (Kr_cor, Cholesky factorisation)
+  â€¢ Heterogeneity in means                  (Kh)
+  â€¢ Latent-class survival (via LC wrapper)  â€“ C > 1 supported
 
 Distributional families
 -----------------------
-  lognormal  : log T = η + σε,  ε ~ N(0,1)
-  weibull    : log T = η + σε,  ε ~ Gumbel(0,1)  [extreme-value min]
-  loglogistic: log T = η + σε,  ε ~ Logistic(0,1)
+  lognormal  : log T = Î· + ÏƒÎµ,  Îµ ~ N(0,1)
+  weibull    : log T = Î· + ÏƒÎµ,  Îµ ~ Gumbel(0,1)  [extreme-value min]
+  loglogistic: log T = Î· + ÏƒÎµ,  Îµ ~ Logistic(0,1)
 
-The scale σ is always estimated (parametrised via softplus so σ > 0).
+The scale Ïƒ is always estimated (parametrised via softplus so Ïƒ > 0).
 Right-censoring is handled via the survival function for censored observations.
 
 Public API
@@ -35,7 +35,7 @@ Public API
   WeibullRandomEffectsAFTFitter
   LogLogisticRandomEffectsAFTFitter
 
-  SurvivalSearchProblem   – fits all three families, returns BIC-ranked table
+  SurvivalSearchProblem   â€“ fits all three families, returns BIC-ranked table
 """
 
 from __future__ import annotations
@@ -54,9 +54,13 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxopt import LBFGS
 
-jax.config.update("jax_enable_x64", True)
+try:
+    from ._jax_config import configure_jax
+except ImportError:  # flat import (script run from inside the package dir)
+    from _jax_config import configure_jax
+configure_jax()
 
-# ── Import infrastructure from main_hpc ──────────────────────────────────────
+# â”€â”€ Import infrastructure from main_hpc â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 try:
     from .main_hpc import (
         build_base_index,
@@ -95,24 +99,24 @@ except ImportError:
 
 _SURVIVAL_FAMILIES = {"lognormal", "weibull", "loglogistic"}
 
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # 1.  Per-family AFT log-likelihoods
 #
 #     All functions receive arrays of shape (N, P, R):
-#       y         – observed duration  (always > 0)
-#       event     – 1 = observed, 0 = right-censored
-#       eta       – linear predictor  (same shape as y after broadcast)
-#       sigma_raw – raw scale param (scalar); transformed via softplus
+#       y         â€“ observed duration  (always > 0)
+#       event     â€“ 1 = observed, 0 = right-censored
+#       eta       â€“ linear predictor  (same shape as y after broadcast)
+#       sigma_raw â€“ raw scale param (scalar); transformed via softplus
 #
 #     Return:  ll of shape (N, P, R)
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _aft_lognormal_ll(y, event, eta, sigma_raw):
     """
-    log T = η + σε,  ε ~ N(0,1)
-    f(t)  = φ(z)/(tσ)       log f = logpdf(z) − log t − log σ
-    S(t)  = Φ(−z)           log S = log_ndtr(−z)
-    where z = (log t − η)/σ
+    log T = Î· + ÏƒÎµ,  Îµ ~ N(0,1)
+    f(t)  = Ï†(z)/(tÏƒ)       log f = logpdf(z) âˆ’ log t âˆ’ log Ïƒ
+    S(t)  = Î¦(âˆ’z)           log S = log_ndtr(âˆ’z)
+    where z = (log t âˆ’ Î·)/Ïƒ
     """
     sigma   = jax.nn.softplus(sigma_raw)
     log_y   = jnp.log(jnp.clip(y, 1e-12, None))
@@ -129,10 +133,10 @@ def _aft_lognormal_ll(y, event, eta, sigma_raw):
 
 def _aft_weibull_ll(y, event, eta, sigma_raw):
     """
-    log T = η + σε,  ε ~ Gumbel min (extreme value type I for minima)
-    f(t)  : gumbel pdf   log f = z − exp(z) − log t − log σ
-    S(t)  : exp(−exp(z)) log S = −exp(z)
-    where z = (log t − η)/σ
+    log T = Î· + ÏƒÎµ,  Îµ ~ Gumbel min (extreme value type I for minima)
+    f(t)  : gumbel pdf   log f = z âˆ’ exp(z) âˆ’ log t âˆ’ log Ïƒ
+    S(t)  : exp(âˆ’exp(z)) log S = âˆ’exp(z)
+    where z = (log t âˆ’ Î·)/Ïƒ
     """
     sigma   = jax.nn.softplus(sigma_raw)
     log_y   = jnp.log(jnp.clip(y, 1e-12, None))
@@ -144,10 +148,10 @@ def _aft_weibull_ll(y, event, eta, sigma_raw):
 
 def _aft_loglogistic_ll(y, event, eta, sigma_raw):
     """
-    log T = η + σε,  ε ~ Logistic(0,1)
-    f(t)  : logistic pdf  log f = z − log t − log σ − 2 log(1+exp(z))
-    S(t)  : 1/(1+exp(z))  log S = −softplus(z)
-    where z = (log t − η)/σ
+    log T = Î· + ÏƒÎµ,  Îµ ~ Logistic(0,1)
+    f(t)  : logistic pdf  log f = z âˆ’ log t âˆ’ log Ïƒ âˆ’ 2 log(1+exp(z))
+    S(t)  : 1/(1+exp(z))  log S = âˆ’softplus(z)
+    where z = (log t âˆ’ Î·)/Ïƒ
     """
     sigma   = jax.nn.softplus(sigma_raw)
     log_y   = jnp.log(jnp.clip(y, 1e-12, None))
@@ -168,7 +172,7 @@ def aft_loglik(y, event, eta, sigma_raw, family: str):
     raise ValueError(f"Unknown AFT family '{family}'. Choose: lognormal, weibull, loglogistic")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # 2.  survival_mixed_model_loglik
 #
 #     Drop-in analogue of main_hpc.mixed_model_loglik for survival data.
@@ -178,7 +182,7 @@ def aft_loglik(y, event, eta, sigma_raw, family: str):
 #     Latent-class (C > 1) is supported via the same LC wrapper pattern as
 #     main_hpc_lc_patch: per-class theta_c slices are passed recursively with
 #     latent_classes=1.
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def survival_mixed_model_loglik(
     params,
@@ -193,7 +197,7 @@ def survival_mixed_model_loglik(
     Parameters
     ----------
     params   : 1-D JAX/numpy array of model parameters
-    data     : dict produced by build_jax_survival_data — must contain
+    data     : dict produced by build_jax_survival_data â€” must contain
                "y" (duration), "event" (0/1), plus all standard keys
                (Xf, Xr_ind, draws_ind, etc.)
     spec     : ModelSpec with model in {"lognormal","weibull","loglogistic"}
@@ -206,7 +210,7 @@ def survival_mixed_model_loglik(
     scalar  NLL  when indivi=False
     (N,)   ll_n  when indivi=True   (note: positive = higher likelihood)
     """
-    # ── Latent-class wrapper ─────────────────────────────────────────────────
+    # â”€â”€ Latent-class wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if spec.latent_classes > 1:
         C         = spec.latent_classes
         base_spec = replace(spec, latent_classes=1)
@@ -232,7 +236,7 @@ def survival_mixed_model_loglik(
             return ll_ind
         return -jnp.sum(ll_ind)
 
-    # ── Single-class branch ──────────────────────────────────────────────────
+    # â”€â”€ Single-class branch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     blocks  = unpack_params(params, spec)
     sigma   = blocks["sigma"]                              # raw; softplus inside aft_loglik
 
@@ -262,11 +266,11 @@ def survival_mixed_model_loglik(
     return -jnp.sum(ll_ind)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # 3.  build_jax_survival_data
 #
 #     Extends build_jax_data with an "event" key in the data dict.
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def build_jax_survival_data(
     df: pd.DataFrame,
@@ -465,9 +469,9 @@ def _build_survival_data_simple(
     return data, spec
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 4.  Initialisation helper — OLS on log(duration) for uncensored observations
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 4.  Initialisation helper â€” OLS on log(duration) for uncensored observations
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _survival_ols_init(data: dict, K_base: int) -> np.ndarray:
     """
@@ -508,9 +512,9 @@ def _survival_ols_init(data: dict, K_base: int) -> np.ndarray:
     return params
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 5.  SurvivalModel — fit / predict / diagnostics
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 5.  SurvivalModel â€” fit / predict / diagnostics
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class SurvivalModel:
     """
@@ -567,7 +571,7 @@ class SurvivalModel:
     def predict_median(self) -> np.ndarray:
         """
         Median survival time E[T_0.5] via the linear predictor.
-        For all AFT families: median(T) = exp(η).
+        For all AFT families: median(T) = exp(Î·).
         Averaged over Halton draws.
         """
         eta = build_eta(self.params, self.data, self.spec)  # (N, P, R)
@@ -576,9 +580,9 @@ class SurvivalModel:
     def predict_mean(self) -> np.ndarray:
         """
         Mean survival time (closed-form where available):
-          lognormal   : E[T] = exp(η + σ²/2)
-          weibull     : E[T] = exp(η) · Γ(1 + σ)
-          loglogistic : E[T] = exp(η) · πσ / sin(πσ)   [only for σ < 1]
+          lognormal   : E[T] = exp(Î· + ÏƒÂ²/2)
+          weibull     : E[T] = exp(Î·) Â· Î“(1 + Ïƒ)
+          loglogistic : E[T] = exp(Î·) Â· Ï€Ïƒ / sin(Ï€Ïƒ)   [only for Ïƒ < 1]
         Averaged over Halton draws.
         """
         blocks = unpack_params(self.params, self.spec)
@@ -594,14 +598,14 @@ class SurvivalModel:
             if sigma < 1.0:
                 mean_draws = exp_eta * (math.pi * sigma / math.sin(math.pi * sigma))
             else:
-                mean_draws = exp_eta   # undefined for σ≥1, fall back to median
+                mean_draws = exp_eta   # undefined for Ïƒâ‰¥1, fall back to median
 
         return mean_draws.mean(axis=(-2, -1))   # (N,)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 6.  AFTFitter — high-level interface
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 6.  AFTFitter â€” high-level interface
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class AFTFitter:
     """
@@ -652,7 +656,7 @@ class AFTFitter:
         self.params_:        pd.Series       = pd.Series(dtype=float)
         self.log_likelihood_: float          = float("nan")
 
-    # ── fit ──────────────────────────────────────────────────────────────────
+    # â”€â”€ fit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def fit(
         self,
@@ -780,14 +784,14 @@ class AFTFitter:
         self._bic = bic
         self._aic = aic
 
-    # ── public accessors ─────────────────────────────────────────────────────
+    # â”€â”€ public accessors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def summary_frame(self) -> pd.DataFrame:
         return self.summary_.copy()
 
     def print_summary(self) -> None:
         print(f"\n{'='*60}")
-        print(f"  AFT Model  —  family: {self.family}")
+        print(f"  AFT Model  â€”  family: {self.family}")
         print(f"  LL = {self.log_likelihood_:.4f}   "
               f"AIC = {self._aic:.2f}   BIC = {self._bic:.2f}")
         print(f"{'='*60}")
@@ -877,9 +881,9 @@ class AFTFitter:
         return pd.DataFrame(rows)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # 7.  Backward-compatible aliases and search problem
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _FamilyFitter(AFTFitter):
     """Subclass that fixes the family at class definition time."""
@@ -985,7 +989,7 @@ class SurvivalSearchProblem:
                     "fitter":    fitter,
                 })
             except Exception as exc:
-                warnings.warn(f"SurvivalSearchProblem: {fam} failed — {exc}", RuntimeWarning)
+                warnings.warn(f"SurvivalSearchProblem: {fam} failed â€” {exc}", RuntimeWarning)
                 rows.append({
                     "family": fam, "LL": float("nan"), "k": None, "n": None,
                     "AIC": float("nan"), "BIC": float("nan"),

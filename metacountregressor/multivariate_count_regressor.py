@@ -1,4 +1,4 @@
-"""
+﻿"""
 multivariate_count_regressor.py
 ================================
 Multivariate count-data regression for jointly predicting M activity types
@@ -7,22 +7,22 @@ eating-out, etc.).
 
 Model structure
 ---------------
-For person i and activity type m = 1, …, M:
+For person i and activity type m = 1, â€¦, M:
 
     Y_{i,m} | x_i  ~  NegBin(mu_{i,m},  alpha_m)
 
     log mu_{i,m}  =  x_i @ beta_m  +  offset_{i,m}
 
 The M marginal distributions are coupled through a **Gaussian copula** with
-correlation matrix Sigma (an M×M symmetric positive-definite matrix).  This
-captures the fact that a person's activities in a day are jointly determined —
+correlation matrix Sigma (an MÃ—M symmetric positive-definite matrix).  This
+captures the fact that a person's activities in a day are jointly determined â€”
 someone who makes many work trips tends to make fewer leisure trips, etc.
 
 Estimation is two-stage (Joe, 1997; Ahmad et al., 2023):
   1. **Margins**: fit M independent univariate NB regressions via L-BFGS-B to
      obtain beta_m and alpha_m for each activity type.
   2. **Joint copula**: hold alpha_m fixed and optimise the joint Gaussian-copula
-     log-likelihood over {beta_m} ∪ {L_ij} where L is the lower-triangular
+     log-likelihood over {beta_m} âˆª {L_ij} where L is the lower-triangular
      Cholesky factor of Sigma.
 
 Public API
@@ -54,13 +54,17 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-# ── JAX ─────────────────────────────────────────────────────────────────
+# â”€â”€ JAX â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 try:
     import jax
     import jax.numpy as jnp
     import jax.scipy as jsp
     import jax.scipy.special as jsp_special
-    jax.config.update("jax_enable_x64", True)
+    try:
+        from ._jax_config import configure_jax
+    except ImportError:  # flat import (script run inside the package dir)
+        from _jax_config import configure_jax
+    configure_jax()
     _JAX_OK = True
 except ImportError:
     _JAX_OK = False
@@ -72,7 +76,7 @@ try:
 except ImportError:
     _SCIPY_OK = False
 
-# ── Local imports (graceful fallback) ────────────────────────────────────
+# â”€â”€ Local imports (graceful fallback) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 try:
     from .bivariate_copula import (
         nb_log_pmf,
@@ -99,9 +103,9 @@ __all__ = [
     "vine_frank_copula_loglik",
 ]
 
-# ═══════════════════════════════════════════════════════════════════════
-# 1.  Utility: Cholesky ↔ correlation-matrix conversions
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 1.  Utility: Cholesky â†” correlation-matrix conversions
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _chol_to_corr(L: jnp.ndarray) -> jnp.ndarray:
     """
@@ -152,7 +156,7 @@ def _init_chol(M: int, empirical_corr: Optional[np.ndarray] = None) -> np.ndarra
     """
     Return a flat initial vector for the Cholesky factor.
 
-    If *empirical_corr* is provided (shape M×M), use its Cholesky factor
+    If *empirical_corr* is provided (shape MÃ—M), use its Cholesky factor
     (clipped for numerical stability); otherwise start at the identity.
     """
     if empirical_corr is not None:
@@ -170,9 +174,9 @@ def _init_chol(M: int, empirical_corr: Optional[np.ndarray] = None) -> np.ndarra
     return v
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 2.  Poisson log-PMF (for mixed marginal option)
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def poisson_log_pmf(k, mu):
     """Log P(Y=k) for Poisson(mu)."""
@@ -191,9 +195,9 @@ def poisson_log_cdf(k, mu):
     return jnp.log(jnp.clip(val, 1e-300, 1.0))
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 3.  Gaussian copula log-likelihood for M count outcomes
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def gaussian_copula_loglik(
     Y: jnp.ndarray,           # (n, M) integer counts
@@ -210,8 +214,8 @@ def gaussian_copula_loglik(
     For discrete Y the bivariate rectangle probability (generalised to M dims)
     is:
 
-        P(Y_1=y_1, …, Y_M=y_M)
-          = sum_{s in {0,1}^M}  (-1)^{|s|}  C_Gauss(F_1(y_1-s_1), …, F_M(y_M-s_M))
+        P(Y_1=y_1, â€¦, Y_M=y_M)
+          = sum_{s in {0,1}^M}  (-1)^{|s|}  C_Gauss(F_1(y_1-s_1), â€¦, F_M(y_M-s_M))
 
     where C_Gauss is the M-dimensional Gaussian copula CDF evaluated at the
     M marginal CDFs.
@@ -220,15 +224,15 @@ def gaussian_copula_loglik(
     integration, we follow Ahmad et al. (2023) and work on the **log-density**
     (continuous-approximation) side:
 
-        log L_i ≈  sum_m log p_m(y_{i,m})
-                  + log c_Gauss(u_{i,1}, …, u_{i,M})
+        log L_i â‰ˆ  sum_m log p_m(y_{i,m})
+                  + log c_Gauss(u_{i,1}, â€¦, u_{i,M})
 
     where u_{i,m} = F_m(y_{i,m}) (mid-CDF for discrete),
     and   c_Gauss is the M-variate Gaussian copula *density*.
 
     The Gaussian copula density is:
 
-        log c(u_1,…,u_M; Sigma) =
+        log c(u_1,â€¦,u_M; Sigma) =
             -0.5 * log det(Sigma)
             - 0.5 * z^T (Sigma^{-1} - I) z
 
@@ -255,7 +259,7 @@ def gaussian_copula_loglik(
 
     eps = 1e-9
 
-    # ── Marginal log-PMFs and CDFs ─────────────────────────────────────
+    # â”€â”€ Marginal log-PMFs and CDFs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if marginal == "nb":
         # (n, M)
         log_pmf = jnp.stack(
@@ -284,10 +288,10 @@ def gaussian_copula_loglik(
     cdf_lo = jnp.exp(log_cdf_m1)
     u = jnp.clip(0.5 * (cdf_hi + cdf_lo), eps, 1.0 - eps)  # (n, M)
 
-    # ── Probit transform: z_{i,m} = Phi^{-1}(u_{i,m}) ────────────────
+    # â”€â”€ Probit transform: z_{i,m} = Phi^{-1}(u_{i,m}) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     z = jsp_special.ndtri(u)  # (n, M)
 
-    # ── Gaussian copula log-density ────────────────────────────────────
+    # â”€â”€ Gaussian copula log-density â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # log det(Sigma)
     sign, log_det = jnp.linalg.slogdet(Sigma)
     log_det = jnp.where(sign > 0, log_det, jnp.zeros_like(log_det))
@@ -301,15 +305,15 @@ def gaussian_copula_loglik(
 
     log_copula_density = -0.5 * log_det - 0.5 * quad  # (n,)
 
-    # ── Total log-likelihood ───────────────────────────────────────────
+    # â”€â”€ Total log-likelihood â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     ll_marginals = jnp.sum(log_pmf, axis=1)  # (n,)
     ll = jnp.sum(ll_marginals + log_copula_density)
     return ll
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 4.  Vine copula (pair-copula construction using Frank bivariate copulas)
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _frank_copula_cdf(u: jnp.ndarray, v: jnp.ndarray, rho: jnp.ndarray) -> jnp.ndarray:
     """Frank copula CDF: C(u,v;rho) = -(1/rho) * log(inner/eta)."""
@@ -338,7 +342,7 @@ def vine_frank_copula_loglik(
     each tree level.
 
     This is equivalent to the R-vine representation with a path graph
-    structure (1-2, 2-3, …, (M-1)-M in tree 1; conditional pairs in tree 2…).
+    structure (1-2, 2-3, â€¦, (M-1)-M in tree 1; conditional pairs in tree 2â€¦).
 
     For practical tractability (no numerical integration of conditional CDFs
     beyond tree 1), this implementation uses the **C-vine** approximation
@@ -346,12 +350,12 @@ def vine_frank_copula_loglik(
 
     Parameters
     ----------
-    rho_params : (M*(M-1)//2,) — one Frank rho per unique pair (i,j) with i<j,
-                  ordered as (0,1),(0,2),…,(0,M-1),(1,2),…
+    rho_params : (M*(M-1)//2,) â€” one Frank rho per unique pair (i,j) with i<j,
+                  ordered as (0,1),(0,2),â€¦,(0,M-1),(1,2),â€¦
     """
     eps = 1e-9
 
-    # ── Marginal CDFs ─────────────────────────────────────────────────
+    # â”€â”€ Marginal CDFs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if marginal == "nb":
         log_pmf = jnp.stack(
             [nb_log_pmf(Y[:, m], mus[:, m], alphas[m]) for m in range(M)], axis=1
@@ -379,7 +383,7 @@ def vine_frank_copula_loglik(
 
     ll_marginals = jnp.sum(log_pmf, axis=1)  # (n,)
 
-    # ── C-vine: all pairs (0,m) and (i,j) with i<j (tree 1 only) ─────
+    # â”€â”€ C-vine: all pairs (0,m) and (i,j) with i<j (tree 1 only) â”€â”€â”€â”€â”€
     # For simplicity and JAX-differentiability, use the C-vine where the
     # first variable (m=0) is the hub and all M-1 pairs involve variable 0.
     # Additional tree pairs (j,k | 0) use conditional CDFs.
@@ -410,18 +414,18 @@ def vine_frank_copula_loglik(
             mass_ij = jnp.clip(C_pp - C_pm - C_mp + C_mm, eps, None)
             f_i = jnp.clip(cdf_hi_i - cdf_lo_i, eps, None)
             f_j = jnp.clip(cdf_hi_j - cdf_lo_j, eps, None)
-            # copula density correction: log c(u,v) ≈ log(mass/(f_i*f_j))
+            # copula density correction: log c(u,v) â‰ˆ log(mass/(f_i*f_j))
             log_vine = log_vine + jnp.log(mass_ij) - jnp.log(f_i) - jnp.log(f_j)
 
     return jnp.sum(ll_marginals) + jnp.sum(log_vine)
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 5.  Joint parameter packing / unpacking
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _pack_joint_params(
-    betas_list: List[np.ndarray],   # [beta_1, …, beta_M]
+    betas_list: List[np.ndarray],   # [beta_1, â€¦, beta_M]
     copula_params: np.ndarray,       # Cholesky vec or rho vec
 ) -> np.ndarray:
     return np.concatenate([b.ravel() for b in betas_list] + [copula_params])
@@ -429,7 +433,7 @@ def _pack_joint_params(
 
 def _unpack_joint_params(
     params: Union[np.ndarray, jnp.ndarray],
-    ks: List[int],   # [k_1, …, k_M]  columns per outcome
+    ks: List[int],   # [k_1, â€¦, k_M]  columns per outcome
     n_copula: int,
 ):
     """Return betas_list, copula_params."""
@@ -439,9 +443,9 @@ def _unpack_joint_params(
     return betas_list, copula_params
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 6.  Result dataclass
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @dataclass
 class MultivariateCountFit:
@@ -452,9 +456,9 @@ class MultivariateCountFit:
     k_total: int
 
     # Per-outcome estimates
-    coef: List[np.ndarray]        # [beta_1, …, beta_M]
+    coef: List[np.ndarray]        # [beta_1, â€¦, beta_M]
     alphas: np.ndarray            # (M,)  overdispersion
-    se: List[np.ndarray]          # [se_1, …, se_M]
+    se: List[np.ndarray]          # [se_1, â€¦, se_M]
     feature_names: List[List[str]]
 
     # Copula
@@ -542,9 +546,9 @@ class MultivariateCountFit:
         return self.summary()
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 7.  MultivariateCountRegressor — main class
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 7.  MultivariateCountRegressor â€” main class
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class MultivariateCountRegressor:
     """
@@ -618,7 +622,7 @@ class MultivariateCountRegressor:
         self.verbose = verbose
         self._fit: Optional[MultivariateCountFit] = None
 
-    # ── fit ─────────────────────────────────────────────────────────────
+    # â”€â”€ fit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def fit(
         self,
@@ -656,14 +660,14 @@ class MultivariateCountRegressor:
         Y = np.asarray(Y, dtype=np.float64)
         n, M = Y.shape
 
-        # ── Activity names ──────────────────────────────────────────────
+        # â”€â”€ Activity names â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if not self.activity_names:
             self.activity_names = [f"activity_{m+1}" for m in range(M)]
         assert len(self.activity_names) == M, (
             f"activity_names has {len(self.activity_names)} entries but Y has {M} columns"
         )
 
-        # ── Covariate matrices ──────────────────────────────────────────
+        # â”€â”€ Covariate matrices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if isinstance(X, np.ndarray):
             X_list = [X.copy() for _ in range(M)]
         else:
@@ -672,7 +676,7 @@ class MultivariateCountRegressor:
 
         ks = [x.shape[1] for x in X_list]
 
-        # ── Offsets ─────────────────────────────────────────────────────
+        # â”€â”€ Offsets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if offsets is None:
             off_arr = np.zeros((n, M))
         elif isinstance(offsets, np.ndarray):
@@ -680,15 +684,15 @@ class MultivariateCountRegressor:
         else:
             off_arr = np.column_stack([np.asarray(o, dtype=np.float64) for o in offsets])
 
-        # ── Feature names ────────────────────────────────────────────────
+        # â”€â”€ Feature names â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if feature_names is None:
             feature_names = [
                 [f"x{j}" for j in range(ks[m])] for m in range(M)
             ]
 
-        # ── Stage 1: Univariate NB fits ──────────────────────────────────
+        # â”€â”€ Stage 1: Univariate NB fits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if self.verbose:
-            print(f"[MultivariateCountRegressor] Stage 1: fitting {M} univariate margins …")
+            print(f"[MultivariateCountRegressor] Stage 1: fitting {M} univariate margins â€¦")
 
         marginal_fits: List[dict] = []
         alphas = np.zeros(M)
@@ -696,7 +700,7 @@ class MultivariateCountRegressor:
 
         for m in range(M):
             if self.verbose:
-                print(f"  Marginal {m+1}/{M}: {self.activity_names[m]} … ", end="", flush=True)
+                print(f"  Marginal {m+1}/{M}: {self.activity_names[m]} â€¦ ", end="", flush=True)
 
             if self.marginal == "nb":
                 fit_m = fit_univariate_nb(
@@ -711,7 +715,7 @@ class MultivariateCountRegressor:
             else:
                 # Poisson: simple log-linear fit (alpha not needed)
                 beta_init_list.append(np.zeros(ks[m]))
-                alphas[m] = 1e-8  # near-zero overdispersion → Poisson
+                alphas[m] = 1e-8  # near-zero overdispersion â†’ Poisson
                 fit_m = {"converged": True, "aic": np.nan, "bic": np.nan,
                          "loglik": np.nan, "alpha": 0.0, "coef": beta_init_list[m]}
 
@@ -723,9 +727,9 @@ class MultivariateCountRegressor:
         if alpha_init is not None:
             alphas = np.asarray(alpha_init, dtype=np.float64)
 
-        # ── Stage 2: Joint copula estimation ───────────────────────────
+        # â”€â”€ Stage 2: Joint copula estimation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if self.verbose:
-            print(f"[MultivariateCountRegressor] Stage 2: joint {self.copula} copula fit …")
+            print(f"[MultivariateCountRegressor] Stage 2: joint {self.copula} copula fit â€¦")
 
         # Empirical correlation of residuals (for warm-starting copula)
         resid_arr = np.zeros((n, M))
@@ -774,7 +778,7 @@ class MultivariateCountRegressor:
         X_jax = [jnp.asarray(x) for x in X_list]
         off_jax = jnp.asarray(off_arr)
 
-        # ── Negative log-likelihood ────────────────────────────────────
+        # â”€â”€ Negative log-likelihood â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         @jax.jit
         def neg_ll(params):
             betas_list_j, copula_p = _unpack_joint_params_jax(params, ks, n_copula)
@@ -822,7 +826,7 @@ class MultivariateCountRegressor:
             status = "converged" if converged else f"stopped ({res.message})"
             print(f"  Joint optimisation {status}.")
 
-        # ── Unpack results ─────────────────────────────────────────────
+        # â”€â”€ Unpack results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         betas_list_opt, copula_params_opt = _unpack_joint_params(params_opt, ks, n_copula)
 
         if self.copula == "gaussian":
@@ -836,7 +840,7 @@ class MultivariateCountRegressor:
                 for j in range(i + 1, M):
                     rho = float(copula_params_opt[idx])
                     idx += 1
-                    # Frank rho → Kendall tau → Pearson (approx)
+                    # Frank rho â†’ Kendall tau â†’ Pearson (approx)
                     try:
                         tau = 1.0 - 4.0 / rho * (1.0 - _frank_debye(rho))
                     except Exception:
@@ -845,7 +849,7 @@ class MultivariateCountRegressor:
                     corr_matrix[i, j] = r
                     corr_matrix[j, i] = r
 
-        # ── Standard errors via Hessian ─────────────────────────────────
+        # â”€â”€ Standard errors via Hessian â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         try:
             se_full = _hessian_se(neg_ll, params_opt)
             splits = np.cumsum([0] + ks)
@@ -855,7 +859,7 @@ class MultivariateCountRegressor:
             se_list = [np.full(ks[m], np.nan) for m in range(M)]
             se_copula = np.full(n_copula, np.nan)
 
-        # ── Information criteria ────────────────────────────────────────
+        # â”€â”€ Information criteria â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         ll_val = -float(neg_ll(jnp.asarray(params_opt)))
         k_total = len(params_opt)
         aic = 2.0 * k_total - 2.0 * ll_val
@@ -917,9 +921,9 @@ class MultivariateCountRegressor:
         return self._fit.summary()
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 8.  JAX-compatible unpack (used inside jit)
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _unpack_joint_params_jax(
     params: jnp.ndarray,
@@ -933,12 +937,12 @@ def _unpack_joint_params_jax(
     return betas_list, copula_params
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 9.  Utility: Frank Debye function (for vine→Pearson conversion)
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 9.  Utility: Frank Debye function (for vineâ†’Pearson conversion)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _frank_debye(rho: float, n_terms: int = 50) -> float:
-    """Debye function D_1(rho) = (1/rho) ∫_0^rho t/(e^t - 1) dt."""
+    """Debye function D_1(rho) = (1/rho) âˆ«_0^rho t/(e^t - 1) dt."""
     if abs(rho) < 1e-8:
         return 1.0
     t_vals = np.linspace(1e-8, abs(rho), n_terms)
@@ -946,9 +950,9 @@ def _frank_debye(rho: float, n_terms: int = 50) -> float:
     return float(np.trapz(integrand, t_vals) / abs(rho))
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 10.  Convenience wrapper: fit from a single DataFrame
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def fit_multivariate_activity_model(
     df: "pd.DataFrame",
@@ -970,8 +974,8 @@ def fit_multivariate_activity_model(
     df : pd.DataFrame
         Long-format data with one row per person.
     activity_cols : list of str
-        Column names for each activity count (Y_1, …, Y_M).
-    covariate_cols : list of str  OR  dict {activity_name: [col, …]}
+        Column names for each activity count (Y_1, â€¦, Y_M).
+    covariate_cols : list of str  OR  dict {activity_name: [col, â€¦]}
         If a list: the same covariates are used for all activities.
         If a dict: activity-specific covariate lists.
     offset_col : str or dict, optional
@@ -998,7 +1002,7 @@ def fit_multivariate_activity_model(
     n = len(df)
     Y = df[activity_cols].values.astype(float)
 
-    # ── Build X_list ────────────────────────────────────────────────────
+    # â”€â”€ Build X_list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     X_list = []
     feat_names = []
     for m, act in enumerate(activity_cols):
@@ -1016,7 +1020,7 @@ def fit_multivariate_activity_model(
         X_list.append(X_m)
         feat_names.append(names_m)
 
-    # ── Build offsets ────────────────────────────────────────────────────
+    # â”€â”€ Build offsets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if offset_col is None:
         off_arr = np.zeros((n, M))
     elif isinstance(offset_col, str):
@@ -1039,9 +1043,9 @@ def fit_multivariate_activity_model(
     return model.fit(X_list, Y, off_arr, feature_names=feat_names)
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 11.  Quick self-test
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _demo():
     """Synthetic demonstration: 3 activities, 500 persons, shared covariates."""
@@ -1077,7 +1081,7 @@ def _demo():
         Y[:, m] = nbinom.ppf(U[:, m], n=r_m, p=p_m)
 
     print(f"\n{'='*60}")
-    print("  MULTIVARIATE ACTIVITY COUNT MODEL  –  DEMO")
+    print("  MULTIVARIATE ACTIVITY COUNT MODEL  â€“  DEMO")
     print(f"{'='*60}")
     print(f"  {n} persons, {M} activity types, {k} covariates\n")
     print("  Activity summary:")

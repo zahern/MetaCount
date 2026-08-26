@@ -7,7 +7,7 @@ A JAX-first Python package for hierarchical model fitting and metaheuristic-driv
 ## Table of Contents
 
 - [Install](#install)
-- [Notebooks — Start Here](#notebooks--start-here)
+- [Tutorials & resources](#tutorials--resources)
 - [Quick Start](#quick-start)
 - [What the package does](#what-the-package-does)
 - [Data loaders](#data-loaders)
@@ -24,6 +24,7 @@ A JAX-first Python package for hierarchical model fitting and metaheuristic-driv
 - [Output and saving results](#output-and-saving-results)
 - [Help system](#help-system)
 - [Running on HPC clusters](#running-on-hpc-clusters)
+- [Getting help](#getting-help)
 
 ---
 
@@ -40,24 +41,106 @@ Quick import check:
 python -c "from metacountregressor import __version__, load_example16_3_raw_data; print(__version__, load_example16_3_raw_data().shape)"
 ```
 
+### GPU acceleration (optional)
+
+The package runs on CPU out of the box and **automatically uses a GPU when
+JAX can see one** — no code changes required.  Install the CUDA flavour of
+JAX instead of the CPU wheel:
+
+```bash
+pip install -U "jax[cuda]"
+```
+
+Verify what the package picked up:
+
+```python
+from metacountregressor import device_summary
+print(device_summary())
+# e.g. metacountregressor JAX 0.6.2 | backend=cuda | devices=[CpuDevice(id=0), CudaDevice(id=0)] | x64=True | gpu_preallocate=False
+```
+
+Behaviour and controls:
+
+| Concern | Default | Override |
+| ------- | ------- | -------- |
+| Platform choice | Auto-detect (GPU if visible, else CPU) | `METACOUNT_JAX_PLATFORM=cpu|gpu|tpu` or `configure_jax(platform='cpu')` |
+| Float precision | float64 enabled (required by the estimators) | — |
+| GPU memory | Grows on demand — safe for shared clusters (XLA's default grabs ~75% of VRAM up front) | `METACOUNT_GPU_PREALLOCATE=1` for exclusive nodes |
+| GPU out-of-memory | Fits transparently retry once after clearing JAX caches, then fall back to the CPU device instead of crashing the search | — |
+
+Transient GPU failures never poison a structure search: candidate structures
+that fail *only* because of device memory are retried, not blacklisted.
+
 ---
 
-## Notebooks — Start Here
+## Tutorials & resources
 
-The fastest way to learn the package is to open the notebooks in order.
-Each one builds on the previous and uses the bundled Example 16-3 crash-frequency data
-so you can run everything without sourcing your own dataset.
+Everything you need to learn the package in one place.
 
-| # | Notebook | What you learn |
-| --- | -------- | -------------- |
-| 00 | [00_quickstart.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/00_quickstart.ipynb) | Install, load data, first search run in under 10 minutes |
-| 01 | [01_crash_frequency_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/01_crash_frequency_search.ipynb) | Mixed Negative Binomial search — constraints, roles, re-fit |
-| 02 | [02_latent_class_fc_validation.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/02_latent_class_fc_validation.ipynb) | 2-class LC model — fit, extract class probabilities, validate against FC |
-| 03 | [03_cmf_aadt_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/03_cmf_aadt_search.ipynb) | CMF model — baseline + AADT-interaction structure search |
-| 04 | [04_linear_speed_prediction.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/04_linear_speed_prediction.ipynb) | Gaussian linear model search (speed prediction) |
-| 05 | [05_batch_script_tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) | Batch scripts, parallel runs, PBS/SLURM HPC job templates |
+### Bundled notebook tutorials
 
-> **Tip:** open with `jupyter lab metacountregressor/metacountregressor/templates/` to browse all notebooks together.
+Six tutorial notebooks ship **inside the wheel** and use the bundled
+Example 16-3 crash-frequency dataset, so every cell runs out of the box —
+no need to source your own data. Copy them into your working directory:
+
+```python
+from metacountregressor import get_templates
+get_templates()          # copies all six .ipynb files to the current folder
+```
+
+| # | Notebook | What you learn | Time |
+| --- | -------- | -------------- | ---- |
+| 00 | [00_quickstart.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/00_quickstart.ipynb) | Install, load bundled data, first search run end-to-end | ~10 min |
+| 01 | [01_crash_frequency_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/01_crash_frequency_search.ipynb) | Mixed Negative Binomial search — constraints, roles, re-fit with more draws | ~20 min |
+| 02 | [02_latent_class_fc_validation.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/02_latent_class_fc_validation.ipynb) | 2-class latent class model — fit, extract class probabilities, validate against functional class | ~20 min |
+| 03 | [03_cmf_aadt_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/03_cmf_aadt_search.ipynb) | CMF model — baseline + AADT-interaction structure search | ~20 min |
+| 04 | [04_linear_speed_prediction.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/04_linear_speed_prediction.ipynb) | Gaussian linear model search (platform speed prediction) | ~20 min |
+| 05 | [05_batch_script_tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) | Batch scripts, parallel seeds, PBS/SLURM HPC job templates, result collection | ~30 min |
+
+Browse them online in the [templates folder](https://github.com/zahern/MetaCount/tree/master/metacountregressor/metacountregressor/templates) or open locally:
+
+```bash
+jupyter lab   # after get_templates(), the notebooks are in your working directory
+```
+
+### Worked example scripts & extended walkthroughs
+
+| Resource | Format | Link |
+| -------- | ------ | ---- |
+| Hierarchical CMF tutorial (full worked analysis) | Python script | [examples/manual_hierarchical_cmf_tutorial.py](https://github.com/zahern/MetaCount/blob/master/metacountregressor/examples/manual_hierarchical_cmf_tutorial.py) |
+| Hierarchical CMF narrative guide | Markdown | [examples/TUTORIAL_HIERARCHICAL_CMF.md](https://github.com/zahern/MetaCount/blob/master/metacountregressor/examples/TUTORIAL_HIERARCHICAL_CMF.md) |
+| General tutorial (search → fit → interpret) | Jupyter notebook | [Tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/Tutorial.ipynb) |
+| Batch / HPC workflow deep dive | Jupyter notebook | [Tutorial_Batch.ipynb](https://github.com/zahern/MetaCount/blob/master/Tutorial_Batch.ipynb) |
+| Batch / HPC workflow deep dive | Markdown | [Tutorial_Batch.md](https://github.com/zahern/MetaCount/blob/master/Tutorial_Batch.md) |
+
+### Built-in help system (no internet needed)
+
+Every workflow has a printable guide built into the package:
+
+```python
+from metacountregressor import get_help
+
+get_help()                    # list all available topics
+```
+
+| Topic | Contents |
+| ----- | -------- |
+| `get_help('roles')` | Role-code reference (0–8) and random-parameter distributions |
+| `get_help('constraints')` | Full `ModelConstraints` API with examples |
+| `get_help('metaheuristics')` | SA / DE / HS comparison and tuning parameters |
+| `get_help('crash_frequency')` | End-to-end count-model workflow |
+| `get_help('latent_class')` | Latent-class workflow incl. class-probability extraction |
+| `get_help('cmf')` | Crash Modification Factor workflows (both routes) |
+| `get_help('linear')` | Gaussian linear model workflow |
+| `get_help('duration')` | Duration / survival model workflow |
+| `get_help('batch')` | Batch scripts, walltime detection, PBS/SLURM templates |
+
+### Other resources
+
+- **Source code & issue tracker:** [github.com/zahern/MetaCount](https://github.com/zahern/MetaCount)
+- **Report a bug / request a feature:** [GitHub Issues](https://github.com/zahern/MetaCount/issues)
+- **Release history:** [PyPI release history](https://pypi.org/project/metacountregressor/#history)
+- **Example datasets:** bundled loaders are documented in [Data loaders](#data-loaders) below; every loader returns a plain `pandas.DataFrame`.
 
 ---
 
@@ -588,4 +671,23 @@ See [05_batch_script_tutorial.ipynb](https://github.com/zahern/MetaCount/blob/ma
 
 ```python
 get_help('batch')   # inline guide
+```
+
+---
+
+## Getting help
+
+- Revisit the [Tutorials & resources](#tutorials--resources) section — the six bundled notebooks cover the full API surface with runnable examples.
+- Ask the package itself: `get_help()` lists every built-in guide.
+- Found a bug or want a feature? Open an issue at [github.com/zahern/MetaCount/issues](https://github.com/zahern/MetaCount/issues).
+
+If you use `metacountregressor` in research, please cite the package:
+
+```bibtex
+@software{metacountregressor,
+  author  = {Ahern, Zeke and Corry, Paul and Paz, Alexander},
+  title   = {metacountregressor: JAX-first hierarchical search and fitting
+             for count, CMF, duration, and linear models},
+  url     = {https://github.com/zahern/MetaCount},
+}
 ```

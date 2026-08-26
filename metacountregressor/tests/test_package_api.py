@@ -1,4 +1,5 @@
 import importlib
+from pathlib import Path
 
 
 def test_public_package_imports():
@@ -21,4 +22,6 @@ def test_public_package_imports():
     assert submodule.ExperimentBuilder is package.ExperimentBuilder
     assert cmf_submodule.CMFExperimentBuilder is package.CMFExperimentBuilder
     assert family_submodule.LinearSearchProblem is package.LinearSearchProblem
-    assert package.__version__ == "1.0.33"
+    # Version must match the single source of truth in version.txt
+    version_file = Path(__file__).resolve().parents[2] / "version.txt"
+    assert package.__version__ == version_file.read_text().strip()

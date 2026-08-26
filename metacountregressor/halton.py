@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 import jax.numpy as jnp
 import jax
 from scipy.optimize import minimize
@@ -7,7 +7,11 @@ from scipy.stats.qmc import Sobol
 import pandas as pd
 import warnings
 
-jax.config.update("jax_enable_x64", True)
+try:
+    from ._jax_config import configure_jax
+except ImportError:  # flat import (script run from inside the package dir)
+    from _jax_config import configure_jax
+configure_jax()
 
 
 def _next_power_of_2(n: int) -> int:
@@ -67,7 +71,7 @@ def generate_sobol_draws(
         elif dist in ("triangular", "triang"):
             sample[:, i] = triang.ppf(u, c=0.5)
         elif dist == "uniform":
-            sample[:, i] = 2.0 * u - 1.0          # maps [0,1] → [-1, 1]
+            sample[:, i] = 2.0 * u - 1.0          # maps [0,1] â†’ [-1, 1]
         else:
             warnings.warn(
                 f"Unknown distribution '{dist}' at dim {i}; keeping uniform [0,1].",

@@ -115,9 +115,14 @@ class AdvancedSimulatedAnnealing:
                  adaptive=True,
                  step_size=1,
                  archive_limit=100,
-                 restart_threshold=500, patience =400, tol = 1e-6):
+                 restart_threshold=500, patience =400, tol = 1e-6,
+                 init_solution=None):
 
-        
+        self.init_solution = None
+        if init_solution is not None:
+            cand = np.asarray(init_solution, dtype=float).reshape(-1)
+            if cand.size == dimension and np.all(np.isfinite(cand)):
+                self.init_solution = cand.astype(int)
         self.tol = tol
         self.patience = patience
         self.mutation_rate = mutation_rate
@@ -922,7 +927,21 @@ class AdvancedSimulatedAnnealing:
     def optimize(self):
         start_time = time.time()   # [OK]
         last_best = None
-        current, current_score = self.initialize_valid_solution()
+        if self.init_solution is not None:
+            # Warm start (e.g. best structure from a previous cached run):
+            # evaluate it; fall back to random init if it is infeasible.
+            current = self.init_solution.copy()
+            current_score = self.evaluator.fitness(current)
+            if not np.isfinite(current_score).all() or float(
+                np.max(np.asarray(current_score, dtype=float))
+            ) >= 1e12:
+                print("[SA init] warm-start solution invalid - using random init")
+                current, current_score = self.initialize_valid_solution()
+            else:
+                print(f"[SA init] warm-started from cached solution "
+                      f"(score={float(np.min(current_score)):.4f})")
+        else:
+            current, current_score = self.initialize_valid_solution()
 
         if self.T0 is None:
             self.T0 = self.auto_temperature(current)
@@ -1134,15 +1153,21 @@ class MultiStartSA:
                  dimension,
                  n_starts=10,
                  n_jobs=1,
+                 init_solutions=None,
                  **sa_kwargs):
 
         self.evaluator = evaluator
         self.dimension = dimension
         self.n_starts = n_starts
         self.n_jobs = n_jobs
+        # Optional per-start warm-start decision vectors (list of arrays).
+        # Start i uses init_solutions[i % len(init_solutions)] when provided.
+        self.init_solutions = (
+            list(init_solutions) if init_solutions is not None else None
+        )
         self.sa_kwargs = sa_kwargs
 
-    def run_single(self, seed):
+    def run_single(self, seed, start_index=0):
 
         np.random.seed(seed)
 
@@ -1151,6 +1176,10 @@ class MultiStartSA:
             dimension=self.dimension,
             **self.sa_kwargs
         )
+        if self.init_solutions:
+            sa.init_solution = np.asarray(
+                self.init_solutions[start_index % len(self.init_solutions)]
+            )
 
         archive, scores = sa.optimize()
         sa.save_search_stats_txt(
@@ -1181,7 +1210,7 @@ class MultiStartSA:
     def optimize(self):
 
         results = Parallel(n_jobs=self.n_jobs)(
-            delayed(self.run_single)(i)
+            delayed(self.run_single)(i, start_index=i)
             for i in range(self.n_starts)
         )
 
@@ -1847,15 +1876,21 @@ class NSGA2Engine:
 
         scores = np.array(scores)
 
-        invalid = (
-            ~np.isfinite(scores) |
-            (scores >= max_allowed) |
-            (scores < 0)   # <-- reject negatives
-        )
-
+        # NOTE: negative objectives are legitimate (BIC-type criteria are
+        # negative by design), so the negativity rejection is applied ONLY
+        # to the single-objective vector where it originally made sense.
         if scores.ndim == 1:
+            invalid = (
+                ~np.isfinite(scores) |
+                (scores >= max_allowed) |
+                (scores < 0)
+            )
             scores[invalid] = max_allowed
         else:
+            invalid = (
+                ~np.isfinite(scores) |
+                (scores >= max_allowed)
+            )
             scores[invalid.any(axis=1)] = max_allowed
 
         return scores

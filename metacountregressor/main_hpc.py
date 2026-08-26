@@ -8,10 +8,21 @@ import gc
 import itertools
 from functools import partial
 from typing import NamedTuple as TypingNamedTuple
-from jaxopt import LBFGS
+try:
+    from jaxopt import LBFGS
+except ImportError as _jaxopt_exc:  # pragma: no cover - dependency guard
+    raise ImportError(
+        "metacountregressor requires the 'jaxopt' package.  "
+        "Install the backend with:  pip install jax jaxlib jaxopt"
+    ) from _jaxopt_exc
 from jaxopt import LBFGS, GradientDescent, NonlinearCG, BFGS
 import pandas as pd
 import scipy.stats as stats
+try:
+    from ._jax_config import configure_jax
+except ImportError:  # flat import (script run from inside the package dir)
+    from _jax_config import configure_jax
+configure_jax()
 try:
     from .Solvers_METAJAX import *  # type: ignore[attr-defined]
 except ImportError:
@@ -1868,7 +1879,8 @@ def print_summary(result, objective, data, spec, param_index):
 
         logits = params[C * K_base:]
         logits_full = np.concatenate(([0.0], logits))
-        pi = np.exp(logits_full) / np.sum(np.exp(logits_full))
+        pi = np.exp(logits_full - np.max(logits_full))
+        pi /= pi.sum()
 
         print("\n====================================================")
         print("        LATENT CLASS MIXED MODEL SUMMARY")
@@ -2991,7 +3003,8 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
 
         logits = params[C * K_base:]
         logits_full = np.concatenate(([0.0], logits))
-        pi = np.exp(logits_full) / np.sum(np.exp(logits_full))
+        pi = np.exp(logits_full - np.max(logits_full))
+        pi /= pi.sum()
 
         print("\n====================================================")
         print("        LATENT CLASS MIXED MODEL SUMMARY")
@@ -3702,7 +3715,11 @@ class CountModel:
             )
         else:
             solver = LBFGS(fun=self.objective)
-        result = solver.run(init)
+        # OOM-aware: on a GPU out-of-memory the call is retried after cache
+        # clears and finally falls back to the CPU device instead of crashing.
+        result = run_with_oom_recovery(
+            solver.run, init, label="CountModel.fit"
+        )
 
         try:
             self.last_de_report["final_obj"] = float(self.objective(result.params))
@@ -6100,7 +6117,8 @@ def e_step(params, data, spec):
 
     logits = params[C*K:]
     logits_full = np.concatenate(([0.0], logits))
-    pi = np.exp(logits_full) / np.sum(np.exp(logits_full))
+    pi = np.exp(logits_full - np.max(logits_full))
+    pi /= pi.sum()
 
     N = data["N_ids"]
 
@@ -6171,7 +6189,7 @@ def fit_em(init_params, data, spec, max_iter=100, tol=1e-6, verbose=True):
         logits = params[C * K_base:]
 
         logits_full = np.concatenate(([0.0], logits))
-        pi = np.exp(logits_full)
+        pi = np.exp(logits_full - np.max(logits_full))
         pi /= pi.sum()
 
         logL = np.zeros((N, C))

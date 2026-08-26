@@ -21,24 +21,37 @@ from sample_data import (
 
 
 def make_panel_df():
+    # 12 observations whose continuous regressors are seeded draws, so no
+    # pair of columns is anywhere near collinear.  The original 4-row
+    # fixture used arithmetic sequences for every continuous column, which
+    # are perfectly collinear once mean-centred, so the evaluator's
+    # identification screen banned variables the tests then tried to use.
+    n = 12
+    rng = np.random.default_rng(20240517)
+
+    def _draw(loc, scale):
+        return loc + scale * rng.normal(size=n)
+
     return pd.DataFrame(
         {
-            "ID": [1, 1, 2, 2],
-            "Y": [0, 1, 2, 1],
-            "OFFSET": np.zeros(4),
-            "FC": [1, 1, 2, 2],
-            "x_fixed": [0.2, 0.4, 0.6, 0.8],
-            "x_rnd_ind": [1.0, 1.2, 1.4, 1.6],
-            "x_rnd_cor": [2.0, 2.2, 2.4, 2.6],
-            "x_rnd_cor_2": [0.3, 0.6, 0.9, 1.2],
-            "x_grouped": [1, 0, 1, 0],
-            "x_hetero": [4.0, 4.5, 5.0, 5.5],
-            "x_zi": [0, 1, 0, 1],
-            "x_member": [1, 0, 1, 0],
-            "x_member_fixed": [0.5, 0.25, 0.75, 0.3],
-            "AADT": [10000, 11000, 12000, 13000],
-            "cmf_a": [1, 0, 1, 0],
-            "cmf_b": [0.1, 0.2, 0.3, 0.4],
+            "ID": np.repeat(np.arange(1, 7), 2),
+            "Y": [0, 1, 2, 1, 3, 0, 1, 2, 4, 1, 2, 3],
+            "OFFSET": np.zeros(n),
+            "FC": [1, 1, 2, 2, 3, 3, 1, 1, 2, 2, 3, 3],
+            "x_fixed": np.round(_draw(0.5, 0.2), 3),
+            "x_rnd_ind": np.round(_draw(1.2, 0.25), 3),
+            "x_rnd_cor": np.round(_draw(2.3, 0.3), 3),
+            "x_rnd_cor_2": np.round(_draw(0.7, 0.35), 3),
+            "x_grouped": [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+            "x_hetero": np.round(_draw(4.5, 0.6), 3),
+            "x_zi": [0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1],
+            "x_member": [1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0],
+            "x_member_fixed": np.round(_draw(0.55, 0.15), 3),
+            "AADT": [9000, 10500, 12000, 13500, 15000, 16500,
+                     9500, 11000, 12500, 14000, 15500, 17000],
+            "cmf_a": [1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1],
+            "cmf_b": [0.1, 0.25, 0.35, 0.5, 0.6, 0.75,
+                      0.15, 0.3, 0.45, 0.55, 0.7, 0.8],
         }
     )
 
