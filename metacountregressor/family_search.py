@@ -347,7 +347,7 @@ class CMFFamilySearchProblem:
 
         if algo in {"ga", "cmf"}:
             search_result = self.builder.run_search(R=R)
-            output = {"search_result": search_result, "driver": "ga"}
+            output = {"search_result": search_result, "driver": "ga", "family": "cmf"}
 
             if fit_final:
                 fit_result = self.builder.fit_best_model(

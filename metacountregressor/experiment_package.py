@@ -564,6 +564,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             "class_membership": class_membership if struct_lc > 1 else None,
             "dispersion":       1 if use_nb else 0,
             "latent_classes":   latent_classes,
+            "group_id_col":     self.group_id_col,
         }
         # Per-class terms: only include when classes actually differ
         if struct_lc > 1:
@@ -1491,7 +1492,7 @@ class ExperimentBuilder:
         if x0.size == 0:
             return x0
 
-        from jaxopt import ScipyMinimize as JaxoptMinimize
+        from jaxopt import ScipyBoundedMinimize
 
         def _obj_val(x):
             try:
@@ -1503,16 +1504,13 @@ class ExperimentBuilder:
         start_val = _obj_val(x0)
 
         try:
-            solver = JaxoptMinimize(
+            solver = ScipyBoundedMinimize(
                 fun=objective,
                 method="SLSQP",
                 tol=1e-8,
                 maxiter=int(maxiter),
             )
-            # jaxopt's ScipyMinimize.run(init_params, bounds, *args) takes the
-            # bounds POSITIONALLY as a (lower_array, upper_array) pair — not as
-            # scipy-style list-of-tuples keyword.  Convert accordingly, mapping
-            # unconstrained (None, None) entries to +/-inf.
+            # Convert unconstrained entries to +/-inf for JAXopt's bounded API.
             lb = jnp.asarray(
                 [-np.inf if b[0] is None else float(b[0]) for b in bounds],
                 dtype=jnp.float64,
@@ -1862,13 +1860,15 @@ class ExperimentBuilder:
                         init_obj = None
 
                     try:
-                        params_em = fit_em(
+                        params_em = run_with_oom_recovery(
+                            fit_em,
                             init_params=init_params,
                             data=data,
                             spec=spec_c,
                             max_iter=em_max_iter,
                             tol=1e-4,
                             verbose=False,
+                            label="manual CMF EM",
                         )
                     except Exception:
                         params_em = init_params
@@ -3301,6 +3301,22 @@ class ExperimentBuilder:
         kwargs.setdefault("engine", "jax")
         return self.build_evaluator(**kwargs)
 
+    def build_bayesian_model(self, search_result, *, evaluator=None,
+                             event_col=None, priors=None, initvals=None):
+        """Compile a completed search result into an optional PyMC model."""
+        try:
+            from .bayesian_model import build_bayesian_model
+        except ImportError:
+            from bayesian_model import build_bayesian_model
+        return build_bayesian_model(
+            search_result,
+            builder=self,
+            evaluator=evaluator,
+            event_col=event_col,
+            priors=priors,
+            initvals=initvals,
+        )
+
     # ── run ─────────────────────────────────────────────────────────
 
     def run(
@@ -3396,6 +3412,13 @@ class ExperimentBuilder:
             best_idx      = int(np.argmin(scores))
             best_solution = solutions[best_idx]
             best_score    = float(scores[best_idx])
+            model_spec = evaluator.build_spec(best_solution)
+            if model_spec is not None and getattr(evaluator, "cmf_metadata", None):
+                model_spec = {
+                    **model_spec,
+                    "family": "cmf",
+                    "metadata": dict(evaluator.cmf_metadata),
+                }
 
             # Decode best
             D2  = len(evaluator.vars)
@@ -3431,6 +3454,7 @@ class ExperimentBuilder:
                 "scores":        scores,
                 "best_solution": best_solution,
                 "best_score":    best_score,
+                "model_spec":    model_spec,
                 # search_stats/stats_csv: one entry per restart (n_starts),
                 # each a per-iteration trace (iter/temperature/best/
                 # archive_size, or the multi-objective columns) -- see
@@ -3504,6 +3528,13 @@ class ExperimentBuilder:
 
                 result["best_solution"] = best_solution
                 result["best_score"]    = best_score
+                result["model_spec"]     = evaluator.build_spec(best_solution)
+                if result["model_spec"] is not None and getattr(evaluator, "cmf_metadata", None):
+                    result["model_spec"] = {
+                        **result["model_spec"],
+                        "family": "cmf",
+                        "metadata": dict(evaluator.cmf_metadata),
+                    }
 
                 print("\n  Best structure:")
                 decode_best_solution(best_solution, evaluator)

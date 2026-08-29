@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 from pathlib import Path
 
 from cmf_package import CMFExperimentBuilder
@@ -313,6 +314,106 @@ def test_cmf_manual_helpers_build_transformed_spec_and_fit():
     assert "__cmf_local__cmf_b" in manual_spec["fixed_terms"]
     assert fit["spec"].model == "nb"
     assert fit["spec"].latent_classes == 2
+
+
+def test_cmf_manual_helpers_support_random_parameters():
+    df = make_panel_df()
+    cmf_builder = CMFExperimentBuilder(
+        df=df,
+        y_col="Y",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+    )
+
+    manual_spec = cmf_builder.make_manual_cmf_spec(
+        baseline_random=["cmf_a"],
+        local_random=["cmf_b"],
+        dispersion=1,
+    )
+    assert manual_spec["fixed_terms"] == ["__cmf_log_aadt"]
+    assert manual_spec["rdm_terms"] == [
+        "cmf_a:normal",
+        "__cmf_local__cmf_b:normal",
+    ]
+
+    fit = cmf_builder.fit_manual_cmf_model(
+        id_col="ID",
+        manual_spec=manual_spec,
+        offset_col="OFFSET",
+        model="nb",
+        R=4,
+    )
+    assert fit["spec"].random_ind_names == (
+        "cmf_a",
+        "__cmf_local__cmf_b",
+    )
+    assert fit["predictions"].shape[0] == df["ID"].nunique()
+
+    pytest.importorskip("pymc")
+    compiled = cmf_builder.build_bayesian_model(
+        {"family": "cmf", "model_spec": manual_spec},
+        id_col="ID",
+    )
+    assert compiled.spec["rdm_terms"] == manual_spec["rdm_terms"]
+    assert "random_mean" in compiled.model.named_vars
+    assert "random_sd" in compiled.model.named_vars
+    assert any(
+        name.startswith("random_ind_") for name in compiled.model.named_vars
+    )
+
+
+def test_cmf_search_scores_random_parameter_candidate():
+    objective = CMFMetaheuristicObjective(
+        make_panel_df(),
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+        R=4,
+    )
+    vector = np.array([1, 1, 1, 1, 1, 1], dtype=int)
+
+    decoded = objective.decode_solution(vector)
+    score = objective.get_fitness(vector)
+
+    assert decoded["rand_baseline"] == (True,)
+    assert decoded["rand_local"] == (True,)
+    assert score["rand_baseline"] == (True,)
+    assert score["rand_local"] == (True,)
+    assert np.isfinite(score["bic"])
+
+
+def test_cmf_jax_search_exposes_random_parameter_roles():
+    cmf_builder = CMFExperimentBuilder(
+        df=make_panel_df(),
+        y_col="Y",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+    )
+    _, evaluator, _ = cmf_builder.build_jax_count_evaluator(
+        id_col="ID",
+        R=4,
+    )
+
+    assert 2 in evaluator.allowed_roles["cmf_a"]
+    assert 3 in evaluator.allowed_roles["cmf_a"]
+    assert 2 in evaluator.allowed_roles["__cmf_local__cmf_b"]
+    assert 3 in evaluator.allowed_roles["__cmf_local__cmf_b"]
+
+    roles = np.zeros(len(evaluator.vars), dtype=int)
+    roles[evaluator.vars.index("cmf_a")] = 2
+    roles[evaluator.vars.index("__cmf_log_aadt")] = 1
+    roles[evaluator.vars.index("__cmf_local__cmf_b")] = 2
+    decision = np.concatenate([
+        roles,
+        np.zeros(len(evaluator.vars), dtype=int),
+        np.array([1]),
+    ])
+    spec = evaluator.build_spec(decision)
+    assert spec["rdm_terms"] == [
+        "cmf_a:normal",
+        "__cmf_local__cmf_b:normal",
+    ]
 
 
 def test_sample_data_loader_contains_readme_columns():

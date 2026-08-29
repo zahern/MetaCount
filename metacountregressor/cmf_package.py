@@ -93,6 +93,33 @@ class CMFExperimentBuilder:
         )
         return CMFSearchResult(*result)
 
+    def build_bayesian_model(
+        self,
+        search_result: CMFSearchResult,
+        *,
+        id_col: Optional[str] = None,
+        offset_col: Optional[str] = None,
+        group_id_col: Optional[str] = None,
+        priors: Optional[dict[str, float]] = None,
+        initvals: Optional[dict[str, Any]] = None,
+    ):
+        """Compile a legacy CMF result into an optional PyMC model."""
+        try:
+            from .bayesian_model import build_bayesian_model
+        except ImportError:
+            from bayesian_model import build_bayesian_model
+        return build_bayesian_model(
+            search_result,
+            builder=self,
+            id_col=id_col,
+            y_col=self.y_col,
+            offset_col=offset_col,
+            group_id_col=group_id_col,
+            family="cmf",
+            priors=priors,
+            initvals=initvals,
+        )
+
     def fit_best_model(
         self,
         search_result: CMFSearchResult,

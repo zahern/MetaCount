@@ -12,6 +12,11 @@ texttable>=1.7
 tabulate>=0.9
 requests
 
+# Bayesian compiler and JAX search backend
+pymc>=5.0
+jax>=0.4.30
+jaxlib>=0.4.30
+
 # Build / dev tools
 build>=0.10.0
 twine>=4.0.2

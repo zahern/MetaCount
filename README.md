@@ -63,7 +63,7 @@ Behaviour and controls:
 
 | Concern | Default | Override |
 | ------- | ------- | -------- |
-| Platform choice | Auto-detect (GPU if visible, else CPU) | `METACOUNT_JAX_PLATFORM=cpu|gpu|tpu` or `configure_jax(platform='cpu')` |
+| Platform choice | Auto-detect (GPU if visible, else CPU) | `METACOUNT_JAX_PLATFORM=cpu\|gpu\|tpu` or `configure_jax(platform='cpu')` |
 | Float precision | float64 enabled (required by the estimators) | — |
 | GPU memory | Grows on demand — safe for shared clusters (XLA's default grabs ~75% of VRAM up front) | `METACOUNT_GPU_PREALLOCATE=1` for exclusive nodes |
 | GPU out-of-memory | Fits transparently retry once after clearing JAX caches, then fall back to the CPU device instead of crashing the search | — |
@@ -276,6 +276,7 @@ builder = ExperimentBuilder(
 | `builder.run_search(evaluator, ...)` | Alias for `run()` |
 | `builder.make_manual_spec(...)` | Build a model spec dict manually |
 | `builder.fit_manual_model(manual_spec, model, R)` | Fit a manually specified structure |
+| `builder.build_bayesian_model(search_result, ...)` | Compile the selected structure into a PyMC model |
 | `builder.compute_latent_class_probabilities(fit, true_class_col)` | Get class membership probabilities |
 | `ExperimentBuilder.get_family_capabilities()` | Static: list supported model families |
 | `ExperimentBuilder.get_search_argument_guide()` | Static: full argument documentation |
@@ -328,6 +329,39 @@ c = (
 print(c)           # display all constraints
 c.summary()        # same as print(c)
 ```
+
+## Bayesian Compilation
+
+The Bayesian compiler preserves the selected structure from a completed JAX
+search and rebuilds its likelihood in PyMC. Install it as an optional extra:
+
+```bash
+python -m pip install "metacountregressor[bayesian]"
+```
+
+Then compile and sample without rerunning the structural search:
+
+```python
+result = builder.run_search(evaluator, algo='sa', max_iter=3000, seed=7)
+bayesian = builder.build_bayesian_model(result)
+idata = bayesian.sample(draws=1000, tune=1000, chains=4, target_accept=0.9)
+```
+
+The first compiler covers count/CMF, Gaussian linear, Tobit, and duration
+models, including independent, grouped, and correlated random parameters,
+heterogeneity, zero inflation, and latent classes. Count searches marked as
+negative binomial compile to the mean-linked negative-binomial Lindley (NBL)
+likelihood; use `model='nbl'` for an explicit specification. Legacy CMF
+results can be compiled with `CMFExperimentBuilder.build_bayesian_model(...)`;
+pass `id_col` when random effects should vary by panel unit. Pavement's combined
+regression/Markov/hazard search and multivariate copula results are rejected
+explicitly until their full joint likelihoods have dedicated compilers.
+
+For NBL, the conditional model is negative binomial with success probability
+`exp(-U)` and `U ~ Lindley(theta)`. The compiler uses the closed-form marginal
+likelihood and sets `r = mu / h(theta)`, so `mu=exp(X beta + offset)` remains
+the marginal mean. It samples `theta = 2 + theta_excess` to ensure finite
+variance. Adjust the prior with `priors={'nbl_theta_scale': 2.0}`.
 
 `mutual_exclusion` prevents multicollinearity or redundancy by ensuring at most one variable per group is active.  Pass multiple groups for multiple exclusivity rules:
 
