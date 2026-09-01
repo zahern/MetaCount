@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: metacountregressor
-Version: 1.0.112
+Version: 1.0.143
 Summary: JAX-first hierarchical search and fitting for count, CMF, duration, linear, and pavement CLR models.
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown

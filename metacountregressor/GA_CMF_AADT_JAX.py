@@ -676,11 +676,42 @@ def _param_labels(selected_baseline, selected_local, rand_baseline, rand_local, 
 # SOLVER-BASED SEARCH (MultiStartSA)
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def run_ga(data, baseline_vars, local_vars, R=200):
+def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8):
     k_base = len(baseline_vars)
     k_loc = len(local_vars)
     D = k_base + k_loc
     offset_rf = D + 2
+
+    # ── Correlation constraint (Eq. 291): |corr(Z_k, Z_k')| <= c for baseline (upper-level) pairs
+    # Compute pairwise correlations among baseline candidates from data
+    _baseline_corr_matrix = None
+    _baseline_corr_valid = set()
+    if baseline_vars:
+        _avail_baseline = [v for v in baseline_vars if v in data.columns]
+        if len(_avail_baseline) >= 2:
+            _corr_df = data[_avail_baseline].corr()
+            _baseline_corr_matrix = _corr_df.abs()
+            _baseline_corr_valid = set(_avail_baseline)
+
+    def _check_corr_constraint(baseline_vars_selected: list[str]) -> bool:
+        """Check if a set of baseline variables satisfies the correlation constraint.
+        Returns True if all pairwise absolute correlations <= corr_threshold.
+        """
+        if _baseline_corr_matrix is None or len(baseline_vars_selected) < 2:
+            return True
+        for i, v1 in enumerate(baseline_vars_selected):
+            if v1 not in _baseline_corr_valid:
+                continue
+            for v2 in baseline_vars_selected[i+1:]:
+                if v2 not in _baseline_corr_valid:
+                    continue
+                try:
+                    corr_val = _baseline_corr_matrix.loc[v1, v2]
+                    if np.isfinite(corr_val) and corr_val > corr_threshold:
+                        return False
+                except KeyError:
+                    continue
+        return True
 
     class _CMFSearchEvaluator:
         def __init__(self):
@@ -724,6 +755,11 @@ def run_ga(data, baseline_vars, local_vars, R=200):
                     role = "R" if int(full[offset_rf + full_idx]) == 1 else "F"
                     local_terms.append((var, role))
 
+            # Check correlation constraint on baseline (upper-level) terms
+            selected_baseline = [var for var, _ in baseline_terms]
+            if not _check_corr_constraint(selected_baseline):
+                return None  # Invalid spec - correlation constraint violated
+
             return {
                 "baseline_terms": tuple(sorted(baseline_terms)),
                 "local_terms": tuple(sorted(local_terms)),
@@ -743,6 +779,13 @@ def run_ga(data, baseline_vars, local_vars, R=200):
         def fitness(self, decision):
             full = self.decode(decision)
             model = "poisson" if int(full[D + 1]) == 0 else "nb"
+
+            # Check correlation constraint on baseline terms before evaluating
+            baseline_mask = full[:k_base].astype(bool)
+            selected_baseline = [v for v, m in zip(baseline_vars, baseline_mask) if m]
+            if not _check_corr_constraint(selected_baseline):
+                return 1e12  # Large penalty for correlation constraint violation
+
             rand_baseline_all = [bool(full[offset_rf + i]) for i in range(k_base)]
             rand_local_all = [bool(full[offset_rf + k_base + i]) for i in range(k_loc)]
             return evaluate_model(

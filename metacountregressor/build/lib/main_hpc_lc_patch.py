@@ -1,4 +1,4 @@
-# =======================================================================
+﻿# =======================================================================
 # main_hpc_lc_patch.py
 # =======================================================================
 #
@@ -8,31 +8,31 @@
 # picks up the changes automatically.
 #
 # What is added
-# ─────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Membership variables: covariates that explain which latent class an
 # individual belongs to.  Instead of fixed class-share constants pi_c,
 # the class probability for individual n becomes:
 #
-#   pi_c(n) = softmax( gamma_c · [1, z_n1, …, z_nK] )
+#   pi_c(n) = softmax( gamma_c Â· [1, z_n1, â€¦, z_nK] )
 #
 # where z_nk are the membership covariates for individual n.
 #
 # Role encoding (extends the existing role scheme)
-# ─────────────────────────────────────────────────
-#   Role 7 – Membership only
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#   Role 7 â€“ Membership only
 #             Variable enters the class-probability equation (gamma).
 #             It has NO effect in the outcome equation.
-#             When latent_classes = 1 → treated as excluded (role 0).
+#             When latent_classes = 1 â†’ treated as excluded (role 0).
 #
-#   Role 8 – Membership + class-specific outcome
+#   Role 8 â€“ Membership + class-specific outcome
 #             Variable enters BOTH the class-probability equation (gamma)
 #             AND the outcome equation as a fixed covariate.
 #             Because the model has C classes, each class gets its own
 #             fixed coefficient for this variable automatically.
-#             When latent_classes = 1 → treated as fixed (role 1).
+#             When latent_classes = 1 â†’ treated as fixed (role 1).
 #
 # Parameter layout for a C-class model with K_mem membership variables
-# ─────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #   params = [
 #       theta_1  (K_base params for class 1's outcome model)
 #       theta_2
@@ -40,19 +40,19 @@
 #       theta_C
 #       gamma_flat  ((C-1) * (K_mem + 1) params)
 #                   gamma_flat.reshape(C-1, K_mem+1)
-#                   columns: [intercept, z1, z2, …, zK_mem]
+#                   columns: [intercept, z1, z2, â€¦, zK_mem]
 #                   row c: log-odds coefficients for class c+1 vs class 1
 #   ]
 #
 # Backward compatibility
-# ─────────────────────
-# When K_mem = 0, gamma_flat has shape (C-1, 1) — only an intercept per
-# class — which is identical to the previous constant logits vector.
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# When K_mem = 0, gamma_flat has shape (C-1, 1) â€” only an intercept per
+# class â€” which is identical to the previous constant logits vector.
 # All existing code that does not specify membership_terms continues to
 # work without modification.
 #
 # HOW TO APPLY
-# ─────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # At the top of experiment_package.py (or your run script) add:
 #
 #   import main_hpc_lc_patch   # applies patches and exports new symbols
@@ -82,7 +82,7 @@ try:
 except ImportError:
     from regularization import compute_regularized_estimates_jax
 
-# ── Import the rest of main_hpc unchanged ──────────────────────────────
+# â”€â”€ Import the rest of main_hpc unchanged â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 try:
     from . import main_hpc as _hpc  # type: ignore[attr-defined]
     from .main_hpc import (
@@ -132,15 +132,19 @@ except ImportError:
         DIST_MAP,
     )
 
-jax.config.update("jax_enable_x64", True)
+try:
+    from ._jax_config import configure_jax
+except ImportError:  # flat import (script run from inside the package dir)
+    from _jax_config import configure_jax
+configure_jax()
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 0.  Tobit OLS initialiser
 #     Computes OLS starting values from the non-censored observations.
 #     Used by fit_manual_model to bypass the Poisson-style prefit for
 #     Tobit models (which would give completely wrong starting values).
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _tobit_ols_init(data: dict, K_base: int) -> np.ndarray:
     """
@@ -180,7 +184,7 @@ def _tobit_ols_init(data: dict, K_base: int) -> np.ndarray:
 
     resid     = y_nz - X_nz @ beta_ols
     sigma_hat = max(float(resid.std()), 0.1)
-    # inverse-softplus so that softplus(sigma_raw) ≈ sigma_hat
+    # inverse-softplus so that softplus(sigma_raw) â‰ˆ sigma_hat
     sigma_raw = float(np.log(np.exp(sigma_hat) - 1.0 + 1e-8))
 
     params = np.zeros(K_base)
@@ -190,11 +194,11 @@ def _tobit_ols_init(data: dict, K_base: int) -> np.ndarray:
     return params
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 1.  EXTENDED ModelSpec
 #     Adds membership_names and K_membership.
 #     Replaces the dataclass in main_hpc.
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @dataclass(frozen=True)
 class ModelSpec:
@@ -203,6 +207,7 @@ class ModelSpec:
     Kr_cor:              int
     Kg:                  int
     Kh:                  int
+    Kv:                  int
     Kzi:                 int
     model:               str
     zero_inflated:       bool
@@ -212,11 +217,12 @@ class ModelSpec:
     random_cor_names:    tuple
     grouped_names:       tuple
     hetro_names:         tuple
+    hetro_var_names:     tuple
     random_ind_dists:    tuple
     random_cor_dists:    tuple
     grouped_dists:       tuple
     latent_classes:      int   = 1
-    # ── MEMBERSHIP ────────────────────────────────────────────────────
+    # ——— MEMBERSHIP ————
     membership_names:    tuple = ()   # pooled set of all membership variables (union over classes)
     K_membership:        int   = 0    # len(membership_names) — total unique membership vars
     class_membership_idx: tuple = ()  # per-class-column indices into the pooled membership list
@@ -224,13 +230,13 @@ class ModelSpec:
                                       #   e.g. ( (0,), (0,1) ) means class 2 uses var 0; class 3 uses vars 0,1
     class_models:        tuple = ()   # per-class model strings (eg ("poisson","nb"))
     min_class_proportion: float = 0.15  # minimum posterior-mean proportion per class (will be scaled by C internally)
-    # ── PER-CLASS COVARIATE SELECTION ─────────────────────────────────
+    # ——— PER-CLASS COVARIATE SELECTION ————
     class_fixed_idx:     tuple = ()   # per-class column indices into Xf (tuple of tuples)
     class_rdm_ind_idx:   tuple = ()   # per-class column indices into Xr_ind
     class_rdm_cor_idx:   tuple = ()   # per-class column indices into Xr_cor
     class_variable_masks: tuple = ()  # per-class variable sets (frozensets) [NEW: alternative to indices]
     l2_penalty:          float = 0.0  # naive L2 ridge strength on non-intercept params (0 = off; opt-in only)
-    # ── DEFAULT IN-LOOP REGULARISATION ─────────────────────────────────
+    # ——— DEFAULT IN-LOOP REGULARISATION ————
     # Every M-step outcome-parameter update is shrunk with PARTE (Alghamdi
     # et al. 2026) immediately after the LBFGS solve, using (k, d) selected
     # adaptively from the per-class Fisher information — there is no fixed
@@ -238,6 +244,11 @@ class ModelSpec:
     # whole premise is that (k, d) are data-adaptive rather than preset.
     parte_shrinkage_in_loop: bool = True
     parte_variant:        str  = "k3d3"  # "k1d1" | "k2d2" | "k3d3"
+    # ——— VARIANCE REGULARISATION ————
+    # Log-barrier keeping random-SD / dispersion scale params away from zero
+    # (see _variance_penalty).  Set variance_reg = 0.0 to disable.
+    variance_reg:   float = 10.0
+    variance_floor: float = 1e-3
 
     @property
     def K_random_total(self):
@@ -257,10 +268,10 @@ class ModelSpec:
 _hpc.ModelSpec = ModelSpec
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 2.  build_param_index
 #     LC tail is now (C-1)*(K_mem+1) instead of (C-1).
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def build_param_index(spec: ModelSpec) -> dict:
 
@@ -271,9 +282,9 @@ def build_param_index(spec: ModelSpec) -> dict:
     K_mem = spec.K_membership
     models = spec.models  # per-class model strings
 
-    # ── Per-class membership indices (new) ─────────────────────────────
+    # â”€â”€ Per-class membership indices (new) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # class_membership_idx: tuple of tuples, length C-1, one per non-reference class
-    #   class 2 (first non-ref) → class_membership_idx[0] = (0, 2) etc.
+    #   class 2 (first non-ref) â†’ class_membership_idx[0] = (0, 2) etc.
     _cm_idx = spec.class_membership_idx
     if _cm_idx and len(_cm_idx) == C - 1 and K_mem > 0:
         per_class_K_mem = tuple(len(idx_tup) for idx_tup in _cm_idx)
@@ -309,7 +320,7 @@ def build_param_index(spec: ModelSpec) -> dict:
     index["class_K_base"]   = tuple(class_K_base)
     index["class_models"]   = tuple(models)
 
-    # ── Gamma: jagged per-class arrays (one per non-reference class) ───
+    # â”€â”€ Gamma: jagged per-class arrays (one per non-reference class) â”€â”€â”€
     # gamma_c has shape (K_c+1,) where K_c = number of membership vars for that class
     gamma_offsets = []
     gamma_sizes = []
@@ -338,10 +349,10 @@ def build_param_index(spec: ModelSpec) -> dict:
 _hpc.build_param_index = build_param_index
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 3.  Extended build_jax_data
 #     Adds membership_cols parameter; appends Xmem to the data dict.
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def build_jax_data(
     df,
@@ -353,6 +364,7 @@ def build_jax_data(
     random_cor_cols=None,
     grouped_cols=None,
     hetro_cols=None,
+    hetro_var_cols=None,
     offset_col=None,
     draws_ind=None,
     draws_cor=None,
@@ -374,6 +386,7 @@ def build_jax_data(
     random_cor_cols   = random_cor_cols   or []
     grouped_cols      = grouped_cols      or []
     hetro_cols        = hetro_cols        or []
+    hetro_var_cols    = hetro_var_cols    or []
     zi_cols           = zi_cols           or []
     membership_cols   = membership_cols   or []          # NEW
     random_ind_dists  = random_ind_dists  or []
@@ -384,10 +397,10 @@ def build_jax_data(
     df = df.copy()
     df[intercept_name] = 1.0
 
-    # ── Standardise continuous predictors (membership cols too) ──────────
+    # ——— Standardise continuous predictors (membership cols too) ————
     _predictor_cols = list(set(
         fixed_cols + random_ind_cols + random_cor_cols
-        + grouped_cols + hetro_cols + zi_cols + membership_cols
+        + grouped_cols + hetro_cols + hetro_var_cols + zi_cols + membership_cols
     ))
     _scaler = _hpc.compute_scaler(df, _predictor_cols)
     if _scaler:
@@ -396,19 +409,20 @@ def build_jax_data(
     all_features = list(set(
         [intercept_name]
         + fixed_cols + random_ind_cols + random_cor_cols
-        + grouped_cols + hetro_cols + zi_cols + membership_cols   # NEW
+        + grouped_cols + hetro_cols + hetro_var_cols + zi_cols + membership_cols   # NEW
     ))
 
     X_all, y, mask = balance_panel_dataframe(df, id_col, y_col, all_features)
 
-    # Group IDs
+    # Group IDs - compute per-individual (N) not per-observation (N*P)
     if group_id_col is not None and len(grouped_cols) > 0:
-        df_sorted   = df.sort_values(id_col)
-        group_codes = df_sorted[group_id_col].astype("category").cat.codes.values
-        G           = len(np.unique(group_codes))
+        # Get unique individuals from balanced panel
+        df_balanced = df.sort_values(id_col).groupby(id_col).first().reset_index()
+        group_codes = df_balanced[group_id_col].astype("category").cat.codes.values
+        G = len(np.unique(group_codes))
     else:
         group_codes = None
-        G           = 0
+        G = 0
 
     col_map = {col: i for i, col in enumerate(all_features)}
 
@@ -424,10 +438,11 @@ def build_jax_data(
     Xr_cor = extract(random_cor_cols)
     Xg     = extract(grouped_cols)
     Xh     = extract(hetro_cols)
+    Xh_var = extract(hetro_var_cols)
     Xzi    = extract(zi_cols)
     Xmem   = extract(membership_cols)    # NEW  shape (N, P, K_mem)
 
-    # ── Per-class column indices (for class-specific variable sets) ────
+    # ——— Per-class column indices (for class-specific variable sets) ————
     _fixed_names = [intercept_name] + fixed_cols
     _fixed_map = {name: i for i, name in enumerate(_fixed_names)}
     _class_fixed_idx = []
@@ -441,7 +456,7 @@ def build_jax_data(
         _class_fixed_idx = ()
     class_fixed_idx = tuple(_class_fixed_idx)
 
-    # ── Per-class membership column indices ────────────────────────────
+    # â”€â”€ Per-class membership column indices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     _mem_names = list(membership_cols)
     _mem_map = {name: i for i, name in enumerate(_mem_names)}
     _class_membership_idx = []  # one tuple per non-reference class
@@ -465,7 +480,22 @@ def build_jax_data(
     if draws_cor is None and random_cor_cols:
         draws_cor = _draw_fn(N, len(random_cor_cols), R, seed=43)
     if draws_g is None and grouped_cols:
-        draws_g   = _draw_fn(N, len(grouped_cols),    R, seed=44)
+        n_groups = len(np.unique(group_codes)) if group_codes is not None else 1
+        draws_g   = _draw_fn(n_groups, len(grouped_cols),    R, seed=44)
+
+    # Pre-compute group-level variance heterogeneity shifts if grouped effects and hetro_var exist
+    Xh_var_group = None
+    if group_codes is not None and len(grouped_cols) > 0 and len(hetro_var_cols) > 0:
+        n_groups = len(np.unique(group_codes))
+        df_sorted = df.sort_values(id_col)
+        # Average hetro_var_cols within each group
+        for col in hetro_var_cols:
+            if col in df_sorted.columns:
+                grp_mean = df_sorted.groupby(group_id_col)[col].mean().values
+                if Xh_var_group is None:
+                    Xh_var_group = grp_mean.reshape(-1, 1)
+                else:
+                    Xh_var_group = np.hstack([Xh_var_group, grp_mean.reshape(-1, 1)])
 
     data = {
         "Xf":       jnp.array(Xf),
@@ -473,6 +503,8 @@ def build_jax_data(
         "Xr_cor":   jnp.array(Xr_cor),
         "Xg":       jnp.array(Xg),
         "Xh":       jnp.array(Xh),
+        "Xh_var":   jnp.array(Xh_var),
+        "Xh_var_group": jnp.array(Xh_var_group) if Xh_var_group is not None else jnp.zeros((0, 0)),
         "Xzi":      jnp.array(Xzi),
         "Xmem":     jnp.array(Xmem),    # NEW
         "y":        jnp.array(y),
@@ -493,6 +525,7 @@ def build_jax_data(
         Kr_cor=Xr_cor.shape[2],
         Kg=Xg.shape[2],
         Kh=Xh.shape[2],
+        Kv=Xh_var.shape[2],
         zi_names=tuple(zi_cols),
         Kzi=Xzi.shape[2],
         zero_inflated=(len(zi_cols) > 0),
@@ -502,6 +535,7 @@ def build_jax_data(
         random_cor_names=tuple(random_cor_cols),
         grouped_names=tuple(grouped_cols),
         hetro_names=tuple(hetro_cols),
+        hetro_var_names=tuple(hetro_var_cols),
         random_ind_dists=tuple(random_ind_dists),
         random_cor_dists=tuple(random_cor_dists),
         grouped_dists=tuple(grouped_dists),
@@ -518,10 +552,10 @@ def build_jax_data(
 _hpc.build_jax_data = build_jax_data
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 4.  Extended parse_manual_spec
 #     Handles "membership_terms" key in the spec dict.
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def parse_manual_spec(manual_spec: dict):
     fixed_cols        = manual_spec.get("fixed_terms", [])
@@ -529,6 +563,7 @@ def parse_manual_spec(manual_spec: dict):
     rdm_cor_terms     = manual_spec.get("rdm_cor_terms", [])
     grouped_terms     = manual_spec.get("grouped_terms", [])
     hetro_terms       = manual_spec.get("hetro_in_means", [])
+    hetro_var_terms   = manual_spec.get("hetro_in_variances", [])
     zi_cols           = manual_spec.get("zi_terms", [])
     membership_cols   = manual_spec.get("membership_terms", [])
     class_membership  = manual_spec.get("class_membership", None)  # per-class membership lists
@@ -540,13 +575,14 @@ def parse_manual_spec(manual_spec: dict):
     random_cor       = [t.split(":")[0] for t in rdm_cor_terms]
     grouped_cols     = [t.split(":")[0] for t in grouped_terms]
     hetro_cols       = [t.split(":")[0].strip() for t in hetro_terms]
+    hetro_var_cols   = [t.split(":")[0].strip() for t in hetro_var_terms]
 
     random_ind_dists  = [t.split(":")[1] for t in rdm_terms]
     random_cor_dists  = [t.split(":")[1] for t in rdm_cor_terms]
     grouped_dists     = [t.split(":")[1] for t in grouped_terms]
 
     return (
-        fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols,
+        fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, hetro_var_cols,
         random_ind_dists, random_cor_dists, grouped_dists,
         zi_cols, membership_cols,
         class_fixed, class_rdm_ind, class_rdm_cor,
@@ -557,10 +593,10 @@ def parse_manual_spec(manual_spec: dict):
 _hpc.parse_manual_spec = parse_manual_spec
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# ———————————————————————————————————————————————————————————————————————————————
 # 5.  Extended build_model_from_manual_spec
 #     Passes membership_cols to build_jax_data.
-# ═══════════════════════════════════════════════════════════════════════
+# ———————————————————————————————————————————————————————————————————————————————
 
 def build_model_from_manual_spec(
     df, manual_spec, id_col, y_col,
@@ -568,7 +604,7 @@ def build_model_from_manual_spec(
     draw_method='sobol', R=200
 ):
     (
-        fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols,
+        fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, hetro_var_cols,
         random_ind_dists, random_cor_dists, grouped_dists,
         zi_cols, membership_cols,
         class_fixed, class_rdm_ind, class_rdm_cor,
@@ -585,6 +621,7 @@ def build_model_from_manual_spec(
         random_cor_cols=random_cor,
         grouped_cols=grouped_cols,
         hetro_cols=hetro_cols,
+        hetro_var_cols=hetro_var_cols,
         zi_cols=zi_cols,
         membership_cols=membership_cols,
         class_membership_cols=class_membership,   # NEW: per-class membership lists
@@ -614,22 +651,22 @@ def build_model_from_manual_spec(
 _hpc.build_model_from_manual_spec = build_model_from_manual_spec
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 6.  Mixed-model log-likelihood with membership covariates
 #
 #     The LC branch is the only section changed.  The single-class path
 #     is identical to main_hpc so we keep it intact.
 #
 #     Class-probability model (NEW)
-#     ─────────────────────────────
+#     â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #     gamma  : (C-1, K_mem+1)   row c = log-odds coefficients for class c+1
 #     Z_full : (N, K_mem+1)     col 0 = 1 (intercept), cols 1..K = members
 #
 #     log pi_i = log_softmax( Z_full @ gamma.T , axis=1 )   shape (N, C)
 #
 #     When K_mem=0, Z_full = ones(N,1) and gamma is just the (C-1) scalar
-#     logits — backward-compatible with the old constant-pi behaviour.
-# ═══════════════════════════════════════════════════════════════════════
+#     logits â€” backward-compatible with the old constant-pi behaviour.
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 def _l2_penalty(params, spec: ModelSpec):
@@ -660,6 +697,55 @@ def _l2_penalty(params, spec: ModelSpec):
         return 0.0
 
 
+def _variance_penalty(blocks, spec: ModelSpec, floor: float, vr: float):
+    """
+    Log-barrier regularisation that prevents random-effect standard
+    deviations and the NB2 dispersion from collapsing to (effectively) zero.
+
+    Each variance scale ``s`` (the actual scale the likelihood uses) is
+    penalised by ``vr * relu(log(floor) - log(s))``.  Because this term is
+    exactly zero once ``s >= floor`` yet grows without bound as ``s -> 0``
+    (log-barrier), the optimiser is pushed to keep every random-SD and the
+    dispersion strictly positive instead of degenerating the model.
+
+    Scales used by the likelihood:
+      * independent SD   : |sd_ind|                     (raw multiplier)
+      * correlated SD     : exp(diag of Cholesky)        (always positive)
+      * grouped SD        : softplus(sd_g)
+      * NB2 dispersion    : softplus(alpha)
+    """
+    floor_log = jnp.log(floor)
+    eps = 1e-12
+    p = 0.0
+
+    # Independent random SDs
+    sd_ind = blocks.get("sd_ind")
+    if sd_ind is not None:
+        s = jnp.abs(sd_ind) + eps
+        p += jnp.sum(jax.nn.relu(floor_log - jnp.log(s)))
+
+    # Correlated random SDs = exp() of the Cholesky diagonal
+    chol = blocks.get("chol")
+    if chol is not None and spec.Kr_cor > 0:
+        diag_idx = jnp.array([i * (i + 3) // 2 for i in range(spec.Kr_cor)])
+        s = jnp.exp(chol[diag_idx]) + eps
+        p += jnp.sum(jax.nn.relu(floor_log - jnp.log(s)))
+
+    # Grouped random SDs (softplus scale in transform_draws)
+    sd_g = blocks.get("sd_g")
+    if sd_g is not None:
+        s = jax.nn.softplus(sd_g) + eps
+        p += jnp.sum(jax.nn.relu(floor_log - jnp.log(s)))
+
+    # NB2 dispersion (softplus scale in nb2_loglik)
+    alpha = blocks.get("alpha")
+    if alpha is not None:
+        s = jax.nn.softplus(alpha) + eps
+        p += jax.nn.relu(floor_log - jnp.log(s))
+
+    return vr * p
+
+
 def mixed_model_loglik_reg(params, data, spec: ModelSpec, indivi: bool = False):
     """Regularised log-likelihood (L2 penalty added to unregularised objective)."""
     base = mixed_model_loglik(params, data, spec, indivi=indivi)
@@ -676,7 +762,7 @@ def _parte_shrink_theta(theta_c, objective, param_index_c: dict, variant: str = 
     parameter vector immediately after its M-step MLE solve.
 
     ``objective`` must be the same weighted negative log-likelihood the
-    M-step just minimised over ``theta_c`` — its Hessian at the solution
+    M-step just minimised over ``theta_c`` â€” its Hessian at the solution
     is the (weighted) Fisher information PARTE shrinks against.  (k, d)
     are selected adaptively (eqs 37-41); there is no free hyperparameter.
 
@@ -700,7 +786,7 @@ def _parte_shrink_theta(theta_c, objective, param_index_c: dict, variant: str = 
 @partial(jax.jit, static_argnames=("spec", "indivi"))
 def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
 
-    # ── LATENT CLASS BRANCH ─────────────────────────────────────────
+    # â”€â”€ LATENT CLASS BRANCH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if spec.latent_classes > 1:
 
         C         = spec.latent_classes
@@ -724,14 +810,14 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
             offset += _kc
         total_theta = offset
 
-        # Class-specific outcome parameters (jagged — NOT rectangular)
+        # Class-specific outcome parameters (jagged â€” NOT rectangular)
         theta_all = []  # list of jnp arrays with different lengths
         for c in range(C):
             kc = class_K_base[c]
             oc = class_offsets[c]
             theta_all.append(params[oc:oc + kc])
 
-        # ── Per-class membership gamma and Z matrices ──────────────────
+        # â”€â”€ Per-class membership gamma and Z matrices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         cm_idx = getattr(spec, 'class_membership_idx', ())
         if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
             # Fallback: all membership vars for all classes (backward compat)
@@ -766,7 +852,7 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
         ll_classes = []
         for c in range(C):
             base_spec_c = replace(base_spec_nolc, model=models[c])
-            # ── Per-class data slicing ─────────────────────────────────
+            # â”€â”€ Per-class data slicing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             _data_c = data
             _spec_c = base_spec_c
             cfix = spec.class_fixed_idx[c] if spec.class_fixed_idx and c < len(spec.class_fixed_idx) else None
@@ -792,10 +878,10 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
             return ll_ind
         return -jnp.sum(ll_ind)
 
-    # ── SINGLE-CLASS BRANCH (unchanged from main_hpc) ───────────────
+    # â”€â”€ SINGLE-CLASS BRANCH (unchanged from main_hpc) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     blocks = unpack_params(params, spec)
     eta    = build_eta(params, data, spec)
-    # Linear-predictor models work in data scale — wider clip to preserve gradients.
+    # Linear-predictor models work in data scale â€” wider clip to preserve gradients.
     # Survival AFT families also use log(t) scale so their etas are unbounded.
     if spec.model in {"gaussian", "tobit", "weibull", "loglogistic"}:
         eta = jnp.clip(eta, -500.0, 500.0)
@@ -862,6 +948,17 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
     else:
         ll = ll_count
 
+    # â”€â”€ Variance regularisation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Keep random-SD / dispersion scale params from collapsing to zero.
+    vr = float(getattr(spec, "variance_reg", 0.0))
+    if vr and vr > 0.0:
+        floor = float(getattr(spec, "variance_floor", 1e-3))
+        vpen = _variance_penalty(blocks, spec, floor, vr)
+        n_elem = ll.size
+        # spread the (scalar) penalty evenly across observations so the
+        # total regularisation added to -LL equals vpen regardless of shape
+        ll = ll - (vpen / n_elem)
+
     ll       = ll * mask
     ll_panel = jnp.sum(ll, axis=1)
 
@@ -878,18 +975,18 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
 _hpc.mixed_model_loglik = mixed_model_loglik
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 7.  fit_em — EM algorithm aware of membership covariates
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 7.  fit_em â€” EM algorithm aware of membership covariates
 #
 #     The original fit_em in main_hpc.py treated params[C*K_base:] as a
 #     flat (C-1,) logits vector.  With membership variables the gamma
-#     section has shape (C-1, K_mem+1) — one intercept + K_mem slopes
+#     section has shape (C-1, K_mem+1) â€” one intercept + K_mem slopes
 #     per class-pair.  This replacement:
-#       • E-step: computes individual-specific log_pi via per-class Z_c @ gamma_c
-#       • M-step (gamma): minimises the weighted MNL cross-entropy per class
-#       • M-step (theta): unchanged (weighted outcome log-lik per class)
+#       â€¢ E-step: computes individual-specific log_pi via per-class Z_c @ gamma_c
+#       â€¢ M-step (gamma): minimises the weighted MNL cross-entropy per class
+#       â€¢ M-step (theta): unchanged (weighted outcome log-lik per class)
 #     When K_mem=0 the behaviour is identical to the original.
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def fit_em(init_params, data, spec: ModelSpec,
            max_iter=100, tol=1e-6, verbose=True, return_trace=False):
@@ -920,7 +1017,7 @@ def fit_em(init_params, data, spec: ModelSpec,
     K_mem      = spec.K_membership
     models     = spec.models  # per-class model strings
     base_spec_nolc = replace(spec, latent_classes=1)
-    # ── Per-class membership indices ───────────────────────────────────
+    # â”€â”€ Per-class membership indices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     cm_idx = getattr(spec, 'class_membership_idx', ())
     if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
         cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
@@ -951,7 +1048,7 @@ def fit_em(init_params, data, spec: ModelSpec,
     N = int(data["y"].shape[0])
 
     # Per-class data: pre-slice Xf to each class's own fixed-effect columns
-    # (matching class_base_specs[c].Kf) once, up front — every per-class
+    # (matching class_base_specs[c].Kf) once, up front â€” every per-class
     # mixed_model_loglik call below must use this, not the unsliced `data`,
     # whenever class_fixed_idx has reduced that class's Kf below the global.
     class_data = []
@@ -964,7 +1061,7 @@ def fit_em(init_params, data, spec: ModelSpec,
         else:
             class_data.append(data)
 
-    # Build per-class Z matrices (one per non-reference class) — fixed for all iters
+    # Build per-class Z matrices (one per non-reference class) â€” fixed for all iters
     Xmem_np = np.array(data["Xmem"])  # (N, P, K_mem)
     Z_mats = []   # list of (N, Kc+1) arrays, one per non-reference class
     for _c in range(C - 1):
@@ -1006,7 +1103,7 @@ def fit_em(init_params, data, spec: ModelSpec,
         # Temperature schedule for E-step
         # ==============================================================
         warmup_frac = min(1.0, iteration / max(1, max_iter * 0.4))
-        T = max(1.0, 2.0 - warmup_frac)              # 2.0 → 1.0 over first 40%
+        T = max(1.0, 2.0 - warmup_frac)              # 2.0 â†’ 1.0 over first 40%
 
         # ==============================================================
         # Progressive M-step budget
@@ -1074,7 +1171,7 @@ def fit_em(init_params, data, spec: ModelSpec,
         if iteration >= 3 and np.any(mean_w < _collapse_cutoff):
             if verbose:
                 print(f"  [EM] class collapse at iter {iteration} "
-                      f"(min mean weight {mean_w.min():.4f} < {_collapse_cutoff:.4f}) — stopping early")
+                      f"(min mean weight {mean_w.min():.4f} < {_collapse_cutoff:.4f}) â€” stopping early")
             break
 
         # ==========================================================
@@ -1109,7 +1206,7 @@ def fit_em(init_params, data, spec: ModelSpec,
 
         theta_new_flat = np.concatenate(theta_new)
 
-        # ── Update each per-class gamma independently ──────────────────
+        # â”€â”€ Update each per-class gamma independently â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _w_jnp = jnp.array(w)
         _pw = prior_weight  # capture for closure
         gamma_new_parts = []
@@ -1205,24 +1302,24 @@ def fit_em(init_params, data, spec: ModelSpec,
 _hpc.fit_em = fit_em          # keep original accessible as fit_em
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 7a-sq. fit_em_squarem
 #
 #   Drop-in replacement for fit_em that applies the Squared Extrapolation
 #   Method (SQUAREM) of Varadhan & Roland (2008) to accelerate convergence.
 #
 #   Algorithm (outer loop):
-#     1. θ₁ = F(θ)      — one full E+M step
-#     2. θ₂ = F(θ₁)     — second full E+M step
-#     3. r = θ₁ − θ,  v = θ₂ − 2θ₁ + θ
-#     4. α = min(−‖r‖/‖v‖, −1)      (step length ≤ −1)
-#     5. θ_prop = θ − 2α·r + α²·v   (extrapolation)
-#     6. Step-halve α toward −1 until LL(θ_prop) ≥ LL at step 1
-#        or fall back to θ₂ if no gain.
+#     1. Î¸â‚ = F(Î¸)      â€” one full E+M step
+#     2. Î¸â‚‚ = F(Î¸â‚)     â€” second full E+M step
+#     3. r = Î¸â‚ âˆ’ Î¸,  v = Î¸â‚‚ âˆ’ 2Î¸â‚ + Î¸
+#     4. Î± = min(âˆ’â€–râ€–/â€–vâ€–, âˆ’1)      (step length â‰¤ âˆ’1)
+#     5. Î¸_prop = Î¸ âˆ’ 2Î±Â·r + Î±Â²Â·v   (extrapolation)
+#     6. Step-halve Î± toward âˆ’1 until LL(Î¸_prop) â‰¥ LL at step 1
+#        or fall back to Î¸â‚‚ if no gain.
 #
 #   All parameters (theta + gamma) are unconstrained reals so no projection
 #   is needed after the extrapolation.
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def fit_em_squarem(init_params, data, spec: ModelSpec,
                    max_iter=100, tol=1e-6, verbose=True, return_trace=False):
@@ -1254,7 +1351,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
     K_mem      = spec.K_membership
     models     = spec.models
     base_spec_nolc = replace(spec, latent_classes=1)
-    # ── Per-class membership indices ───────────────────────────────────
+    # â”€â”€ Per-class membership indices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     cm_idx = getattr(spec, 'class_membership_idx', ())
     if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
         cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
@@ -1284,7 +1381,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
     N = int(data["y"].shape[0])
 
     # Per-class data: pre-slice Xf to each class's own fixed-effect columns
-    # (matching class_base_specs[c].Kf) once, up front — every per-class
+    # (matching class_base_specs[c].Kf) once, up front â€” every per-class
     # mixed_model_loglik call below must use this, not the unsliced `data`,
     # whenever class_fixed_idx has reduced that class's Kf below the global.
     class_data = []
@@ -1311,7 +1408,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
         Z_mats.append(Z_c)
     Z_mats_jnp = tuple(jnp.array(Z_c) for Z_c in Z_mats)
 
-    # ── Quick marginal loglik (no M-step) for step-halving checks ──────
+    # â”€â”€ Quick marginal loglik (no M-step) for step-halving checks â”€â”€â”€â”€â”€â”€
     def _eval_loglik(p):
         try:
             return -float(mixed_model_loglik(jnp.array(p), data, spec))
@@ -1328,7 +1425,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
     trace   = []
     em_calls = 0
 
-    # ── Single E+M step (mirrors the body of fit_em's inner loop) ───────
+    # â”€â”€ Single E+M step (mirrors the body of fit_em's inner loop) â”€â”€â”€â”€â”€â”€â”€
     def _one_em_step(p, m_iters, T=1.0):
         theta_all = []
         for c in range(C):
@@ -1443,12 +1540,12 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
         params2, mean_w2 = _one_em_step(params1, m_iters, T=T)
         em_calls += 1
 
-        # Collapse guard (after warmup) — threshold relaxes with more classes
+        # Collapse guard (after warmup) â€” threshold relaxes with more classes
         _collapse_cutoff = max(0.005, 0.02 / C)
         if outer_iter >= 3 and np.any(mean_w2 < _collapse_cutoff):
             if verbose:
                 print(f"  [SQUAREM] class collapse at outer_iter {outer_iter} "
-                      f"(min mean weight {mean_w2.min():.4f} < {_collapse_cutoff:.4f}) — stopping early")
+                      f"(min mean weight {mean_w2.min():.4f} < {_collapse_cutoff:.4f}) â€” stopping early")
             params = params2
             break
 
@@ -1478,7 +1575,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
                     used_alpha = alpha
                     accepted   = True
                     break
-                alpha = (alpha + (-1.0)) / 2.0  # halve toward α = −1
+                alpha = (alpha + (-1.0)) / 2.0  # halve toward Î± = âˆ’1
 
             params = p_acc
 
@@ -1497,7 +1594,7 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
 
         if verbose:
             print(f"SQUAREM iter {outer_iter:3d} | em_calls={em_calls:4d} | "
-                  f"α={used_alpha:.3f} | LL={current_ll:.4f} | "
+                  f"Î±={used_alpha:.3f} | LL={current_ll:.4f} | "
                   f"delta_LL={ll_delta:.2e} | "
                   f"shares={' '.join(f'{mw:.2f}' for mw in mean_w2)}")
 
@@ -1517,14 +1614,14 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
 _hpc.fit_em = fit_em_squarem
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # 7b. _seed_classes_from_clusters
 #
 #     Given a single-class warm-start theta_1, cluster observations in
 #     the space of (fixed covariates, per-obs LL) and fit a per-cluster
 #     weighted model.  Returns C genuinely differentiated theta vectors,
 #     which prevents EM from collapsing all classes onto the same solution.
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _seed_classes_from_clusters(
     theta_1: np.ndarray,
@@ -1605,7 +1702,7 @@ def _seed_classes_from_clusters(
         if n_c >= 3:
             y_c_mean = float(np.maximum(y_all[in_cluster].mean(), 1e-3))
             # Shift intercept so the class predicts y_c_mean at the
-            # global covariate average — prevents EM collapse.
+            # global covariate average â€” prevents EM collapse.
             delta_intercept = np.log(y_c_mean) - np.log(y_global_mean)
             theta_c[0] = theta_c[0] + delta_intercept
         else:
@@ -1640,9 +1737,9 @@ def _seed_classes_from_clusters(
     return thetas
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 8.  print_summary — extended with membership gamma section
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 8.  print_summary â€” extended with membership gamma section
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def print_summary(result, objective, data, spec: ModelSpec,
                   param_index, se=None, return_df=None):
@@ -1652,7 +1749,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
     variable, one row per class).
     """
 
-    # ── LC DISPATCH ─────────────────────────────────────────────────
+    # â”€â”€ LC DISPATCH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if spec.latent_classes > 1:
         C         = spec.latent_classes
         K_mem     = spec.K_membership
@@ -1682,7 +1779,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
             se_all.append(se_np[oc:oc + kc])
 
         total_theta = class_offsets[-1] + class_K_base[-1] if C > 0 else 0
-        # ── Per-class gamma extraction (jagged) ─────────────────────────
+        # â”€â”€ Per-class gamma extraction (jagged) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         cm_idx = getattr(spec, 'class_membership_idx', ())
         if not cm_idx or len(cm_idx) != C - 1 or K_mem == 0:
             cm_idx = tuple(tuple(range(K_mem)) for _ in range(C - 1))
@@ -1709,7 +1806,10 @@ def print_summary(result, objective, data, spec: ModelSpec,
             logits_cols.append(Z_c @ gamma_list[_c])
         logits_i    = np.column_stack(logits_cols)
         logits_full = np.concatenate([np.zeros((N, 1)), logits_i], axis=1)
-        pi = np.exp(logits_full) / np.exp(logits_full).sum(axis=1, keepdims=True)
+        # Max-subtracted softmax: identical probabilities, but stable when
+        # the membership logits are large (raw np.exp overflows to NaN).
+        pi = np.exp(logits_full - logits_full.max(axis=1, keepdims=True))
+        pi /= pi.sum(axis=1, keepdims=True)
         pi_mean = pi.mean(axis=0)  # marginal class probs
 
         print("\n" + "=" * 65)
@@ -1724,7 +1824,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
         print(f"   Per-class distributions: {list(models)}")
         print("=" * 65)
 
-        # ── Per-class outcome params ──────────────────────────────
+        # â”€â”€ Per-class outcome params â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         class DummyRes:
             pass
 
@@ -1769,9 +1869,9 @@ def print_summary(result, objective, data, spec: ModelSpec,
                     print(f"  param[{i}] = {float(val):+.6f}")
                 print()
 
-        # ── Membership gamma (per-class) ──────────────────────────
+# â”€â”€ Membership gamma (per-class) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # This whole block is display-only.  Wrap it so that any
-        # (e.g. formatting) failure cannot abort the fit — the fitted
+        # (e.g. formatting) failure cannot abort the fit â€” the fitted
         # model and its quality metrics are reported regardless.
         try:
             print("\n" + "=" * 65)
@@ -1797,7 +1897,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
                 print("  " + "-" * 55)
                 for k, cn in enumerate(col_names_full):
                     g     = float(gamma_c[k]) if k < len(gamma_c) else float("nan")
-                    sg    = float(se_c[k])  if k < len(se_c)     else float("nan")
+                    sg    = float(se_c[k])    if k < len(se_c)    else float("nan")
                     z_val = float(g / sg) if sg > 1e-12 else 0.0
                     p_val = float(2 * (1 - scipy_stats.norm.cdf(abs(z_val))))
                     stars = "***" if p_val < 0.01 else "**" if p_val < 0.05 \
@@ -1808,7 +1908,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
             if K_mem > 0:
                 print("  g_ck > 0: higher value of z_k -> higher probability of class c+1.")
 
-            # ── Class shares ─────────────────────────────────────────
+            # â”€â”€ Class shares â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             print("\n" + "-" * 65)
             print("  MARGINAL CLASS PROBABILITIES (at sample-mean covariates)\n")
             for c in range(C):
@@ -1819,7 +1919,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
             print(f"\n  [fitness error] membership summary: {exc}")
             print("  (model still fitted; continuing with raw results)")
 
-        # ── Build summary dict for LC models ─────────────────────
+        # â”€â”€ Build summary dict for LC models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         lc_ll = float(-objective(params_np))
         lc_k  = len(params_np)
         lc_n  = data["y"].shape[0]
@@ -1833,7 +1933,7 @@ def print_summary(result, objective, data, spec: ModelSpec,
             "class_probs":    pi_mean.tolist(),
         }
 
-    # ── SINGLE-CLASS SUMMARY (delegate to main_hpc's print_summary) ─
+    # â”€â”€ SINGLE-CLASS SUMMARY (delegate to main_hpc's print_summary) â”€
     _orig_print = _hpc.__dict__.get("_orig_print_summary")
     if _orig_print is None:
         # Fall back: minimal inline summary
@@ -1891,9 +1991,9 @@ _hpc._orig_print_summary = _hpc.print_summary
 _hpc.print_summary       = print_summary
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 9.  unpack_lc_params — helper for extracting per-class thetas + gamma
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# 9.  unpack_lc_params â€” helper for extracting per-class thetas + gamma
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def unpack_lc_params(params, spec: ModelSpec):
     """
@@ -2003,9 +2103,9 @@ def compute_lc_posteriors(params, data, spec: ModelSpec):
     return posterior, log_pi, logL
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Public re-exports for experiment_package.py
-# ═══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 __all__ = [
     "ModelSpec",
@@ -2022,3 +2122,4 @@ __all__ = [
     "unpack_lc_params",
     "compute_lc_posteriors",
 ]
+

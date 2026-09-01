@@ -52,15 +52,16 @@ import pickle
 
 import numpy as np
 ROLE_PROBS = np.array([
-    0.40,  # 0 – Excluded
-    0.15,  # 1 – Fixed
-    0.20,  # 2 – Random Independent
-    0.10,  # 3 – Random Correlated
+    0.35,  # 0 – Excluded
+    0.12,  # 1 – Fixed
+    0.15,  # 2 – Random Independent
+    0.14,  # 3 – Random Correlated
     0.00,  # 4 – Grouped
-    0.00,  # 5 – Heterogeneity in means
+    0.05,  # 5 – Heterogeneity in means
     0.05,  # 6 – Zero Inflation
     0.05,  # 7 – Membership only
     0.05,  # 8 – Membership + fixed outcome
+    0.04,  # 9 – Heterogeneity in variances
 ])
 
 ROLE_PROBS = ROLE_PROBS / ROLE_PROBS.sum()
@@ -216,51 +217,71 @@ class AdvancedSimulatedAnnealing:
 
     def is_feasible(self, solution):
 
-        D = self.dim_core
-        roles = solution[:D]
+            D = self.dim_core
+            roles = solution[:D]
 
-        # Rule 1:
-        # If role 5 exists → must have at least one 2 or 3
-        if 5 in roles:
-            if not (2 in roles or 3 in roles):
-                return False
+            # Rule 1:
+            # If role 5 exists → must have at least one 2 or 3
+            if 5 in roles:
+                if not (2 in roles or 3 in roles):
+                    return False
 
-        # Rule 2: mutual exclusion – at most one active per group
-        mutex = getattr(self.evaluator, "mutual_exclusion", None)
-        if mutex:
-            if _count_mutex_violations(roles, self.evaluator.vars, mutex) > 0:
-                return False
+            # Rule 1b:
+            # If role 9 exists → must have at least one 2 or 3 or 4
+            if 9 in roles:
+                if not (2 in roles or 3 in roles or 4 in roles):
+                    return False
 
-        return True
-    
-    
+            # Rule 2: mutual exclusion – at most one active per group
+            mutex = getattr(self.evaluator, "mutual_exclusion", None)
+            if mutex:
+                if _count_mutex_violations(roles, self.evaluator.vars, mutex) > 0:
+                    return False
+
+            return True
+
+
     def repair(self, solution):
-                                               
-        D = self.dim_core
-        roles = solution[:D]
 
-        # Rule:
-        # If role 5 exists → must also have at least one 2 or 3
-        if 5 in roles and not (2 in roles or 3 in roles):
+            D = self.dim_core
+            roles = solution[:D]
 
-            zero_idx = np.where(roles == 0)[0]
+            # Rule:
+            # If role 5 exists → must also have at least one 2 or 3
+            if 5 in roles and not (2 in roles or 3 in roles):
 
-            if len(zero_idx) > 0:
-                # Activate one zero as 2 or 3
-                roles[np.random.choice(zero_idx)] = np.random.choice([2, 3])
-            else:
-                # Force-convert one variable
-                idx = np.random.randint(D)
-                roles[idx] = np.random.choice([2, 3])
+                zero_idx = np.where(roles == 0)[0]
 
-        # Mutual-exclusion repair: keep only the first active in each group
-        mutex = getattr(self.evaluator, "mutual_exclusion", None)
-        if mutex:
-            roles = _repair_mutex(roles, self.evaluator.vars, mutex, rng=np.random)
+                if len(zero_idx) > 0:
+                    # Activate one zero as 2 or 3
+                    roles[np.random.choice(zero_idx)] = np.random.choice([2, 3])
+                else:
+                    # Force-convert one variable
+                    idx = np.random.randint(D)
+                    roles[idx] = np.random.choice([2, 3])
 
-        solution[:D] = roles
+            # Rule:
+            # If role 9 exists → must also have at least one 2, 3, or 4
+            if 9 in roles and not (2 in roles or 3 in roles or 4 in roles):
+
+                zero_idx = np.where(roles == 0)[0]
+
+                if len(zero_idx) > 0:
+                    # Activate one zero as 2, 3, or 4
+                    roles[np.random.choice(zero_idx)] = np.random.choice([2, 3, 4])
+                else:
+                    # Force-convert one variable
+                    idx = np.random.randint(D)
+                    roles[idx] = np.random.choice([2, 3, 4])
+
+            # Mutual-exclusion repair: keep only the first active in each group
+            mutex = getattr(self.evaluator, "mutual_exclusion", None)
+            if mutex:
+                roles = _repair_mutex(roles, self.evaluator.vars, mutex, rng=np.random)
+
+            solution[:D] = roles
             
-        return solution
+            return solution
     
     
     
@@ -755,7 +776,7 @@ class AdvancedSimulatedAnnealing:
 
                 # Randomise distribution genes (D … 2D-1)
                 for j in range(D, 2 * D):
-                    solution[j] = np.random.randint(0, 6)
+                    solution[j] = np.random.randint(0, 4)  # 4 distributions: normal, lognormal, triangular, uniform
 
                 # Dispersion bit (2D): randomise 0 or 1
                 if self.dim > 2 * D:
@@ -1062,7 +1083,7 @@ class AdvancedSimulatedAnnealing:
                 roles = np.zeros(D, dtype=int)
                 for j in range(D):
                     roles[j] = self.sample_allowed_role(j)
-                dists = np.random.randint(0, 6, size=D)
+                dists = np.random.randint(0, 4, size=D)  # 4 distributions: normal, lognormal, triangular, uniform
                 disp = np.random.randint(0, 2, size=1)
                 # lc_code gene (0 when single-class, [0,max_lc) otherwise)
                 max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
@@ -1938,7 +1959,7 @@ class DynamicHarmony:
         self.bw_max = bw_max
         self.F = par_max-par_min
 
-    def generate(self, pop, i, gen, max_iter):
+    def generate(self, pop, i, gen, max_iter, allowed_roles=None):
 
         PAR = self.par_min + (
             (self.par_max - self.par_min)
@@ -1953,6 +1974,7 @@ class DynamicHarmony:
 
         child = pop[i].copy()
 
+        n_vars = len(allowed_roles) if allowed_roles is not None else len(child) // 2
         for j in range(len(child)):
 
             if np.random.rand() < self.hmcr:
@@ -1961,7 +1983,17 @@ class DynamicHarmony:
 
             if np.random.rand() < PAR:
                 step = np.random.randint(-BW, BW+1)
-                child[j] =  np.random.randint(0,6)
+                # Role genes (0-9): j < n_vars
+                if j < n_vars:
+                    # This is a role gene - sample from allowed roles for this variable
+                    roles = allowed_roles[j] if isinstance(allowed_roles, list) and j < len(allowed_roles) else list(range(10))
+                    child[j] = np.random.choice(roles)
+                elif j < 2 * n_vars:
+                    # Distribution gene (0-3)
+                    child[j] = np.random.randint(0, 4)
+                else:
+                    # Tail genes (dispersion, LC, masks) - step with bounds
+                    child[j] = int(np.clip(child[j] + step, 0, 9))
 
         return child
 
@@ -1976,7 +2008,7 @@ class AdaptiveDE:
         self.tau1 = tau1
         self.tau2 = tau2
 
-    def generate(self, pop, i, gen, max_iter):
+    def generate(self, pop, i, gen, max_iter, allowed_roles=None):
 
         if np.random.rand() < self.tau1:
             self.F = 0.1 + 0.9*np.random.rand()
@@ -1986,10 +2018,11 @@ class AdaptiveDE:
 
         idxs = list(range(len(pop)))
         idxs.remove(i)
-        a, b, c = pop[np.random.choice(idxs, 3, replace=False)]
+        a_idx, b_idx, c_idx = np.random.choice(idxs, 3, replace=False)
+        a, b, c = pop[a_idx], pop[b_idx], pop[c_idx]
 
         mutant = a.copy()
-        #mutant = np.random.randint(0,6,size=len(pop[i]))
+        n_vars = len(allowed_roles) if allowed_roles is not None else len(mutant) // 2
         for j in range(len(mutant)):
             if b[j] != c[j]:
                 if np.random.rand() < self.F:
@@ -2000,9 +2033,15 @@ class AdaptiveDE:
                 if np.random.rand() < self.F:
                     mutant[j] = a[j]
                 else:
-                    mutant[j] = np.random.randint(0,6)
+                    # Random role from allowed_roles or 0-9
+                    if j < n_vars:
+                        roles = allowed_roles[j] if isinstance(allowed_roles, list) and j < len(allowed_roles) else list(range(10))
+                        mutant[j] = np.random.choice(roles)
+                    elif j < 2 * n_vars:
+                        mutant[j] = np.random.randint(0, 4)
+                    else:
+                        mutant[j] = np.random.randint(0, 10)
 
-        trial = pop[i].copy()
         trial = pop[i].copy()
 
         dim = len(trial)
@@ -2014,11 +2053,16 @@ class AdaptiveDE:
             if np.random.rand() < self.CR or j == j_rand:
                 trial[j] = mutant[j]
 
-        
         if np.array_equal(trial, pop[i]):
             idx = np.random.randint(dim)
-            possible = [v for v in range(6) if v != trial[idx]]
-            trial[idx] = np.random.choice(possible)
+            if idx < n_vars:
+                roles = allowed_roles[idx] if isinstance(allowed_roles, list) and idx < len(allowed_roles) else list(range(10))
+                possible = [v for v in roles if v != trial[idx]]
+            elif idx < 2 * n_vars:
+                possible = [v for v in range(4) if v != trial[idx]]
+            else:
+                possible = [v for v in range(10) if v != trial[idx]]
+            trial[idx] = np.random.choice(possible) if possible else 0
         
         return trial
 
@@ -2066,7 +2110,7 @@ class StepwiseStructureSolver:
 
         for i, var in enumerate(self.vars):
 
-            # Try changing role
+            # Try changing role - use all allowed roles including 7,8,9
             for new_role in self.allowed_roles.get(var, [0]):
 
                 if new_role != roles[i]:

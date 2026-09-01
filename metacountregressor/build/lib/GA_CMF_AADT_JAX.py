@@ -1,5 +1,5 @@
-# ============================================================
-# Hierarchical SPF  —  GA Variable + Random Parameter Selection
+﻿# ============================================================
+# Hierarchical SPF  â€”  GA Variable + Random Parameter Selection
 # JAX backend  |  Single AADT  |  Per-Variable Random Effects
 # ============================================================
 #
@@ -17,9 +17,9 @@
 #   Zero random flags => pure fixed-effects, closed-form likelihood (fast).
 #
 # Why JAX?
-#   1. JIT compilation via jax.jit  — likelihood evaluated ~10-50x faster
-#   2. Exact analytic gradients via jax.value_and_grad  — no finite differences
-#   3. Exact Hessian at solution via jax.hessian  — precise standard errors
+#   1. JIT compilation via jax.jit  â€” likelihood evaluated ~10-50x faster
+#   2. Exact analytic gradients via jax.value_and_grad  â€” no finite differences
+#   3. Exact Hessian at solution via jax.hessian  â€” precise standard errors
 #   4. GPU/TPU support at zero extra cost
 #
 # Optimizer:
@@ -27,12 +27,12 @@
 #   directly via jac=True.
 #
 # Search gene layout  (total = 2*(k_base + k_loc) + 2):
-#   [0 .. k_base-1]              inclusion flags  — baseline vars
-#   [k_base .. k_base+k_loc-1]   inclusion flags  — local vars
+#   [0 .. k_base-1]              inclusion flags  â€” baseline vars
+#   [k_base .. k_base+k_loc-1]   inclusion flags  â€” local vars
 #   [k_base+k_loc]               use_halton  (0=random, 1=Halton)
 #   [k_base+k_loc+1]             model       (0=Poisson, 1=NB)
-#   [k_base+k_loc+2 .. +k_base+1] random flags — baseline vars
-#   [.. +k_loc]                  random flags — local vars
+#   [k_base+k_loc+2 .. +k_base+1] random flags â€” baseline vars
+#   [.. +k_loc]                  random flags â€” local vars
 #
 # CMF reporting (traditional road-safety format):
 #   Component A  ->  CMF = exp(alpha_k)        direct multiplier on crash rate
@@ -55,14 +55,18 @@ import jax.numpy as jnp
 from jax.scipy.special import gammaln, logsumexp
 from jaxopt import ScipyMinimize as JaxoptMinimize
 
-# Enable 64-bit floats — essential for numerical optimisation
-jax.config.update("jax_enable_x64", True)
+# Enable 64-bit floats â€” essential for numerical optimisation
+try:
+    from ._jax_config import configure_jax
+except ImportError:  # flat import (script run from inside the package dir)
+    from _jax_config import configure_jax
+configure_jax()
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # HALTON / RANDOM DRAWS
 # (generated in NumPy once, then converted to JAX arrays)
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def generate_draws(n, R, n_rand, use_halton=True, seed=42):
     """
@@ -88,9 +92,9 @@ def generate_draws(n, R, n_rand, use_halton=True, seed=42):
     return jnp.array(draws_np)   # hand off to JAX
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # PARAMETER VECTOR LAYOUT
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 #   alpha0
 #   [alpha_k, (sigma_alpha_k if rand)]  for each active baseline var
@@ -106,24 +110,24 @@ def count_params(rand_baseline, rand_local, model):
     return n
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # JAX LOG-LIKELIHOODS  (JIT-compiled)
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
-# rand_baseline / rand_local are Python tuples of bools — they control
+# rand_baseline / rand_local are Python tuples of bools â€” they control
 # static code structure so they are declared as static_argnums.
 # Data arrays (y, AADT, matrices, draws) are regular traced arguments.
 #
 # Two entry-points:
-#   _fixed_ll  — pure fixed effects, no draws needed
-#   _mixed_ll  — simulation-based, draws required
+#   _fixed_ll  â€” pure fixed effects, no draws needed
+#   _mixed_ll  â€” simulation-based, draws required
 
 
 @partial(jax.jit, static_argnames=('rand_baseline', 'rand_local', 'model'))
 def _fixed_ll(params, y, AADT, baseline_mat, locals_mat,
               rand_baseline, rand_local, model):
     """
-    Closed-form log-likelihood — called when all random flags are False.
+    Closed-form log-likelihood â€” called when all random flags are False.
     JIT-compiled: ~2-5x faster than NumPy on CPU for moderate N.
     """
     k_base = baseline_mat.shape[1]
@@ -179,7 +183,7 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
     k_base = baseline_mat.shape[1]
     k_loc  = locals_mat.shape[1]
 
-    # ── Unpack parameters ─────────────────────────────────────
+    # â”€â”€ Unpack parameters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     idx       = 0
     alpha0    = params[idx]; idx += 1
 
@@ -208,7 +212,7 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
 
     log_AADT = jnp.log(AADT)   # (N,)
 
-    # ── Component A  —  shape (R, N) ─────────────────────────
+    # â”€â”€ Component A  â€”  shape (R, N) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     log_A    = jnp.full((R, N), alpha0)
     draw_col = 0
     for k in range(k_base):
@@ -221,7 +225,7 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
             log_A = log_A + alpha[k] * xk
     log_A = jnp.clip(log_A, -20.0, 20.0)
 
-    # ── Component B  —  shape (R, N) ─────────────────────────
+    # â”€â”€ Component B  â€”  shape (R, N) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     B = jnp.full((R, N), beta0)
     for k in range(k_loc):
         xk = locals_mat[:, k][None, :]
@@ -248,6 +252,181 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
     return -jnp.sum(loglik_i)
 
 
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# EXPONENTIAL-ELASTICITY FORM  (paper Eq 37-39)
+#   Np = A(z1) * AADT^{B(z2)}
+#   log A(z1) = alpha0 + sum_k alpha_k * X_ki
+#   B(z2)     = beta0 * exp( sum_j beta_j * z_ji )        [beta0 = exp(raw_beta0) > 0]
+# so   log_mu_i = log A(z1) + B(z2) * log(AADT_i)
+#
+# Hierarchical extension keeps per-variable random effects on the
+# Component A covariates and on the Component B exponent covariates
+# (simulation-based MSL via _mixed_ll_exp).
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+def count_params_exp(rand_baseline, rand_local, model):
+    n = 1 + len(rand_baseline) + sum(rand_baseline)   # alpha block
+    n += 1 + len(rand_local) + sum(rand_local)        # raw_beta0 + beta/exponent block
+    if model == 'nb':
+        n += 1
+    return n
+
+
+def _param_labels_exp(selected_baseline, selected_local,
+                      rand_baseline, rand_local, model):
+    labels = ['alpha0']
+    for k, v in enumerate(selected_baseline):
+        labels.append(f'alpha[{v}]')
+        if rand_baseline[k]:
+            labels.append(f'sigma_alpha[{v}]')
+    labels.append('log_beta0')
+    for k, v in enumerate(selected_local):
+        labels.append(f'beta[{v}]')
+        if rand_local[k]:
+            labels.append(f'sigma_beta[{v}]')
+    if model == 'nb':
+        labels.append('log_theta')
+    return labels
+
+
+@partial(jax.jit, static_argnames=('rand_baseline', 'rand_local', 'model'))
+def _fixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
+                  rand_baseline, rand_local, model):
+    """Closed-form log-likelihood for the exp-elasticity form (all fixed)."""
+    k_base = baseline_mat.shape[1]
+    k_loc  = locals_mat.shape[1]
+
+    idx     = 0
+    alpha0  = params[idx]; idx += 1
+    alphas  = []
+    for k in range(k_base):
+        alphas.append(params[idx]); idx += 1
+    alpha   = jnp.stack(alphas) if k_base > 0 else jnp.zeros(0)
+
+    raw_beta0 = params[idx]; idx += 1
+    beta0   = jnp.exp(raw_beta0)                      # base elasticity > 0
+    betas   = []
+    for k in range(k_loc):
+        betas.append(params[idx]); idx += 1
+    beta    = jnp.stack(betas) if k_loc > 0 else jnp.zeros(0)
+
+    log_A = alpha0 + (baseline_mat @ alpha if k_base > 0 else 0.0)
+    log_A = jnp.clip(log_A, -20.0, 20.0)
+    expo  = locals_mat @ beta if k_loc > 0 else 0.0
+    B     = beta0 * jnp.exp(expo)
+    log_mu = jnp.clip(log_A + B * jnp.log(AADT), -30.0, 30.0)
+    mu     = jnp.exp(log_mu)
+
+    if model == 'poisson':
+        ll = y * log_mu - mu - gammaln(y + 1.0)
+    else:
+        log_theta = params[idx]
+        theta = jnp.exp(log_theta)
+        ll = (  gammaln(y + 1.0/theta)
+              - gammaln(1.0/theta)
+              - gammaln(y + 1.0)
+              + y * (log_mu + jnp.log(theta))
+              - (y + 1.0/theta) * jnp.log(1.0 + theta * mu))
+
+    return -jnp.sum(ll)
+
+
+@partial(jax.jit, static_argnames=('rand_baseline', 'rand_local', 'model'))
+def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
+                  rand_baseline, rand_local, draws, model):
+    """
+    Simulation-based log-likelihood for the exp-elasticity form with
+    per-variable random effects (hierarchical, MSL).
+    draws : (R, N, n_rand) standard normal, pre-generated.
+    """
+    R      = draws.shape[0]
+    N      = len(y)
+    k_base = baseline_mat.shape[1]
+    k_loc  = locals_mat.shape[1]
+
+    idx       = 0
+    alpha0    = params[idx]; idx += 1
+    alpha       = []
+    sigma_alpha = []
+    for k in range(k_base):
+        alpha.append(params[idx]); idx += 1
+        if rand_baseline[k]:
+            sigma_alpha.append(params[idx]); idx += 1
+        else:
+            sigma_alpha.append(0.0)
+
+    raw_beta0 = params[idx]; idx += 1
+    beta0    = jnp.exp(raw_beta0)
+    beta       = []
+    sigma_beta = []
+    for k in range(k_loc):
+        beta.append(params[idx]); idx += 1
+        if rand_local[k]:
+            sigma_beta.append(params[idx]); idx += 1
+        else:
+            sigma_beta.append(0.0)
+
+    if model == 'nb':
+        theta = jnp.exp(params[idx])
+
+    log_AADT = jnp.log(AADT)            # (N,)
+
+    # â”€â”€ Component A  â€”  shape (R, N) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    log_A    = jnp.full((R, N), alpha0)
+    draw_col = 0
+    for k in range(k_base):
+        xk = baseline_mat[:, k][None, :]    # (1, N)
+        if rand_baseline[k]:
+            u = draws[:, :, draw_col]       # (R, N)
+            log_A = log_A + (alpha[k] + sigma_alpha[k] * u) * xk
+            draw_col += 1
+        else:
+            log_A = log_A + alpha[k] * xk
+    log_A = jnp.clip(log_A, -20.0, 20.0)
+
+    # â”€â”€ Component B  â€”  exponential elasticity, shape (R, N) â”€
+    expo    = jnp.zeros((R, N))
+    for k in range(k_loc):
+        xk = locals_mat[:, k][None, :]
+        if rand_local[k]:
+            v = draws[:, :, draw_col]
+            expo = expo + (beta[k] + sigma_beta[k] * v) * xk
+            draw_col += 1
+        else:
+            expo = expo + beta[k] * xk
+    B = beta0 * jnp.exp(expo)
+
+    log_mu = jnp.clip(log_A + B * log_AADT[None, :], -30.0, 30.0)
+    mu     = jnp.exp(log_mu)
+
+    if model == 'poisson':
+        sim_ll = y[None, :] * log_mu - mu - gammaln(y + 1.0)[None, :]
+    else:
+        sim_ll = (  gammaln(y[None, :] + 1.0/theta)
+                  - gammaln(1.0/theta)
+                  - gammaln(y[None, :] + 1.0)
+                  + y[None, :] * (log_mu + jnp.log(theta))
+                  - (y[None, :] + 1.0/theta) * jnp.log(1.0 + theta * mu))
+
+    loglik_i = logsumexp(sim_ll, axis=0) - jnp.log(R)
+    return -jnp.sum(loglik_i)
+
+
+def make_objective_exp(y_jax, AADT_jax, baseline_jax, locals_jax,
+                       rand_baseline, rand_local, draws, R, model):
+    """Return the JAX objective for the exp-elasticity form."""
+    rand_baseline_t = tuple(rand_baseline)
+    rand_local_t    = tuple(rand_local)
+    simulate        = any(rand_baseline_t) or any(rand_local_t)
+    if not simulate:
+        return lambda p: _fixed_ll_exp(
+            p, y_jax, AADT_jax, baseline_jax, locals_jax,
+            rand_baseline_t, rand_local_t, model)
+    return lambda p: _mixed_ll_exp(
+        p, y_jax, AADT_jax, baseline_jax, locals_jax,
+        rand_baseline_t, rand_local_t, draws, model)
+
+
 def spf_loglike(params, y, AADT, baseline_mat, locals_mat,
                 rand_baseline, rand_local, draws=None, R=200, model='poisson'):
     """
@@ -267,9 +446,9 @@ def spf_loglike(params, y, AADT, baseline_mat, locals_mat,
                          rand_baseline, rand_local, draws, model)
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # SCIPY OPTIMIZER BRIDGE
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # jax.value_and_grad returns (loss, gradient) in a single forward+backward
 # pass.  Wrapping it for scipy.minimize(jac=True) gives exact gradients
@@ -301,7 +480,7 @@ def run_optimizer(objective, p0, method="SLSQP", maxiter=2000, disp=False):
     """
     Optimize using jaxopt.ScipyMinimize so autodiff is handled by JAXopt.
     objective must be a raw JAX function (scalar output); gradients are
-    computed via JAX autodiff internally — no manual jac=True needed.
+    computed via JAX autodiff internally â€” no manual jac=True needed.
     """
     solver = JaxoptMinimize(
         fun=objective,
@@ -312,9 +491,9 @@ def run_optimizer(objective, p0, method="SLSQP", maxiter=2000, disp=False):
     return solver.run(jnp.array(p0, dtype=jnp.float64))
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # STANDARD ERRORS  (exact Hessian via JAX autodiff)
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
                rand_baseline, rand_local, draws, R, model):
@@ -344,11 +523,37 @@ def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
     p_star  = jnp.array(result.params if hasattr(result, "params") else result.x)
 
     try:
-        H   = np.array(hess_fn(p_star))
-        cov = np.linalg.inv(H)
-        se  = np.sqrt(np.maximum(np.diag(cov), 0.0))
+        H = np.array(hess_fn(p_star))
+        H = np.where(np.isfinite(H), H, 0.0)
+        # â”€â”€ PARTE-regularized SEs (Alghamdi et al. 2026) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # Uses data-adaptive shrinkage per eigen-direction instead of a
+        # uniform ridge penalty that collapses to 1/Î» when the Hessian is
+        # near-singular (producing identical SEs for all parameters).
+        try:
+            from regularization import apply_parte_to_fixed_effects
+            pr = apply_parte_to_fixed_effects(
+                np.asarray(p_star, dtype=float), H, variant="k3d3"
+            )
+            se = pr.se_parte.copy()
+        except Exception:
+            # Fallback: plain ridge-regularized Hessian inversion
+            eigvals, eigvecs = np.linalg.eigh(H)
+            max_ev = float(np.max(np.abs(eigvals)))
+            if max_ev > 0 and np.isfinite(max_ev):
+                ridge = float(np.clip(max_ev * 1e-6, 1e-12, 1e-4))
+                inv_eigvals = 1.0 / (eigvals + ridge)
+                cov = (eigvecs * inv_eigvals) @ eigvecs.T
+                diag_cov = np.diag(cov)
+                diag_cov = np.where(diag_cov > 0, diag_cov, 1.0 / ridge)
+                se = np.sqrt(diag_cov)
+            else:
+                n = len(p_star)
+                cov = np.full((n, n), np.nan)
+                se  = np.full(n, np.nan)
+        n = len(p_star)
+        cov = np.full((n, n), np.nan)  # covariance not computed with PARTE
     except np.linalg.LinAlgError:
-        print("  WARNING: Hessian singular — no hess_inv fallback for SLSQP; returning NaN SEs.")
+        print("  WARNING: Hessian singular - returning NaN SEs.")
         n = len(p_star)
         cov = np.full((n, n), np.nan)
         se  = np.full(n, np.nan)
@@ -356,9 +561,9 @@ def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
     return se, cov
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # MODEL EVALUATOR  (called inside GA fitness)
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def evaluate_model(solution,
                    data,
@@ -379,6 +584,13 @@ def evaluate_model(solution,
     active_baseline = [v for v, m in zip(baseline_vars, baseline_mask) if m]
     active_local    = [v for v, m in zip(local_vars,    local_mask)    if m]
 
+    if rand_baseline_all is None:
+        rand_baseline_all = [False] * k_base
+    if rand_local_all is None:
+        rand_local_all = [False] * k_loc
+    if len(rand_baseline_all) != k_base or len(rand_local_all) != k_loc:
+        raise ValueError("Random-parameter flags must match the candidate variable lists.")
+
     rand_baseline = tuple(r for r, m in zip(rand_baseline_all, baseline_mask) if m)
     rand_local    = tuple(r for r, m in zip(rand_local_all,    local_mask)    if m)
 
@@ -392,7 +604,7 @@ def evaluate_model(solution,
     bmat_np = data[active_baseline].values.astype(np.float64) if k_base_act > 0 else np.zeros((N, 0))
     lmat_np = data[active_local].values.astype(np.float64)    if k_loc_act  > 0 else np.zeros((N, 0))
 
-    # Convert to JAX arrays once — reused across optimizer iterations
+    # Convert to JAX arrays once â€” reused across optimizer iterations
     y_jax       = jnp.array(y_np)
     AADT_jax    = jnp.array(AADT_np)
     baseline_jax = jnp.array(bmat_np)
@@ -413,7 +625,7 @@ def evaluate_model(solution,
     ll        = -float(objective(params))
     bic       = -2.0 * ll + n_params * np.log(N)
 
-    # Significance penalty — diagonal Hessian via forward-over-reverse autodiff (O(p))
+    # Significance penalty â€” diagonal Hessian via forward-over-reverse autodiff (O(p))
     grad_fn   = jax.grad(objective)
     n_p       = len(params)
     diag_hess = jnp.array([
@@ -460,15 +672,46 @@ def _param_labels(selected_baseline, selected_local, rand_baseline, rand_local, 
     return labels
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # SOLVER-BASED SEARCH (MultiStartSA)
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def run_ga(data, baseline_vars, local_vars, R=200):
+def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8):
     k_base = len(baseline_vars)
     k_loc = len(local_vars)
     D = k_base + k_loc
     offset_rf = D + 2
+
+    # ── Correlation constraint (Eq. 291): |corr(Z_k, Z_k')| <= c for baseline (upper-level) pairs
+    # Compute pairwise correlations among baseline candidates from data
+    _baseline_corr_matrix = None
+    _baseline_corr_valid = set()
+    if baseline_vars:
+        _avail_baseline = [v for v in baseline_vars if v in data.columns]
+        if len(_avail_baseline) >= 2:
+            _corr_df = data[_avail_baseline].corr()
+            _baseline_corr_matrix = _corr_df.abs()
+            _baseline_corr_valid = set(_avail_baseline)
+
+    def _check_corr_constraint(baseline_vars_selected: list[str]) -> bool:
+        """Check if a set of baseline variables satisfies the correlation constraint.
+        Returns True if all pairwise absolute correlations <= corr_threshold.
+        """
+        if _baseline_corr_matrix is None or len(baseline_vars_selected) < 2:
+            return True
+        for i, v1 in enumerate(baseline_vars_selected):
+            if v1 not in _baseline_corr_valid:
+                continue
+            for v2 in baseline_vars_selected[i+1:]:
+                if v2 not in _baseline_corr_valid:
+                    continue
+                try:
+                    corr_val = _baseline_corr_matrix.loc[v1, v2]
+                    if np.isfinite(corr_val) and corr_val > corr_threshold:
+                        return False
+                except KeyError:
+                    continue
+        return True
 
     class _CMFSearchEvaluator:
         def __init__(self):
@@ -512,6 +755,11 @@ def run_ga(data, baseline_vars, local_vars, R=200):
                     role = "R" if int(full[offset_rf + full_idx]) == 1 else "F"
                     local_terms.append((var, role))
 
+            # Check correlation constraint on baseline (upper-level) terms
+            selected_baseline = [var for var, _ in baseline_terms]
+            if not _check_corr_constraint(selected_baseline):
+                return None  # Invalid spec - correlation constraint violated
+
             return {
                 "baseline_terms": tuple(sorted(baseline_terms)),
                 "local_terms": tuple(sorted(local_terms)),
@@ -531,6 +779,13 @@ def run_ga(data, baseline_vars, local_vars, R=200):
         def fitness(self, decision):
             full = self.decode(decision)
             model = "poisson" if int(full[D + 1]) == 0 else "nb"
+
+            # Check correlation constraint on baseline terms before evaluating
+            baseline_mask = full[:k_base].astype(bool)
+            selected_baseline = [v for v, m in zip(baseline_vars, baseline_mask) if m]
+            if not _check_corr_constraint(selected_baseline):
+                return 1e12  # Large penalty for correlation constraint violation
+
             rand_baseline_all = [bool(full[offset_rf + i]) for i in range(k_base)]
             rand_local_all = [bool(full[offset_rf + k_base + i]) for i in range(k_loc)]
             return evaluate_model(
@@ -584,9 +839,9 @@ def run_ga(data, baseline_vars, local_vars, R=200):
             use_halton, model, fitness)
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # FINAL ESTIMATION
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def fit_final_model(data,
                     selected_baseline, selected_local,
@@ -620,15 +875,15 @@ def fit_final_model(data,
     objective = make_objective(y_jax, AADT_jax, baseline_jax, locals_jax,
                                rand_baseline, rand_local, draws, R, model)
 
-    print("  Compiling JAX kernel (first call) …")
+    print("  Compiling JAX kernel (first call) â€¦")
     res = run_optimizer(objective, p0, method="SLSQP", maxiter=2000)
 
     return res, y_jax, AADT_jax, baseline_jax, locals_jax, draws
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # SUMMARY TABLE
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def build_summary_table(result,
                         selected_baseline, selected_local,
@@ -654,18 +909,42 @@ def print_summary_table(df):
         if p < 0.10: return "*"
         return ""
 
-    df = df.copy()
-    df["Signif"] = df["p-value"].apply(stars)
-    print("\n================ MODEL SUMMARY ================\n")
-    print(df.to_string(index=False, float_format="%.4f"))
-    print("\nSignificance: *** p<0.01,  ** p<0.05,  * p<0.10")
-    print("sigma_* rows: standard deviation of the random parameter distribution")
-    print("SE computed from exact observed information matrix (JAX Hessian)\n")
+    def _pval_fmt(p):
+        if not np.isfinite(p): return "    n/a"
+        if p < 0.001: return "  <0.001"
+        return f"  {p:.4f}"
+
+    def _fmt(v, w, sign=False):
+        if not np.isfinite(v): return "n/a".rjust(w)
+        fspec = f"{{:{'+' if sign else ''}{w}.4f}}" if abs(v) < 1e4 else f"{{:{'+' if sign else ''}{w}.2f}}"
+        return fspec.format(v)
+
+    W = 78
+    print("\n" + "=" * W)
+    print("  MODEL SUMMARY")
+    print("=" * W)
+    print(f"  {'Parameter':<30}  {'Estimate':>12}  {'Std.Err':>11}  {'z-value':>10}  {'p-value':>8}  Signif")
+    print("  " + "-" * 29 + "  " + "-" * 12 + "  " + "-" * 11 + "  " + "-" * 10 + "  " + "-" * 8 + "  " + "-" * 6)
+
+    for _, row in df.iterrows():
+        param = str(row["Parameter"])[:30]
+        est   = _fmt(row["Estimate"], 12, True)
+        se    = _fmt(row["Std.Err"],   11, False)
+        z     = _fmt(row["z-value"],   10, True)
+        pv    = _pval_fmt(row["p-value"])
+        st    = stars(row["p-value"])
+        print(f"  {param:<30} {est} {se} {z} {pv}{st}")
+
+    print("")
+    print("  Signif: *** p<0.01   ** p<0.05   * p<0.10")
+    print("  sigma_* rows: standard deviation of the random parameter distribution")
+    print("  SE computed from exact observed information matrix (JAX Hessian + ridge)")
+    print("=" * W + "\n")
 
 
-# ─────────────────────────────────────────────────────────────
-# CMF REPORTING  —  traditional road-safety format
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# CMF REPORTING  â€”  traditional road-safety format
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def print_cmf_results(result,
                       selected_baseline, selected_local,
@@ -690,19 +969,19 @@ def print_cmf_results(result,
     col_w  = 20
 
     print("\n" + "=" * W)
-    print("   CRASH MODIFICATION FACTORS  —  Traditional Reporting Format")
+    print("   CRASH MODIFICATION FACTORS  â€”  Traditional Reporting Format")
     print("=" * W)
     print(f"   AADT reference (sample mean) : {AADT_mean:,.0f} veh/day")
     print(f"   Model                        : {model.upper()}")
     print()
-    print("   [R] = RANDOM parameter  — effect varies by site")
-    print("   [F] = FIXED  parameter  — effect constant across all sites")
+    print("   [R] = RANDOM parameter  â€” effect varies by site")
+    print("   [F] = FIXED  parameter  â€” effect constant across all sites")
 
-    # ── Component A ───────────────────────────────────────────
+    # â”€â”€ Component A â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     alpha0 = params[idx]; idx += 1
 
     print(f"\n{'=' * W}")
-    print("  COMPONENT A  —  Site Characteristics  [CMF = exp(alpha_k)]")
+    print("  COMPONENT A  â€”  Site Characteristics  [CMF = exp(alpha_k)]")
     print(f"{'=' * W}")
     print(f"\n  Intercept  alpha0 = {alpha0:+.4f}  ->  exp(alpha0) = {np.exp(alpha0):.4f}")
 
@@ -729,11 +1008,11 @@ def print_cmf_results(result,
         print()
         print("  NOTE: Mean CMF is the average effect; sigma captures site heterogeneity.")
 
-    # ── Component B ───────────────────────────────────────────
+    # â”€â”€ Component B â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     beta0 = params[idx]; idx += 1
 
     print(f"\n{'=' * W}")
-    print("  COMPONENT B  —  AADT Elasticity  [CMF = AADT_mean ^ beta_k]")
+    print("  COMPONENT B  â€”  AADT Elasticity  [CMF = AADT_mean ^ beta_k]")
     print(f"  Evaluated at mean AADT = {AADT_mean:,.0f} veh/day")
     print(f"{'=' * W}")
     print(f"\n  Base elasticity  beta0 = {beta0:+.4f}")
@@ -768,7 +1047,7 @@ def print_cmf_results(result,
             print("  NOTE: 'Eff. elast.' = beta0 + beta_k (mean elasticity when variable=1).")
             print("  Sigma captures site-level variation in the AADT-crash relationship.")
 
-    # ── NB dispersion ─────────────────────────────────────────
+    # â”€â”€ NB dispersion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if model == 'nb':
         theta = np.exp(params[idx])
         print(f"\n{'=' * W}")
@@ -777,7 +1056,7 @@ def print_cmf_results(result,
         print(f"  theta = {theta:.4f}  ->  Var[Y] = mu + mu^2/theta")
         print(f"  Smaller theta = greater overdispersion.")
 
-    # ── Consolidated random-parameter summary ─────────────────
+    # â”€â”€ Consolidated random-parameter summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     any_random = any(rand_baseline) or any(rand_local)
     if any_random:
         print(f"\n{'=' * W}")
@@ -810,9 +1089,9 @@ def print_cmf_results(result,
     print("\n" + "=" * W + "\n")
 
 
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # MAIN
-# ─────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 if __name__ == "__main__":
 
@@ -846,8 +1125,8 @@ if __name__ == "__main__":
           f"({sum(rand_baseline)} in A,  {sum(rand_local)} in B)")
     print("-" * 72)
 
-    # ── Final estimation ─────────────────────────────────────
-    print("\nFitting final model (R=500, JAX) …")
+    # â”€â”€ Final estimation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    print("\nFitting final model (R=500, JAX) â€¦")
     (result,
      y_jax, AADT_jax, baseline_jax, locals_jax,
      draws) = fit_final_model(
@@ -856,19 +1135,19 @@ if __name__ == "__main__":
         model=model, use_halton=use_halton, R=500
     )
 
-    # ── Exact standard errors from JAX Hessian ───────────────
-    print("\nComputing exact standard errors (JAX Hessian) …")
+    # â”€â”€ Exact standard errors from JAX Hessian â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    print("\nComputing exact standard errors (JAX Hessian) â€¦")
     se, cov = compute_se(
         result, y_jax, AADT_jax, baseline_jax, locals_jax,
         rand_baseline, rand_local, draws, R=500, model=model
     )
 
-    # ── Coefficient table ─────────────────────────────────────
+    # â”€â”€ Coefficient table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     df = build_summary_table(result, selected_baseline, selected_local,
                              rand_baseline, rand_local, model, se)
     print_summary_table(df)
 
-    # ── CMF table ─────────────────────────────────────────────
+    # â”€â”€ CMF table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     AADT_mean = data["AADT"].mean()
     print_cmf_results(result, selected_baseline, selected_local,
                       rand_baseline, rand_local,

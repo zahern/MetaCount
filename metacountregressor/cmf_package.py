@@ -83,13 +83,14 @@ class CMFExperimentBuilder:
             "run_ga": run_ga,
         }
 
-    def run_search(self, R: int = 200) -> CMFSearchResult:
+    def run_search(self, R: int = 200, corr_threshold: float = 0.8) -> CMFSearchResult:
         api = self._cmf_api()
         result = api["run_ga"](
             self.df,
             self.baseline_vars,
             self.local_vars,
             R=R,
+            corr_threshold=corr_threshold,
         )
         return CMFSearchResult(*result)
 
@@ -532,6 +533,7 @@ class CMFExperimentBuilder:
         local_correlated: Optional[list[str]] = None,
         grouped_terms: Optional[list[str]] = None,
         hetro_in_means: Optional[list[str]] = None,
+        hetro_in_variances: Optional[list[str]] = None,
         zi_terms: Optional[list[str]] = None,
         membership_terms: Optional[list[str]] = None,
         dispersion: int = 0,
@@ -558,11 +560,68 @@ class CMFExperimentBuilder:
             "rdm_cor_terms": rdm_cor_terms,
             "grouped_terms": grouped_terms or [],
             "hetro_in_means": hetro_in_means or [],
+            "hetro_in_variances": hetro_in_variances or [],
             "zi_terms": zi_terms or [],
             "membership_terms": membership_terms or [],
             "dispersion": int(dispersion),
             "latent_classes": int(latent_classes),
         }
+
+    def make_manual_cmf_spec_unified(
+        self,
+        baseline_fixed: Optional[list[str]] = None,
+        baseline_random: Optional[list[str]] = None,
+        baseline_correlated: Optional[list[str]] = None,
+        local_fixed: Optional[list[str]] = None,
+        local_random: Optional[list[str]] = None,
+        local_correlated: Optional[list[str]] = None,
+        grouped_terms: Optional[list[str]] = None,
+        heterogeneity: Optional[dict[str, list[str]]] = None,
+        zi_terms: Optional[list[str]] = None,
+        membership_terms: Optional[list[str]] = None,
+        dispersion: int = 0,
+        latent_classes: int = 1,
+    ) -> dict[str, Any]:
+        """
+        Unified heterogeneity specification.
+        
+        Parameters
+        ----------
+        heterogeneity : dict with keys 'means' and/or 'variances'
+            heterogeneity = {
+                'means': ['z1', 'z2'],           # variables affecting random param MEANS
+                'variances': ['z2', 'z3'],       # variables affecting random param VARIANCES
+                # Can also use 'both' for variables affecting both:
+                'both': ['z4']                   # affects both means and variances
+            }
+        """
+        hetro_in_means = []
+        hetro_in_variances = []
+        
+        if heterogeneity:
+            if 'means' in heterogeneity:
+                hetro_in_means.extend(heterogeneity['means'])
+            if 'variances' in heterogeneity:
+                hetro_in_variances.extend(heterogeneity['variances'])
+            if 'both' in heterogeneity:
+                hetro_in_means.extend(heterogeneity['both'])
+                hetro_in_variances.extend(heterogeneity['both'])
+        
+        return self.make_manual_cmf_spec(
+            baseline_fixed=baseline_fixed,
+            baseline_random=baseline_random,
+            baseline_correlated=baseline_correlated,
+            local_fixed=local_fixed,
+            local_random=local_random,
+            local_correlated=local_correlated,
+            grouped_terms=grouped_terms,
+            hetro_in_means=hetro_in_means,
+            hetro_in_variances=hetro_in_variances,
+            zi_terms=zi_terms,
+            membership_terms=membership_terms,
+            dispersion=dispersion,
+            latent_classes=latent_classes,
+        )
 
     def fit_manual_cmf_model(
         self,

@@ -2,6 +2,7 @@ GA_CMF_AADT_JAX
 Solvers_METAJAX
 _device_cust
 _device_jax_cust
+_jax_config
 _version
 cmf_package
 data_split_helper

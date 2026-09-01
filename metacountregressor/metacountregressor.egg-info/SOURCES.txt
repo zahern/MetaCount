@@ -3,6 +3,7 @@ README.md
 Solvers_METAJAX.py
 _device_cust.py
 _device_jax_cust.py
+_jax_config.py
 _version.py
 cmf_package.py
 data_split_helper.py
@@ -27,6 +28,7 @@ survival_models.py
 metacountregressor/GA_CMF_AADT_JAX.py
 metacountregressor/__init__.py
 metacountregressor/_version.py
+metacountregressor/bayesian_model.py
 metacountregressor/bivariate_copula.py
 metacountregressor/cmf_package.py
 metacountregressor/experiment_package.py
@@ -52,5 +54,7 @@ metacountregressor/templates/02_latent_class_fc_validation.ipynb
 metacountregressor/templates/03_cmf_aadt_search.ipynb
 metacountregressor/templates/04_linear_speed_prediction.ipynb
 metacountregressor/templates/05_batch_script_tutorial.ipynb
+tests/test_bayesian_model.py
+tests/test_cmf_pymc_comparison.py
 tests/test_experiment_builder.py
 tests/test_package_api.py

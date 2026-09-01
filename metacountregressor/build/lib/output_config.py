@@ -36,7 +36,17 @@ def save_search_result(
     config: SearchOutputConfig,
     family: str,
     algorithm: str,
+    metadata: dict[str, Any] | None = None,
 ) -> Path:
+    """Write the search result JSON.
+
+    `metadata` is an optional dict for run context that isn't part of
+    `result` itself -- e.g. hyperparameters actually used, candidate
+    variable names, objective/criterion name(s), elapsed wall time, and
+    train/test split details. Callers (ExperimentBuilder.run()) populate
+    this from what they already have on hand; the field is additive and
+    backward compatible (old payloads without it still parse fine).
+    """
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -46,6 +56,7 @@ def save_search_result(
         "config": asdict(config),
         "family": family,
         "algorithm": algorithm,
+        "metadata": _normalize(metadata or {}),
         "result": _normalize(result),
     }
     target.write_text(json.dumps(payload, indent=2), encoding="utf-8")

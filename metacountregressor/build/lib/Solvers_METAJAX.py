@@ -52,19 +52,53 @@ import pickle
 
 import numpy as np
 ROLE_PROBS = np.array([
-    0.40,  # 0 – Excluded
-    0.15,  # 1 – Fixed
-    0.20,  # 2 – Random Independent
-    0.10,  # 3 – Random Correlated
+    0.35,  # 0 – Excluded
+    0.12,  # 1 – Fixed
+    0.15,  # 2 – Random Independent
+    0.14,  # 3 – Random Correlated
     0.00,  # 4 – Grouped
-    0.00,  # 5 – Heterogeneity in means
+    0.05,  # 5 – Heterogeneity in means
     0.05,  # 6 – Zero Inflation
     0.05,  # 7 – Membership only
     0.05,  # 8 – Membership + fixed outcome
+    0.04,  # 9 – Heterogeneity in variances
 ])
 
 ROLE_PROBS = ROLE_PROBS / ROLE_PROBS.sum()
 
+
+# ── Mutual-exclusion helpers ──────────────────────────────────────────
+
+def _count_mutex_violations(roles, vars_list, mutex_groups):
+    """Return number of mutual-exclusion groups with >1 active variable."""
+    violations = 0
+    for group in mutex_groups:
+        active = 0
+        for i, v in enumerate(vars_list):
+            if v in group and int(roles[i]) != 0:
+                active += 1
+        if active > 1:
+            violations += 1
+    return violations
+
+
+def _repair_mutex(roles, vars_list, mutex_groups, rng=None):
+    """Force at most one active variable per mutual-exclusion group.
+
+    If multiple variables in a group have role != 0, keep only the
+    first one and set the rest to 0.
+    """
+    if rng is None:
+        rng = np.random
+    for group in mutex_groups:
+        kept = False
+        for i, v in enumerate(vars_list):
+            if v in group and int(roles[i]) != 0:
+                if not kept:
+                    kept = True
+                else:
+                    roles[i] = 0
+    return roles
 
 
 class AdvancedSimulatedAnnealing:
@@ -82,9 +116,14 @@ class AdvancedSimulatedAnnealing:
                  adaptive=True,
                  step_size=1,
                  archive_limit=100,
-                 restart_threshold=500, patience =400, tol = 1e-6):
+                 restart_threshold=500, patience =400, tol = 1e-6,
+                 init_solution=None):
 
-        
+        self.init_solution = None
+        if init_solution is not None:
+            cand = np.asarray(init_solution, dtype=float).reshape(-1)
+            if cand.size == dimension and np.all(np.isfinite(cand)):
+                self.init_solution = cand.astype(int)
         self.tol = tol
         self.patience = patience
         self.mutation_rate = mutation_rate
@@ -178,46 +217,83 @@ class AdvancedSimulatedAnnealing:
 
     def is_feasible(self, solution):
 
-        D = self.dim_core
-        roles = solution[:D]
+            D = self.dim_core
+            roles = solution[:D]
 
-        # Rule 1:
-        # If role 5 exists → must have at least one 2 or 3
-        if 5 in roles:
-            if not (2 in roles or 3 in roles):
-                return False
+            # Rule 1:
+            # If role 5 exists → must have at least one 2 or 3
+            if 5 in roles:
+                if not (2 in roles or 3 in roles):
+                    return False
 
-        return True
-    
-    
+            # Rule 1b:
+            # If role 9 exists → must have at least one 2 or 3 or 4
+            if 9 in roles:
+                if not (2 in roles or 3 in roles or 4 in roles):
+                    return False
+
+            # Rule 2: mutual exclusion – at most one active per group
+            mutex = getattr(self.evaluator, "mutual_exclusion", None)
+            if mutex:
+                if _count_mutex_violations(roles, self.evaluator.vars, mutex) > 0:
+                    return False
+
+            return True
+
+
     def repair(self, solution):
-                                              
-        D = self.dim_core
-        roles = solution[:D]
 
-        # Rule:
-        # If role 5 exists → must also have at least one 2 or 3
-        if 5 in roles and not (2 in roles or 3 in roles):
+            D = self.dim_core
+            roles = solution[:D]
 
-            zero_idx = np.where(roles == 0)[0]
+            # Rule:
+            # If role 5 exists → must also have at least one 2 or 3
+            if 5 in roles and not (2 in roles or 3 in roles):
 
-            if len(zero_idx) > 0:
-                # Activate one zero as 2 or 3
-                roles[np.random.choice(zero_idx)] = np.random.choice([2, 3])
-            else:
-                # Force-convert one variable
-                idx = np.random.randint(D)
-                roles[idx] = np.random.choice([2, 3])
+                zero_idx = np.where(roles == 0)[0]
 
-        solution[:D] = roles
-           
-        return solution
+                if len(zero_idx) > 0:
+                    # Activate one zero as 2 or 3
+                    roles[np.random.choice(zero_idx)] = np.random.choice([2, 3])
+                else:
+                    # Force-convert one variable
+                    idx = np.random.randint(D)
+                    roles[idx] = np.random.choice([2, 3])
+
+            # Rule:
+            # If role 9 exists → must also have at least one 2, 3, or 4
+            if 9 in roles and not (2 in roles or 3 in roles or 4 in roles):
+
+                zero_idx = np.where(roles == 0)[0]
+
+                if len(zero_idx) > 0:
+                    # Activate one zero as 2, 3, or 4
+                    roles[np.random.choice(zero_idx)] = np.random.choice([2, 3, 4])
+                else:
+                    # Force-convert one variable
+                    idx = np.random.randint(D)
+                    roles[idx] = np.random.choice([2, 3, 4])
+
+            # Mutual-exclusion repair: keep only the first active in each group
+            mutex = getattr(self.evaluator, "mutual_exclusion", None)
+            if mutex:
+                roles = _repair_mutex(roles, self.evaluator.vars, mutex, rng=np.random)
+
+            solution[:D] = roles
+            
+            return solution
     
     
     
     def sample_allowed_role(self, var_index, force_active=False):
         var_name = self.evaluator.vars[var_index]
         allowed = self.evaluator.allowed_roles[var_name]
+
+        # ── Ban check: if variable is banned and not force-included, only role 0 ──
+        banned = getattr(self.evaluator, "_banned_variables", set())
+        force_inc = getattr(self.evaluator, "_force_included_vars", set())
+        if var_name in banned and var_name not in force_inc:
+            return 0  # permanently excluded unless analyst forced-included it
 
         # If we require non-zero role
         if force_active:
@@ -700,7 +776,7 @@ class AdvancedSimulatedAnnealing:
 
                 # Randomise distribution genes (D … 2D-1)
                 for j in range(D, 2 * D):
-                    solution[j] = np.random.randint(0, 6)
+                    solution[j] = np.random.randint(0, 4)  # 4 distributions: normal, lognormal, triangular, uniform
 
                 # Dispersion bit (2D): randomise 0 or 1
                 if self.dim > 2 * D:
@@ -843,15 +919,50 @@ class AdvancedSimulatedAnnealing:
                     )
 
         print(f"[OK] SA search stats saved to {filepath}")
-    
-    
+
+    def save_search_stats_csv(
+        self,
+        algo="sa",
+        seed=0,
+        config_id=0,
+        folder="results"
+    ):
+        """Same per-iteration data as save_search_stats_txt(), as a CSV --
+        one row per generation, columns depend on single- vs multi-objective
+        (see search_stats' 'best'/'archive_size' vs 'hypervolume'/
+        'pareto_size'/'best_obj1'/'best_obj2' keys, set in optimize())."""
+        import pandas as pd
+
+        os.makedirs(folder, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{algo}_search_stats_seed{seed}_config{config_id}_{timestamp}.csv"
+        filepath = os.path.join(folder, filename)
+
+        pd.DataFrame(self.search_stats).to_csv(filepath, index=False)
+        print(f"[OK] SA search stats CSV saved to {filepath}")
+        return filepath
+
     # =========================================================
     # Optimize
     # =========================================================
     def optimize(self):
         start_time = time.time()   # [OK]
         last_best = None
-        current, current_score = self.initialize_valid_solution()
+        if self.init_solution is not None:
+            # Warm start (e.g. best structure from a previous cached run):
+            # evaluate it; fall back to random init if it is infeasible.
+            current = self.init_solution.copy()
+            current_score = self.evaluator.fitness(current)
+            if not np.isfinite(current_score).all() or float(
+                np.max(np.asarray(current_score, dtype=float))
+            ) >= 1e12:
+                print("[SA init] warm-start solution invalid - using random init")
+                current, current_score = self.initialize_valid_solution()
+            else:
+                print(f"[SA init] warm-started from cached solution "
+                      f"(score={float(np.min(current_score)):.4f})")
+        else:
+            current, current_score = self.initialize_valid_solution()
 
         if self.T0 is None:
             self.T0 = self.auto_temperature(current)
@@ -861,6 +972,14 @@ class AdvancedSimulatedAnnealing:
         self.archive_scores = []
         archive_sizes = []
         self.update_archive(current, current_score)
+
+        # Track the best-so-far so we can announce genuine improvements
+        # (the per-generation "nbr fitness" line is just the proposed neighbour,
+        # not the incumbent best -- previously the best was never printed).
+        best_ever = None
+        if not self.is_multiobjective(current_score):
+            best_ever = float(self.archive_scores[0])
+            print(f"[NEW BEST] gen 0 | score={best_ever:.4f}")
 
         no_improve = 0
 
@@ -939,6 +1058,17 @@ class AdvancedSimulatedAnnealing:
                 self.update_archive(current, current_score)
                 archive_sizes.append(len(self.archive))
                 no_improve = 0
+
+                # Announce a genuine improvement in the incumbent best model.
+                if not self.is_multiobjective(current_score):
+                    cur_best = float(self.archive_scores[0])
+                    if best_ever is None or cur_best < best_ever - self.tol:
+                        best_ever = cur_best
+                        n_active = int(np.count_nonzero(
+                            np.asarray(self.archive[0])[:self.dim_core]))
+                        print(f"[NEW BEST] gen {gen} | score={cur_best:.4f} "
+                              f"| active_vars={n_active} | elapsed={elapsed:.0f}s",
+                              flush=True)
             else:
                 no_improve += 1
 
@@ -953,13 +1083,14 @@ class AdvancedSimulatedAnnealing:
                 roles = np.zeros(D, dtype=int)
                 for j in range(D):
                     roles[j] = self.sample_allowed_role(j)
-                dists = np.random.randint(0, 6, size=D)
+                dists = np.random.randint(0, 4, size=D)  # 4 distributions: normal, lognormal, triangular, uniform
                 disp = np.random.randint(0, 2, size=1)
                 # lc_code gene (0 when single-class, [0,max_lc) otherwise)
                 max_lc = getattr(self.evaluator, 'max_latent_classes', 1)
                 lc_code = np.random.randint(0, max(max_lc, 1), size=1) if max_lc > 1 else np.zeros(1, dtype=int)
                 # class_mask genes (per-class variable assignments, 0..max_lc)
                 class_mask = np.random.randint(0, max_lc + 1, size=D) if max_lc > 1 else np.zeros(D, dtype=int)
+
                 current = np.concatenate([roles, dists, disp, lc_code, class_mask])
                 current_score = self.evaluator.fitness(current)
                 no_improve = 0
@@ -983,16 +1114,23 @@ class AdvancedSimulatedAnnealing:
                     "best_obj2": best_obj2
                 })
                 # Multiobjective stagnation check
+                # Only activate after 40% of max_iter has elapsed.
+                # Use relative hypervolume change (not absolute) to avoid
+                # premature stopping on problems where HV scale is large.
                 if (
+                    gen > self.max_iter * 0.4 and
                     len(self.archive) >= 2 and
-                    len(self.hypervolume_history) > 40
+                    len(self.hypervolume_history) > 60
                 ):
 
-                    recent_hv = self.hypervolume_history[-20:]
-                    recent_size = archive_sizes[-20:]
+                    recent_hv = self.hypervolume_history[-50:]
+                    recent_size = archive_sizes[-50:]
+
+                    hv_range = max(recent_hv) - min(recent_hv)
+                    hv_rel_change = hv_range / (abs(recent_hv[0]) + 1e-12)
 
                     if (
-                        max(recent_hv) - min(recent_hv) < self.tol and
+                        hv_rel_change < 1e-4 and
                         max(recent_size) == min(recent_size)
                     ):
                         print("[STOP] Early stop: multiobjective stagnation")
@@ -1036,15 +1174,21 @@ class MultiStartSA:
                  dimension,
                  n_starts=10,
                  n_jobs=1,
+                 init_solutions=None,
                  **sa_kwargs):
 
         self.evaluator = evaluator
         self.dimension = dimension
         self.n_starts = n_starts
         self.n_jobs = n_jobs
+        # Optional per-start warm-start decision vectors (list of arrays).
+        # Start i uses init_solutions[i % len(init_solutions)] when provided.
+        self.init_solutions = (
+            list(init_solutions) if init_solutions is not None else None
+        )
         self.sa_kwargs = sa_kwargs
 
-    def run_single(self, seed):
+    def run_single(self, seed, start_index=0):
 
         np.random.seed(seed)
 
@@ -1053,9 +1197,18 @@ class MultiStartSA:
             dimension=self.dimension,
             **self.sa_kwargs
         )
+        if self.init_solutions:
+            sa.init_solution = np.asarray(
+                self.init_solutions[start_index % len(self.init_solutions)]
+            )
 
         archive, scores = sa.optimize()
         sa.save_search_stats_txt(
+                algo='sa',
+                seed=seed,
+                config_id=0
+        )
+        stats_csv = sa.save_search_stats_csv(
                 algo='sa',
                 seed=seed,
                 config_id=0
@@ -1065,17 +1218,20 @@ class MultiStartSA:
             algo="sa",
             seed=seed
         )
-        
+
         return {
         "archive": archive,
         "scores": scores,
-        "convergence": sa.convergence
+        "convergence": sa.convergence,
+        "search_stats": sa.search_stats,
+        "stats_csv": stats_csv,
+        "runtime": sa.runtime,
         }
 
     def optimize(self):
 
         results = Parallel(n_jobs=self.n_jobs)(
-            delayed(self.run_single)(i)
+            delayed(self.run_single)(i, start_index=i)
             for i in range(self.n_starts)
         )
 
@@ -1325,6 +1481,12 @@ class NSGA2Engine:
         var_name = self.evaluator.vars[var_index]
         allowed = self.evaluator.allowed_roles[var_name]
 
+        # ── Ban check: if variable is banned and not force-included, only role 0 ──
+        banned = getattr(self.evaluator, "_banned_variables", set())
+        force_inc = getattr(self.evaluator, "_force_included_vars", set())
+        if var_name in banned and var_name not in force_inc:
+            return 0
+
         # If we require non-zero role
         if force_active:
             allowed = [r for r in allowed if r != 0]
@@ -1573,7 +1735,28 @@ class NSGA2Engine:
                     )
 
         print(f"[OK] Search stats saved to {filepath}")
-    
+
+    def save_search_stats_csv(
+        self,
+        algo="nsga2",
+        seed=0,
+        config_id=0,
+        folder="results"
+    ):
+        """CSV counterpart to save_search_stats_txt() -- one row per
+        generation (columns: gen/best/mean/std, or gen/hypervolume/
+        pareto_size/best_obj1/best_obj2 for multi-objective runs)."""
+        import pandas as pd
+
+        os.makedirs(folder, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{algo}_search_stats_seed{seed}_config{config_id}_{timestamp}.csv"
+        filepath = os.path.join(folder, filename)
+
+        pd.DataFrame(self.search_stats).to_csv(filepath, index=False)
+        print(f"[OK] Search stats CSV saved to {filepath}")
+        return filepath
+
     def constraint_violation(self, solution):
 
         D = self.dim_core
@@ -1585,6 +1768,11 @@ class NSGA2Engine:
         # If role 5 exists but no 2 or 3
         if 5 in roles and not (2 in roles or 3 in roles):
             violation += 1.0   # magnitude of violation
+
+        # Mutual exclusion violation penalty
+        mutex = getattr(self.evaluator, "mutual_exclusion", None)
+        if mutex:
+            violation += _count_mutex_violations(roles, self.evaluator.vars, mutex)
 
         return violation
     
@@ -1604,6 +1792,11 @@ class NSGA2Engine:
                 # force convert one variable
                 idx = np.random.randint(D)
                 roles[idx] = np.random.choice([2,3])
+
+        # Mutual-exclusion repair
+        mutex = getattr(self.evaluator, "mutual_exclusion", None)
+        if mutex:
+            roles = _repair_mutex(roles, self.evaluator.vars, mutex, rng=np.random)
 
         solution[:D] = roles
         return solution
@@ -1704,15 +1897,21 @@ class NSGA2Engine:
 
         scores = np.array(scores)
 
-        invalid = (
-            ~np.isfinite(scores) |
-            (scores >= max_allowed) |
-            (scores < 0)   # <-- reject negatives
-        )
-
+        # NOTE: negative objectives are legitimate (BIC-type criteria are
+        # negative by design), so the negativity rejection is applied ONLY
+        # to the single-objective vector where it originally made sense.
         if scores.ndim == 1:
+            invalid = (
+                ~np.isfinite(scores) |
+                (scores >= max_allowed) |
+                (scores < 0)
+            )
             scores[invalid] = max_allowed
         else:
+            invalid = (
+                ~np.isfinite(scores) |
+                (scores >= max_allowed)
+            )
             scores[invalid.any(axis=1)] = max_allowed
 
         return scores
@@ -1760,7 +1959,7 @@ class DynamicHarmony:
         self.bw_max = bw_max
         self.F = par_max-par_min
 
-    def generate(self, pop, i, gen, max_iter):
+    def generate(self, pop, i, gen, max_iter, allowed_roles=None):
 
         PAR = self.par_min + (
             (self.par_max - self.par_min)
@@ -1775,6 +1974,7 @@ class DynamicHarmony:
 
         child = pop[i].copy()
 
+        n_vars = len(allowed_roles) if allowed_roles is not None else len(child) // 2
         for j in range(len(child)):
 
             if np.random.rand() < self.hmcr:
@@ -1783,7 +1983,17 @@ class DynamicHarmony:
 
             if np.random.rand() < PAR:
                 step = np.random.randint(-BW, BW+1)
-                child[j] =  np.random.randint(0,6)
+                # Role genes (0-9): j < n_vars
+                if j < n_vars:
+                    # This is a role gene - sample from allowed roles for this variable
+                    roles = allowed_roles[j] if isinstance(allowed_roles, list) and j < len(allowed_roles) else list(range(10))
+                    child[j] = np.random.choice(roles)
+                elif j < 2 * n_vars:
+                    # Distribution gene (0-3)
+                    child[j] = np.random.randint(0, 4)
+                else:
+                    # Tail genes (dispersion, LC, masks) - step with bounds
+                    child[j] = int(np.clip(child[j] + step, 0, 9))
 
         return child
 
@@ -1798,7 +2008,7 @@ class AdaptiveDE:
         self.tau1 = tau1
         self.tau2 = tau2
 
-    def generate(self, pop, i, gen, max_iter):
+    def generate(self, pop, i, gen, max_iter, allowed_roles=None):
 
         if np.random.rand() < self.tau1:
             self.F = 0.1 + 0.9*np.random.rand()
@@ -1808,10 +2018,11 @@ class AdaptiveDE:
 
         idxs = list(range(len(pop)))
         idxs.remove(i)
-        a, b, c = pop[np.random.choice(idxs, 3, replace=False)]
+        a_idx, b_idx, c_idx = np.random.choice(idxs, 3, replace=False)
+        a, b, c = pop[a_idx], pop[b_idx], pop[c_idx]
 
         mutant = a.copy()
-        #mutant = np.random.randint(0,6,size=len(pop[i]))
+        n_vars = len(allowed_roles) if allowed_roles is not None else len(mutant) // 2
         for j in range(len(mutant)):
             if b[j] != c[j]:
                 if np.random.rand() < self.F:
@@ -1822,9 +2033,15 @@ class AdaptiveDE:
                 if np.random.rand() < self.F:
                     mutant[j] = a[j]
                 else:
-                    mutant[j] = np.random.randint(0,6)
+                    # Random role from allowed_roles or 0-9
+                    if j < n_vars:
+                        roles = allowed_roles[j] if isinstance(allowed_roles, list) and j < len(allowed_roles) else list(range(10))
+                        mutant[j] = np.random.choice(roles)
+                    elif j < 2 * n_vars:
+                        mutant[j] = np.random.randint(0, 4)
+                    else:
+                        mutant[j] = np.random.randint(0, 10)
 
-        trial = pop[i].copy()
         trial = pop[i].copy()
 
         dim = len(trial)
@@ -1836,11 +2053,16 @@ class AdaptiveDE:
             if np.random.rand() < self.CR or j == j_rand:
                 trial[j] = mutant[j]
 
-        
         if np.array_equal(trial, pop[i]):
             idx = np.random.randint(dim)
-            possible = [v for v in range(6) if v != trial[idx]]
-            trial[idx] = np.random.choice(possible)
+            if idx < n_vars:
+                roles = allowed_roles[idx] if isinstance(allowed_roles, list) and idx < len(allowed_roles) else list(range(10))
+                possible = [v for v in roles if v != trial[idx]]
+            elif idx < 2 * n_vars:
+                possible = [v for v in range(4) if v != trial[idx]]
+            else:
+                possible = [v for v in range(10) if v != trial[idx]]
+            trial[idx] = np.random.choice(possible) if possible else 0
         
         return trial
 
@@ -1888,7 +2110,7 @@ class StepwiseStructureSolver:
 
         for i, var in enumerate(self.vars):
 
-            # Try changing role
+            # Try changing role - use all allowed roles including 7,8,9
             for new_role in self.allowed_roles.get(var, [0]):
 
                 if new_role != roles[i]:

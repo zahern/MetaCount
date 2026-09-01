@@ -207,6 +207,7 @@ class ModelSpec:
     Kr_cor:              int
     Kg:                  int
     Kh:                  int
+    Kv:                  int
     Kzi:                 int
     model:               str
     zero_inflated:       bool
@@ -216,33 +217,34 @@ class ModelSpec:
     random_cor_names:    tuple
     grouped_names:       tuple
     hetro_names:         tuple
+    hetro_var_names:     tuple
     random_ind_dists:    tuple
     random_cor_dists:    tuple
     grouped_dists:       tuple
     latent_classes:      int   = 1
-    # â”€â”€ MEMBERSHIP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ——— MEMBERSHIP ————
     membership_names:    tuple = ()   # pooled set of all membership variables (union over classes)
-    K_membership:        int   = 0    # len(membership_names) â€” total unique membership vars
+    K_membership:        int   = 0    # len(membership_names) — total unique membership vars
     class_membership_idx: tuple = ()  # per-class-column indices into the pooled membership list
                                       #   tuple of tuples, one per non-reference class (length C-1)
                                       #   e.g. ( (0,), (0,1) ) means class 2 uses var 0; class 3 uses vars 0,1
     class_models:        tuple = ()   # per-class model strings (eg ("poisson","nb"))
     min_class_proportion: float = 0.15  # minimum posterior-mean proportion per class (will be scaled by C internally)
-    # â”€â”€ PER-CLASS COVARIATE SELECTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ——— PER-CLASS COVARIATE SELECTION ————
     class_fixed_idx:     tuple = ()   # per-class column indices into Xf (tuple of tuples)
     class_rdm_ind_idx:   tuple = ()   # per-class column indices into Xr_ind
     class_rdm_cor_idx:   tuple = ()   # per-class column indices into Xr_cor
     class_variable_masks: tuple = ()  # per-class variable sets (frozensets) [NEW: alternative to indices]
     l2_penalty:          float = 0.0  # naive L2 ridge strength on non-intercept params (0 = off; opt-in only)
-    # â”€â”€ DEFAULT IN-LOOP REGULARISATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ——— DEFAULT IN-LOOP REGULARISATION ————
     # Every M-step outcome-parameter update is shrunk with PARTE (Alghamdi
     # et al. 2026) immediately after the LBFGS solve, using (k, d) selected
-    # adaptively from the per-class Fisher information â€” there is no fixed
+    # adaptively from the per-class Fisher information — there is no fixed
     # "default lambda" the way there would be for naive L2; the paper's
     # whole premise is that (k, d) are data-adaptive rather than preset.
     parte_shrinkage_in_loop: bool = True
     parte_variant:        str  = "k3d3"  # "k1d1" | "k2d2" | "k3d3"
-    # â”€â”€ VARIANCE REGULARISATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ——— VARIANCE REGULARISATION ————
     # Log-barrier keeping random-SD / dispersion scale params away from zero
     # (see _variance_penalty).  Set variance_reg = 0.0 to disable.
     variance_reg:   float = 10.0
@@ -362,6 +364,7 @@ def build_jax_data(
     random_cor_cols=None,
     grouped_cols=None,
     hetro_cols=None,
+    hetro_var_cols=None,
     offset_col=None,
     draws_ind=None,
     draws_cor=None,
@@ -383,6 +386,7 @@ def build_jax_data(
     random_cor_cols   = random_cor_cols   or []
     grouped_cols      = grouped_cols      or []
     hetro_cols        = hetro_cols        or []
+    hetro_var_cols    = hetro_var_cols    or []
     zi_cols           = zi_cols           or []
     membership_cols   = membership_cols   or []          # NEW
     random_ind_dists  = random_ind_dists  or []
@@ -393,10 +397,10 @@ def build_jax_data(
     df = df.copy()
     df[intercept_name] = 1.0
 
-    # â”€â”€ Standardise continuous predictors (membership cols too) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ——— Standardise continuous predictors (membership cols too) ————
     _predictor_cols = list(set(
         fixed_cols + random_ind_cols + random_cor_cols
-        + grouped_cols + hetro_cols + zi_cols + membership_cols
+        + grouped_cols + hetro_cols + hetro_var_cols + zi_cols + membership_cols
     ))
     _scaler = _hpc.compute_scaler(df, _predictor_cols)
     if _scaler:
@@ -405,19 +409,20 @@ def build_jax_data(
     all_features = list(set(
         [intercept_name]
         + fixed_cols + random_ind_cols + random_cor_cols
-        + grouped_cols + hetro_cols + zi_cols + membership_cols   # NEW
+        + grouped_cols + hetro_cols + hetro_var_cols + zi_cols + membership_cols   # NEW
     ))
 
     X_all, y, mask = balance_panel_dataframe(df, id_col, y_col, all_features)
 
-    # Group IDs
+    # Group IDs - compute per-individual (N) not per-observation (N*P)
     if group_id_col is not None and len(grouped_cols) > 0:
-        df_sorted   = df.sort_values(id_col)
-        group_codes = df_sorted[group_id_col].astype("category").cat.codes.values
-        G           = len(np.unique(group_codes))
+        # Get unique individuals from balanced panel
+        df_balanced = df.sort_values(id_col).groupby(id_col).first().reset_index()
+        group_codes = df_balanced[group_id_col].astype("category").cat.codes.values
+        G = len(np.unique(group_codes))
     else:
         group_codes = None
-        G           = 0
+        G = 0
 
     col_map = {col: i for i, col in enumerate(all_features)}
 
@@ -433,10 +438,11 @@ def build_jax_data(
     Xr_cor = extract(random_cor_cols)
     Xg     = extract(grouped_cols)
     Xh     = extract(hetro_cols)
+    Xh_var = extract(hetro_var_cols)
     Xzi    = extract(zi_cols)
     Xmem   = extract(membership_cols)    # NEW  shape (N, P, K_mem)
 
-    # â”€â”€ Per-class column indices (for class-specific variable sets) â”€â”€â”€â”€
+    # ——— Per-class column indices (for class-specific variable sets) ————
     _fixed_names = [intercept_name] + fixed_cols
     _fixed_map = {name: i for i, name in enumerate(_fixed_names)}
     _class_fixed_idx = []
@@ -474,7 +480,22 @@ def build_jax_data(
     if draws_cor is None and random_cor_cols:
         draws_cor = _draw_fn(N, len(random_cor_cols), R, seed=43)
     if draws_g is None and grouped_cols:
-        draws_g   = _draw_fn(N, len(grouped_cols),    R, seed=44)
+        n_groups = len(np.unique(group_codes)) if group_codes is not None else 1
+        draws_g   = _draw_fn(n_groups, len(grouped_cols),    R, seed=44)
+
+    # Pre-compute group-level variance heterogeneity shifts if grouped effects and hetro_var exist
+    Xh_var_group = None
+    if group_codes is not None and len(grouped_cols) > 0 and len(hetro_var_cols) > 0:
+        n_groups = len(np.unique(group_codes))
+        df_sorted = df.sort_values(id_col)
+        # Average hetro_var_cols within each group
+        for col in hetro_var_cols:
+            if col in df_sorted.columns:
+                grp_mean = df_sorted.groupby(group_id_col)[col].mean().values
+                if Xh_var_group is None:
+                    Xh_var_group = grp_mean.reshape(-1, 1)
+                else:
+                    Xh_var_group = np.hstack([Xh_var_group, grp_mean.reshape(-1, 1)])
 
     data = {
         "Xf":       jnp.array(Xf),
@@ -482,6 +503,8 @@ def build_jax_data(
         "Xr_cor":   jnp.array(Xr_cor),
         "Xg":       jnp.array(Xg),
         "Xh":       jnp.array(Xh),
+        "Xh_var":   jnp.array(Xh_var),
+        "Xh_var_group": jnp.array(Xh_var_group) if Xh_var_group is not None else jnp.zeros((0, 0)),
         "Xzi":      jnp.array(Xzi),
         "Xmem":     jnp.array(Xmem),    # NEW
         "y":        jnp.array(y),
@@ -492,7 +515,7 @@ def build_jax_data(
         "draws_g":  jnp.zeros((N, 0, R)) if draws_g   is None else jnp.array(draws_g),
         "group_ids":jnp.array(group_codes) if group_codes is not None
                     else jnp.zeros(N, dtype=int),
-        # Plain Python dict â€” used by print_summary for back-transformation.
+        # Plain Python dict — used by print_summary for back-transformation.
         "scaler": _scaler,
     }
 
@@ -502,6 +525,7 @@ def build_jax_data(
         Kr_cor=Xr_cor.shape[2],
         Kg=Xg.shape[2],
         Kh=Xh.shape[2],
+        Kv=Xh_var.shape[2],
         zi_names=tuple(zi_cols),
         Kzi=Xzi.shape[2],
         zero_inflated=(len(zi_cols) > 0),
@@ -511,6 +535,7 @@ def build_jax_data(
         random_cor_names=tuple(random_cor_cols),
         grouped_names=tuple(grouped_cols),
         hetro_names=tuple(hetro_cols),
+        hetro_var_names=tuple(hetro_var_cols),
         random_ind_dists=tuple(random_ind_dists),
         random_cor_dists=tuple(random_cor_dists),
         grouped_dists=tuple(grouped_dists),
@@ -538,6 +563,7 @@ def parse_manual_spec(manual_spec: dict):
     rdm_cor_terms     = manual_spec.get("rdm_cor_terms", [])
     grouped_terms     = manual_spec.get("grouped_terms", [])
     hetro_terms       = manual_spec.get("hetro_in_means", [])
+    hetro_var_terms   = manual_spec.get("hetro_in_variances", [])
     zi_cols           = manual_spec.get("zi_terms", [])
     membership_cols   = manual_spec.get("membership_terms", [])
     class_membership  = manual_spec.get("class_membership", None)  # per-class membership lists
@@ -549,13 +575,14 @@ def parse_manual_spec(manual_spec: dict):
     random_cor       = [t.split(":")[0] for t in rdm_cor_terms]
     grouped_cols     = [t.split(":")[0] for t in grouped_terms]
     hetro_cols       = [t.split(":")[0].strip() for t in hetro_terms]
+    hetro_var_cols   = [t.split(":")[0].strip() for t in hetro_var_terms]
 
     random_ind_dists  = [t.split(":")[1] for t in rdm_terms]
     random_cor_dists  = [t.split(":")[1] for t in rdm_cor_terms]
     grouped_dists     = [t.split(":")[1] for t in grouped_terms]
 
     return (
-        fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols,
+        fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, hetro_var_cols,
         random_ind_dists, random_cor_dists, grouped_dists,
         zi_cols, membership_cols,
         class_fixed, class_rdm_ind, class_rdm_cor,
@@ -566,10 +593,10 @@ def parse_manual_spec(manual_spec: dict):
 _hpc.parse_manual_spec = parse_manual_spec
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ———————————————————————————————————————————————————————————————————————————————
 # 5.  Extended build_model_from_manual_spec
 #     Passes membership_cols to build_jax_data.
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ———————————————————————————————————————————————————————————————————————————————
 
 def build_model_from_manual_spec(
     df, manual_spec, id_col, y_col,
@@ -577,7 +604,7 @@ def build_model_from_manual_spec(
     draw_method='sobol', R=200
 ):
     (
-        fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols,
+        fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, hetro_var_cols,
         random_ind_dists, random_cor_dists, grouped_dists,
         zi_cols, membership_cols,
         class_fixed, class_rdm_ind, class_rdm_cor,
@@ -594,6 +621,7 @@ def build_model_from_manual_spec(
         random_cor_cols=random_cor,
         grouped_cols=grouped_cols,
         hetro_cols=hetro_cols,
+        hetro_var_cols=hetro_var_cols,
         zi_cols=zi_cols,
         membership_cols=membership_cols,
         class_membership_cols=class_membership,   # NEW: per-class membership lists

@@ -1,4 +1,4 @@
-import jax.numpy as jnp
+﻿import jax.numpy as jnp
 from addicty import Dict
 from jaxopt import ScipyMinimize, OptaxSolver
 import math
@@ -31,7 +31,11 @@ EXP_UPPER_LIMIT = jnp.float64(jnp.log(jnp.finfo(jnp.float64).max) - 50.0)
 from copy import deepcopy
 from functools import  partial
 import numpy as np
-jax.config.update("jax_enable_x64", True)
+try:
+    from ._jax_config import configure_jax
+except ImportError:  # flat import (script run from inside the package dir)
+    from _jax_config import configure_jax
+configure_jax()
 #jax.config.update("jax_disable_jit", True)
 import optax
 def _unpack_tuple(x): return x if len(x) > 1 else x[0]
@@ -85,7 +89,7 @@ class JAXMLE(ObjectiveFunction):
             return 0.0, b_gam
 
         def handle_other(_):
-            # dispersion not 1,2,4 → do nothing
+            # dispersion not 1,2,4 â†’ do nothing
             return penalty, b_gam
 
         # --- main dispersion conditional ---
@@ -384,8 +388,8 @@ class JAXMLE(ObjectiveFunction):
 
     def nbinom_pmf_batched(self, y, mu, alpha):
         """
-        Negative binomial PMF P(Y=y) = Γ(y+r)/(Γ(r)Γ(y+1)) * (p^r)*(1-p)^y
-        where mean = μ, var = μ + αμ², r = 1/α, p = r/(r+μ)
+        Negative binomial PMF P(Y=y) = Î“(y+r)/(Î“(r)Î“(y+1)) * (p^r)*(1-p)^y
+        where mean = Î¼, var = Î¼ + Î±Î¼Â², r = 1/Î±, p = r/(r+Î¼)
         """
         r = 1.0 / jnp.maximum(alpha, 1e-10)
         p = r / (r + mu)
@@ -404,9 +408,9 @@ class JAXMLE(ObjectiveFunction):
         """
         JAX-compatible version of probability computation across dispersion models.
         Args:
-            eVi: expected values (λ or μ)
+            eVi: expected values (Î» or Î¼)
             y: observed dependent variable
-            disp: dispersion parameter (α, φ, etc.)
+            disp: dispersion parameter (Î±, Ï†, etc.)
             dispersion: int code
                 0 = Poisson
                 1 = Negative Binomial
@@ -420,7 +424,7 @@ class JAXMLE(ObjectiveFunction):
         # Define wrapped functions for JAX dispatcher
         def poisson_case(args):
             y, eVi, disp = args
-            # Poisson PMF: P(y|λ) = λ^y * e^-λ / y!
+            # Poisson PMF: P(y|Î») = Î»^y * e^-Î» / y!
             log_p = y * jnp.log(eVi) - eVi - jax.scipy.special.gammaln(y + 1)
             return log_p
 
@@ -465,7 +469,7 @@ class JAXMLE(ObjectiveFunction):
 
         # Build a switchable table for the dispersion cases
         proba_r_log = lax.switch(
-            dispersion,  # integer 0–4
+            dispersion,  # integer 0â€“4
             [
                 partial(poisson_case, (y, eVi, disp)),
                 partial(nb_case_pt, (y, eVi, disp))
@@ -476,7 +480,7 @@ class JAXMLE(ObjectiveFunction):
 
         # Combine panels appropriately
         if self.panels is None:
-            # Multiply across P panels → (N, R)
+            # Multiply across P panels â†’ (N, R)
             proba_panel_prod = jnp.prod(proba_r, axis=1)
         else:
             proba_panel_prod = self._prob_product_across_panels(proba_r, self.panel_info)
@@ -841,7 +845,7 @@ class JAXMLE(ObjectiveFunction):
         proba_safe = jnp.clip(proba_per_draw, eps, 1.0)
 
         # self._prob_product_against_panels()
-#        jax.debug.print(f"⚠️ Non‑finite loglik detected at step: {betas}", x=proba_safe)
+#        jax.debug.print(f"âš ï¸ Nonâ€‘finite loglik detected at step: {betas}", x=proba_safe)
         # print(top_stats)
         loglik_i_d= jnp.log(proba_safe)
         loglik_i = jnp.mean(loglik_i_d, axis = 1)
@@ -849,7 +853,7 @@ class JAXMLE(ObjectiveFunction):
         loglik = jnp.sum(loglik_i)
         jax.debug.print("loglik = {}", loglik)
         #if not jnp.isfinite(loglik):
-      #  jax.debug.print(f"⚠️ Non‑finite loglik detected at step: {betas}", x=loglik)
+      #  jax.debug.print(f"âš ï¸ Nonâ€‘finite loglik detected at step: {betas}", x=loglik)
         loglik = jnp.clip(loglik, log_lik_min, log_lik_max)
         if self.power_up_ll:
             penalty += self.regularise_l2(betas)
@@ -921,7 +925,7 @@ class JAXMLE(ObjectiveFunction):
         corr_indices = []
         chol_count = 0
 
-        # NOTE: small loop — fine outside jit; can be replaced with vmap if needed
+        # NOTE: small loop â€” fine outside jit; can be replaced with vmap if needed
         for ii, var in enumerate(varnames):
             is_correlated = var in self.none_handler(self.rdm_cor_fit)
 
@@ -1005,7 +1009,7 @@ class JAXMLE(ObjectiveFunction):
             None
         )
 
-        # panel combination — assumed already JAX-safe
+        # panel combination â€” assumed already JAX-safe
         if self.panels is not None:
             proba_r = self._prob_product_across_panels(proba_r, self.panel_info)
 
@@ -1667,7 +1671,7 @@ class JAXMLE(ObjectiveFunction):
             lambda _: (gbl_best_val, self.significant),
             operand=None
         )
-        # ✅ Convert results to NumPy before storing
+        # âœ… Convert results to NumPy before storing
         if hasattr(new_gbl_best, "block_until_ready"):
             new_gbl_best.block_until_ready()
         if hasattr(new_significant, "block_until_ready"):
@@ -1708,9 +1712,9 @@ class JAXMLE(ObjectiveFunction):
         clipped = jnp.clip(val, 0.001, 10)
 
         # Handle dispersion values:
-        # - If dispersion == 0 → return 0.0 (numeric placeholder)
-        # - If dispersion == 1 → return clipped dispersion
-        # - else → return 0.0 (safe default)
+        # - If dispersion == 0 â†’ return 0.0 (numeric placeholder)
+        # - If dispersion == 1 â†’ return clipped dispersion
+        # - else â†’ return 0.0 (safe default)
         return lax.switch(
             dispersion,
             [
@@ -1730,7 +1734,7 @@ class JAXMLE(ObjectiveFunction):
         except (TypeError, ValueError):
             return str(value)
 
-        # Use plain NumPy round — this is not part of your model, just for printing
+        # Use plain NumPy round â€” this is not part of your model, just for printing
         rounded_value = np.round(numeric_value, round_digits)
 
         # Format with fixed decimal places (adds trailing zeros)
@@ -1784,7 +1788,7 @@ def jax_minimize(fun, x0, method="SLSQP", tol=1e-8, options=None, callback=None,
 
     from jaxopt import implicit_diff, linear_solve
 
-    # 1️⃣ handle Optax-based methods
+    # 1ï¸âƒ£ handle Optax-based methods
     if method.lower() in {"lion", "adam", "sgd", "rmsprop", "adagrad", "adamw"}:
         logging.info(f"Using OptaxSolver with {method.upper()}")
         learning_rate = options.get("learning_rate", 1e-3)

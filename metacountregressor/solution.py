@@ -1721,6 +1721,11 @@ class ObjectiveFunction(object):
         2 is feature selection,
         3 is random parameters
         4 is correlated random parameters
+        5 is heterogeneity in means
+        6 is zero inflation
+        7 is membership only
+        8 is membership + fixed outcome
+        9 is heterogeneity in variances
         
         extra is the stuff defined by the Meta APP
         '''

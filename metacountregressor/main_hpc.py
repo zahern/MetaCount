@@ -672,7 +672,7 @@ def build_eta(params, data, spec: ModelSpec):
         eta = jnp.einsum("npk,k->np", data["Xf"], blocks["beta_f"])[..., None]
 
     # =====================================================
-    # HETEROGENEITY SHIFT
+    # HETEROGENEITY SHIFT (MEANS)
     # =====================================================
     shift = None
     if spec.Kh > 0 and spec.K_random_total > 0:
@@ -689,6 +689,23 @@ def build_eta(params, data, spec: ModelSpec):
         shift = jnp.mean(shift_full, axis=1)  # (N,K_random_total)
 
     # =====================================================
+    # HETEROGENEITY SHIFT (VARIANCES)
+    # =====================================================
+    shift_var = None
+    if spec.Kv > 0 and spec.K_random_total > 0:
+
+        Z_var = data["Xh_var"]  # (N,P,Kv)
+
+        shift_var_full = jnp.einsum(
+            "npk,km->npm",
+            Z_var,
+            blocks["gamma_var"]
+        )
+
+        # average across panel dimension
+        shift_var = jnp.mean(shift_var_full, axis=1)  # (N,K_random_total)
+
+    # =====================================================
     # CORRELATED RANDOM EFFECTS
     # =====================================================
     if spec.Kr_cor > 0:
@@ -698,9 +715,19 @@ def build_eta(params, data, spec: ModelSpec):
         if shift is not None:
             mean_cor = mean_cor[None, :] + shift[:, :spec.Kr_cor]
 
+        # For correlated effects, variance heterogeneity affects the Cholesky factor
+        # We apply the mean shift across observations to the log-diagonal
+        chol = blocks["chol"]
+        if shift_var is not None:
+            # Average variance heterogeneity shift across observations for the Cholesky diagonal
+            shift_var_cor = jnp.mean(shift_var[:, :spec.Kr_cor], axis=0)
+            K = spec.Kr_cor
+            diag_idx = jnp.array([i * (i + 3) // 2 for i in range(K)])
+            chol = chol.at[diag_idx].add(shift_var_cor)
+
         beta_cor = random_correlated(
             mean_cor,
-            blocks["chol"],
+            chol,
             data["draws_cor"],
             spec.Kr_cor,
             jnp.array([DIST_MAP[d] for d in spec.random_cor_dists])
@@ -718,9 +745,14 @@ def build_eta(params, data, spec: ModelSpec):
         if shift is not None:
             mean_ind = mean_ind[None, :] + shift[:, spec.Kr_cor:]
 
+        sd_ind = blocks["sd_ind"]
+        if shift_var is not None:
+            # Apply variance heterogeneity shift to log-SDs
+            sd_ind = sd_ind + shift_var[:, spec.Kr_cor:]
+
         beta_ind = random_independent(
             mean_ind,
-            blocks["sd_ind"],
+            sd_ind,
             data["draws_ind"],
             jnp.array([DIST_MAP[d] for d in spec.random_ind_dists])
         )
@@ -732,10 +764,29 @@ def build_eta(params, data, spec: ModelSpec):
     # =====================================================
     if spec.Kg > 0:
 
+        mean_g = blocks["mean_g"]
+        sd_g = blocks["sd_g"]
+
+        if shift_var is not None:
+            # Apply variance heterogeneity shift to grouped log-SDs
+            # Use pre-computed group-level variance heterogeneity shift
+            g_start = spec.Kr_cor + spec.Kr_ind
+            g_end = g_start + spec.Kg
+            
+            # Use pre-computed group-level shift from Xh_var_group
+            Xh_var_group = data.get("Xh_var_group")
+            if Xh_var_group is not None and Xh_var_group.shape[0] > 0 and Xh_var_group.shape[1] > 0:
+                # Xh_var_group has shape (n_groups, Kv)
+                # We need to map this to the grouped random effects
+                # The grouped effects are at position g_start:g_end in random total
+                # For simplicity, apply the same group-level shift to all grouped effects
+                if g_end <= Xh_var_group.shape[1] + g_start:
+                    sd_g = sd_g + Xh_var_group[:, :spec.Kg]
+
         beta_g_all = transform_draws(
             data["draws_g"],
-            blocks["mean_g"],
-            blocks["sd_g"],
+            mean_g,
+            sd_g,
             jnp.array([DIST_MAP[d] for d in spec.grouped_dists])
         )
 
@@ -765,7 +816,7 @@ def transform_draws(draws, mean, scale, dist_codes):
     """
     draws: (N,K,R) standard normal or uniform
     mean:  (K,) or (N,K)
-    scale: (K,)
+    scale: (K,) or (N,K)  # per-observation scale for heterogeneity in variances
     dist_codes: integer array (K,)
         0 = normal
         1 = lognormal
@@ -779,7 +830,11 @@ def transform_draws(draws, mean, scale, dist_codes):
     else:
         mean = mean[:, :, None]
 
-    scale = scale[None, :, None]
+    # Handle scale: can be (K,) or (N,K)
+    if scale.ndim == 1:
+        scale = scale[None, :, None]
+    else:
+        scale = scale[:, :, None]
 
     z = draws
 
@@ -802,9 +857,9 @@ def transform_draws(draws, mean, scale, dist_codes):
     betas = jnp.stack([beta_normal, beta_lognormal, beta_tri, beta_uniform], axis=-1)
 
     # dist_codes shape (K,)
-    selector = jax.nn.one_hot(dist_codes, 4)  # (K,3)
+    selector = jax.nn.one_hot(dist_codes, 4)  # (K,4)
 
-    selector = selector[None, :, None, :]  # (1,K,1,3)
+    selector = selector[None, :, None, :]  # (1,K,1,4)
 
     beta = jnp.sum(betas * selector, axis=-1)
 
@@ -815,13 +870,12 @@ def transform_draws(draws, mean, scale, dist_codes):
     """
     draws: (N,K,R) standard normal or uniform
     mean:  (K,) or (N,K)
-    scale: (K,)
+    scale: (K,) or (N,K)  # per-observation scale for heterogeneity in variances
     dist_codes: integer array (K,)
         0 = normal
         1 = lognormal
         2 = triangular
     """
-    #scale = jnp.abs(scale)
     scale = jax.nn.softplus(scale)
 
     if mean.ndim == 1:
@@ -829,7 +883,11 @@ def transform_draws(draws, mean, scale, dist_codes):
     else:
         mean = mean[:, :, None]
 
-    scale = scale[None, :, None]
+    # Handle scale: can be (K,) or (N,K)
+    if scale.ndim == 1:
+        scale = scale[None, :, None]
+    else:
+        scale = scale[:, :, None]
 
     z = draws
 
@@ -852,9 +910,9 @@ def transform_draws(draws, mean, scale, dist_codes):
     betas = jnp.stack([beta_normal, beta_lognormal, beta_tri, beta_uniform], axis=-1)
 
     # dist_codes shape (K,)
-    selector = jax.nn.one_hot(dist_codes, 4)  # (K,3)
+    selector = jax.nn.one_hot(dist_codes, 4)  # (K,4)
 
-    selector = selector[None, :, None, :]  # (1,K,1,3)
+    selector = selector[None, :, None, :]  # (1,K,1,4)
 
     beta = jnp.sum(betas * selector, axis=-1)
 
@@ -1350,7 +1408,7 @@ def build_base_index(spec, model=None):
     index["fixed"] = (idx, idx + spec.Kf)
     idx += spec.Kf
     
-    #Zero Inflate
+    # Zero Inflate
     if spec.Kzi > 0:
         index["zi_beta"] = (idx, idx + spec.Kzi)
         idx += spec.Kzi
@@ -1383,10 +1441,17 @@ def build_base_index(spec, model=None):
         index["group_sd"] = (idx, idx + spec.Kg)
         idx += spec.Kg
 
+    # Heterogeneity in MEANS of random parameters
     if spec.Kh > 0 and spec.K_random_total > 0:
         Khet = spec.Kh * spec.K_random_total
         index["hetro"] = (idx, idx + Khet)
         idx += Khet
+
+    # Heterogeneity in VARIANCES of random parameters
+    if spec.Kv > 0 and spec.K_random_total > 0:
+        Khet_var = spec.Kv * spec.K_random_total
+        index["hetro_var"] = (idx, idx + Khet_var)
+        idx += Khet_var
 
     if _model == "nb":
         index["dispersion"] = idx
@@ -2080,6 +2145,10 @@ def print_summary(result, objective, data, spec, param_index):
         main_df["Parameter"].str.contains("hetro")
     ]
 
+    het_var_df = main_df[
+        main_df["Parameter"].str.contains("hetro_var")
+    ]
+
     disp_df = main_df[
         main_df["Parameter"] == "dispersion"
     ]
@@ -2093,6 +2162,7 @@ def print_summary(result, objective, data, spec, param_index):
     print_section(sd_df, "INDEPENDENT RANDOM SDs")
     print_section(group_df, "GROUPED RANDOM EFFECTS")
     print_section(het_df, "HETEROGENEITY IN MEANS")
+    print_section(het_var_df, "HETEROGENEITY IN VARIANCES")
     print_section(disp_df, "DISPERSION")
 
     # ==========================================================
@@ -2826,6 +2896,12 @@ def print_summary(result, objective, data, spec, param_index):
             for z in spec.hetro_names:
                 names.append(f"hetro({rnd}|{z})")
 
+    # Heterogeneity in VARIANCES
+    if spec.Kv > 0:
+        for rnd in spec.random_cor_names + spec.random_ind_names + spec.grouped_names:
+            for z in spec.hetro_var_names:
+                names.append(f"hetro_var({rnd}|{z})")
+
     # NB dispersion / Tobit-Gaussian scale
     if spec.model == "nb":
         names.append("dispersion")
@@ -2907,6 +2983,10 @@ def print_summary(result, objective, data, spec, param_index):
         main_df["Parameter"].str.contains("hetro")
     ]
 
+    het_var_df = main_df[
+        main_df["Parameter"].str.contains("hetro_var")
+    ]
+
     disp_df = main_df[
         main_df["Parameter"] == "dispersion"
     ]
@@ -2920,6 +3000,7 @@ def print_summary(result, objective, data, spec, param_index):
     print_section(sd_df, "INDEPENDENT RANDOM SDs")
     print_section(group_df, "GROUPED RANDOM EFFECTS")
     print_section(het_df, "HETEROGENEITY IN MEANS")
+    print_section(het_var_df, "HETEROGENEITY IN VARIANCES")
     print_section(disp_df, "DISPERSION")
 
     # ==========================================================
@@ -4525,7 +4606,7 @@ def unpack_params(params, spec: ModelSpec, model=None):
             out["mean_g"] = None
             out["sd_g"] = None
 
-        # HETEROGENEITY
+        # HETEROGENEITY (MEANS)
         if spec.Kh > 0 and spec.K_random_total > 0:
             Khet = spec.Kh * spec.K_random_total
             gamma = params[idx:idx + Khet]
@@ -4534,6 +4615,16 @@ def unpack_params(params, spec: ModelSpec, model=None):
             out["gamma"] = gamma.reshape(spec.Kh, spec.K_random_total)
         else:
             out["gamma"] = None
+
+        # HETEROGENEITY (VARIANCES)
+        if spec.Kv > 0 and spec.K_random_total > 0:
+            Khet_var = spec.Kv * spec.K_random_total
+            gamma_var = params[idx:idx + Khet_var]
+            idx += Khet_var
+
+            out["gamma_var"] = gamma_var.reshape(spec.Kv, spec.K_random_total)
+        else:
+            out["gamma_var"] = None
 
         # NB DISPERSION / SCALE
         if _model == "nb":

@@ -204,7 +204,7 @@ __all__ = ["StructureEvaluatorLC", "ExperimentBuilder"]
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# UPDATED ROLE_PROBS  (add slots for roles 7 and 8)
+# UPDATED ROLE_PROBS  (add slots for roles 7, 8, and 9)
 # Applied directly to Solvers_METAJAX.ROLE_PROBS as well.
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -214,15 +214,16 @@ except ImportError:
     import Solvers_METAJAX as _solvers
 
 ROLE_PROBS = np.array([
-    0.38,   # 0 – Excluded
-    0.14,   # 1 – Fixed
-    0.17,   # 2 – Random Independent
-    0.16,   # 3 – Random Correlated
+    0.35,   # 0 – Excluded
+    0.12,   # 1 – Fixed
+    0.15,   # 2 – Random Independent
+    0.14,   # 3 – Random Correlated
     0.00,   # 4 – Grouped
-    0.00,   # 5 – Heterogeneity in means
+    0.05,   # 5 – Heterogeneity in means
     0.05,   # 6 – Zero Inflation
     0.05,   # 7 – Membership only
     0.05,   # 8 – Membership + fixed outcome
+    0.04,   # 9 – Heterogeneity in variances
 ])
 ROLE_PROBS = ROLE_PROBS / ROLE_PROBS.sum()
 _solvers.ROLE_PROBS = ROLE_PROBS   # patch the module-level constant
@@ -248,6 +249,9 @@ ROLE CODES
                        variable (class-specific), AND the variable influences
                        class membership.
                        Collapsed to Fixed (role 1) when latent_classes = 1.
+  9  Het. Variances    Variable that explains variation in random-param
+                       VARIANCES (standard deviations). Modifies the scale
+                       of random parameters (correlated, independent, grouped).
 
 DISTRIBUTION CODES (roles 2, 3, 4)
 ────────────────────────────────────
@@ -347,6 +351,7 @@ class StructureEvaluatorLC(StructureEvaluator):
         rdm_cor    = []
         grouped    = []
         hetero     = []
+        hetero_var = []
         zi         = []
         membership = []
         # Per-class variable lists (same categories, partitioned by class_mask)
@@ -458,6 +463,9 @@ class StructureEvaluatorLC(StructureEvaluator):
                     if inc:
                         class_fixed[c].append(var)
 
+            elif role == 9:
+                hetero_var.append(var)
+
         # ── Force at least one membership variable for LC models ──────
         # If no variable has been assigned a membership role (7 or 8),
         # the logit equation collapses to a constant intercept and classes
@@ -554,17 +562,18 @@ class StructureEvaluatorLC(StructureEvaluator):
                         mem_var_sets[drop_class] = mem_var_sets[drop_class] - {var}
 
         spec = {
-            "fixed_terms":      fixed,
-            "rdm_terms":        rdm_ind,
-            "rdm_cor_terms":    rdm_cor,
-            "grouped_terms":    grouped,
-            "hetro_in_means":   hetero,
-            "zi_terms":         zi,
-            "membership_terms": membership,
-            "class_membership": class_membership if struct_lc > 1 else None,
-            "dispersion":       1 if use_nb else 0,
-            "latent_classes":   latent_classes,
-            "group_id_col":     self.group_id_col,
+            "fixed_terms":       fixed,
+            "rdm_terms":         rdm_ind,
+            "rdm_cor_terms":     rdm_cor,
+            "grouped_terms":     grouped,
+            "hetro_in_means":    hetero,
+            "hetro_in_variances": hetero_var,
+            "zi_terms":          zi,
+            "membership_terms":  membership,
+            "class_membership":  class_membership if struct_lc > 1 else None,
+            "dispersion":        1 if use_nb else 0,
+            "latent_classes":    latent_classes,
+            "group_id_col":      self.group_id_col,
         }
         # Per-class terms: only include when classes actually differ
         if struct_lc > 1:
@@ -590,6 +599,10 @@ class StructureEvaluatorLC(StructureEvaluator):
             tuple(sorted(spec_dict["hetro_in_means"]))
             if total_random > 0 else ()
         )
+        hetero_var_eff = (
+            tuple(sorted(spec_dict.get("hetro_in_variances", [])))
+            if total_random > 0 else ()
+        )
 
         return (
             tuple(sorted(spec_dict["fixed_terms"])),
@@ -597,6 +610,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             tuple(sorted(spec_dict["rdm_cor_terms"])),
             tuple(sorted(spec_dict["grouped_terms"])),
             hetero_eff,
+            hetero_var_eff,
             tuple(sorted(spec_dict["zi_terms"])),
             tuple(sorted(spec_dict.get("membership_terms", []))),
             tuple(
@@ -656,6 +670,79 @@ class StructureEvaluatorLC(StructureEvaluator):
         )
 
         return data, spec
+
+    def make_manual_spec_unified(
+        self,
+        fixed_terms: Optional[list[str]] = None,
+        rdm_terms: Optional[list[str]] = None,
+        rdm_cor_terms: Optional[list[str]] = None,
+        grouped_terms: Optional[list[str]] = None,
+        heterogeneity: Optional[dict[str, list[str]]] = None,
+        zi_terms: Optional[list[str]] = None,
+        membership_terms: Optional[list[str]] = None,
+        class_membership: Optional[dict[int, list[str]]] = None,
+        class_fixed: Optional[dict[int, list[str]]] = None,
+        class_rdm_ind: Optional[dict[int, list[str]]] = None,
+        class_rdm_cor: Optional[dict[int, list[str]]] = None,
+        dispersion: int = 0,
+        latent_classes: int = 1,
+    ) -> dict[str, Any]:
+        """
+        Unified manual specification with structured heterogeneity.
+        
+        Parameters
+        ----------
+        fixed_terms : list of fixed effect variable names
+        rdm_terms : list of independent random terms (format: "var:dist")
+        rdm_cor_terms : list of correlated random terms (format: "var:dist")
+        grouped_terms : list of grouped random terms (format: "var:dist")
+        heterogeneity : dict with keys 'means', 'variances', and/or 'both'
+            heterogeneity = {
+                'means': ['z1', 'z2'],        # variables affecting random param MEANS
+                'variances': ['z2', 'z3'],    # variables affecting random param VARIANCES
+                'both': ['z4']                # affects both means and variances
+            }
+        zi_terms : list of zero-inflation variables
+        membership_terms : list of class-membership variables
+        class_membership : per-class membership variables {class_idx: [vars]}
+        class_fixed : per-class fixed variables {class_idx: [vars]}
+        class_rdm_ind : per-class independent random {class_idx: [vars]}
+        class_rdm_cor : per-class correlated random {class_idx: [vars]}
+        """
+        hetro_in_means = []
+        hetro_in_variances = []
+        
+        if heterogeneity:
+            if 'means' in heterogeneity:
+                hetro_in_means.extend(heterogeneity['means'])
+            if 'variances' in heterogeneity:
+                hetro_in_variances.extend(heterogeneity['variances'])
+            if 'both' in heterogeneity:
+                hetro_in_means.extend(heterogeneity['both'])
+                hetro_in_variances.extend(heterogeneity['both'])
+        
+        # Convert per-class dicts to lists
+        def _to_list(per_class_dict, n_classes):
+            if per_class_dict is None:
+                return None
+            return [per_class_dict.get(c, []) for c in range(n_classes)]
+        
+        return {
+            "fixed_terms": fixed_terms or [],
+            "rdm_terms": rdm_terms or [],
+            "rdm_cor_terms": rdm_cor_terms or [],
+            "grouped_terms": grouped_terms or [],
+            "hetro_in_means": hetro_in_means,
+            "hetro_in_variances": hetro_in_variances,
+            "zi_terms": zi_terms or [],
+            "membership_terms": membership_terms or [],
+            "class_membership": _to_list(class_membership, latent_classes - 1) if class_membership else None,
+            "class_fixed": _to_list(class_fixed, latent_classes) if class_fixed else None,
+            "class_rdm_ind": _to_list(class_rdm_ind, latent_classes) if class_rdm_ind else None,
+            "class_rdm_cor": _to_list(class_rdm_cor, latent_classes) if class_rdm_cor else None,
+            "dispersion": int(dispersion),
+            "latent_classes": int(latent_classes),
+        }
 
     # ── fitness ─────────────────────────────────────────────────────
 
@@ -1035,22 +1122,23 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
     has_lc       = getattr(self.evaluator, "max_latent_classes", 1) > 1
 
     # ── Move-type weights ─────────────────────────────────────────────
-    explore_w    = 0.15
-    fwd_w         = 0.18
-    bwd_w         = 0.18
+    explore_w    = 0.14
+    fwd_w         = 0.17
+    bwd_w         = 0.17
     swap_w        = 0.10
-    promote_w     = 0.12
-    demote_w      = 0.12
-    dist_change_w = 0.08
+    promote_w     = 0.11
+    demote_w      = 0.11
+    dist_change_w = 0.07
     disp_flip_w   = 0.04
     lc_step_w     = 0.03
+    het_var_w     = 0.03  # NEW: dedicated move for heterogeneity in variances
 
     move_names = ["explore",   "forward",    "backward",  "stepwise",
                   "promote",   "demote",     "dist",      "dispersion",
-                  "lc_step"]
+                  "lc_step",   "het_var"]
     move_probs = np.array([explore_w, fwd_w, bwd_w, swap_w,
                            promote_w, demote_w, dist_change_w,
-                           disp_flip_w, lc_step_w])
+                           disp_flip_w, lc_step_w, het_var_w])
     move_probs = move_probs / move_probs.sum()
 
     for _attempt in range(max_attempts):
@@ -1085,15 +1173,16 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         elif move == "promote" and active_idx:
             i = np.random.choice(active_idx)
             role = int(neighbor[i])
-            allowed = allowed_map.get(var_names[i], range(9))
+            allowed = allowed_map.get(var_names[i], range(10))
             # Analyst hierarchy: excluded(0) < fixed(1) < rdm-ind(2) < rdm-cor(3)
-            #                  < grouped(4) < hetero(5) < ZI(6)
+            #                  < grouped(4) < hetero(5) < ZI(6) < het-var(9)
             # Also allow jump from fixed(1) to ZI(6)
             promotions = {
-                1: [2, 3, 6],          # fixed → random-ind/cor or ZI
-                2: [3, 5],             # rdm-ind → rdm-cor or hetero
-                3: [2, 3],             # rdm-cor → (already high)
-                6: [2, 3],             # ZI → random
+                1: [2, 3, 6, 9],       # fixed → random-ind/cor or ZI or het-var
+                2: [3, 5, 9],          # rdm-ind → rdm-cor or hetero or het-var
+                3: [2, 3, 9],          # rdm-cor → (already high) or het-var
+                4: [9],                # grouped → het-var
+                6: [2, 3, 9],          # ZI → random or het-var
             }
             candidates = promotions.get(role, [])
             candidates = [c for c in candidates if c in allowed]
@@ -1104,14 +1193,16 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         elif move == "demote" and active_idx:
             i = np.random.choice(active_idx)
             role = int(neighbor[i])
-            allowed = allowed_map.get(var_names[i], range(9))
+            allowed = allowed_map.get(var_names[i], range(10))
             demotions = {
                 2: [1, 0],           # rdm-ind → fixed or excluded
                 3: [2, 1],           # rdm-cor → rdm-ind or fixed
+                4: [2, 1, 0],        # grouped → rdm-ind or fixed or excluded
                 5: [0],              # hetero → excluded (unlikely to be useful alone)
                 6: [1, 0],           # ZI → fixed or excluded
                 7: [0],              # membership → excluded
                 8: [1, 0],           # membership+fixed → fixed or excluded
+                9: [0],              # het-var → excluded
             }
             candidates = demotions.get(role, [])
             # Always allow downgrade to excluded (0) or fixed (1) from any non-zero role
@@ -1143,16 +1234,42 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
             max_code = self.evaluator.max_latent_classes - 1
             step = np.random.choice([-1, 1])
             neighbor[lc_idx] = int(np.clip(int(neighbor[lc_idx]) + step, 0, max_code))
-            # When stepping to LC=1, clear membership roles (7,8)
+            # When stepping to LC=1, clear membership roles (7,8) and het-var (9)
             if neighbor[lc_idx] == 0:
                 for i in range(D):
-                    if int(neighbor[i]) in (7, 8):
+                    if int(neighbor[i]) in (7, 8, 9):
                         neighbor[i] = 0
             # When stepping from LC=1 to LC>=2, also randomise class masks
             if neighbor[lc_idx] > 0 and has_lc and len(neighbor) > 2 * D + 2:
                 max_lc = getattr(self.evaluator, "max_latent_classes", 2)
                 for idx in range(2 * D + 2, min(3 * D + 2, len(neighbor))):
                     neighbor[idx] = np.random.randint(0, max_lc + 1)
+
+        # ── HETEROGENEITY IN VARIANCES (role 9) ─────────────────
+        elif move == "het_var":
+            # Toggle or assign role 9
+            # Can add het-var to variables that are random-capable (allowed roles include 2,3,4)
+            random_capable = [i for i in range(D)
+                              if 9 in allowed_map.get(var_names[i], []) and
+                              any(r in allowed_map.get(var_names[i], []) for r in (2, 3, 4))]
+            # Can also add het-var to excluded variables that could become random
+            excluded_het = [i for i in excluded_idx
+                            if 9 in allowed_map.get(var_names[i], []) and
+                            any(r in allowed_map.get(var_names[i], []) for r in (2, 3, 4))]
+            candidates = random_capable + excluded_het
+            if candidates:
+                i = np.random.choice(candidates)
+                if int(neighbor[i]) == 9:
+                    # Demote from het-var following hierarchy: 9 → 4 → 3 → 2 → 1 → 0
+                    allowed = allowed_map.get(var_names[i], range(10))
+                    # Prefer demotion to random roles if available
+                    preferred = [r for r in [4, 3, 2, 1, 0] if r in allowed]
+                    if preferred:
+                        neighbor[i] = np.random.choice(preferred)
+                    else:
+                        neighbor[i] = 0
+                else:
+                    neighbor[i] = 9
 
         # ── RANDOM EXPLORATION (classic behavior) ─────────────────
         else:
@@ -1178,7 +1295,8 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
                     if idx < D:
                         neighbor[idx] = self.sample_allowed_role(idx)
                     elif idx < 2 * D:
-                        neighbor[idx] = np.random.randint(0, 6)
+                        # Distribution genes: 4 distributions (0-3)
+                        neighbor[idx] = np.random.randint(0, 4)
                     else:
                         tail_pos = idx - 2 * D
                         if tail_pos == 0:
@@ -1210,7 +1328,7 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         if has_lc and len(neighbor) > 2 * D + 1:
             if int(neighbor[2 * D + 1]) == 0:
                 for i in range(D):
-                    if int(neighbor[i]) in (7, 8):
+                    if int(neighbor[i]) in (7, 8, 9):
                         neighbor[i] = 0
 
         neighbor = self.repair(neighbor)
@@ -1230,7 +1348,7 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
     elif len(active_idx) >= 2:
         # Toggle the role of one active variable
         i = np.random.choice(active_idx)
-        allowed = allowed_map.get(var_names[i], range(9))
+        allowed = allowed_map.get(var_names[i], range(10))
         old = int(neighbor[i])
         possible = [r for r in allowed if r != old]
         neighbor[i] = np.random.choice(possible) if possible else 0
@@ -1238,7 +1356,7 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
         # Activate at least min_active
         zero_idx = np.where(neighbor[:D] == 0)[0]
         activate = np.random.choice(zero_idx, size=min_active, replace=False)
-        neighbor[activate] = np.random.randint(1, 9, size=len(activate))
+        neighbor[activate] = np.random.randint(1, 10, size=len(activate))
     return neighbor
 
 

@@ -8,10 +8,21 @@ import gc
 import itertools
 from functools import partial
 from typing import NamedTuple as TypingNamedTuple
-from jaxopt import LBFGS
+try:
+    from jaxopt import LBFGS
+except ImportError as _jaxopt_exc:  # pragma: no cover - dependency guard
+    raise ImportError(
+        "metacountregressor requires the 'jaxopt' package.  "
+        "Install the backend with:  pip install jax jaxlib jaxopt"
+    ) from _jaxopt_exc
 from jaxopt import LBFGS, GradientDescent, NonlinearCG, BFGS
 import pandas as pd
 import scipy.stats as stats
+try:
+    from ._jax_config import configure_jax
+except ImportError:  # flat import (script run from inside the package dir)
+    from _jax_config import configure_jax
+configure_jax()
 try:
     from .Solvers_METAJAX import *  # type: ignore[attr-defined]
 except ImportError:
@@ -447,30 +458,49 @@ class ModelSolution:
     # Evaluate on a dataset
     # -------------------------------------
 
-    def evaluate(self, data, name="train"):
+    def evaluate(self, data, name="train", param_index: dict = None):
 
         objective = partial(mixed_model_loglik, data=data, spec=self.spec)
-        ll = -objective(self.params)
+        mle_ll = float(-objective(self.params))
+
+        # Apply PARTE shrinkage and track the corrected LL separately.
+        # The corrected LL is used for AIC / BIC so that information
+        # criteria reflect the parameters actually used for inference.
+        corrected_ll = mle_ll
+        if param_index is not None:
+            try:
+                params_parte, _, _ = compute_regularized_estimates(
+                    self.params, objective, param_index,
+                    variant="k3d3", check_multicollinearity=False,
+                )
+                corrected_ll = float(-objective(params_parte))
+                self.params_parte = params_parte
+            except Exception:
+                pass
 
         metrics = evaluate_metrics(self.params, data, self.spec, name.upper())
 
         if name == "train":
-            self.train_ll = float(ll)
-            self.train_metrics = metrics
+            self.train_ll           = mle_ll
+            self.train_ll_corrected = corrected_ll
+            self.train_metrics      = metrics
 
             k = len(self.params)
             n = data["y"].shape[0]
-
-            self.aic = float(2*k - 2*ll)
-            self.bic = float(k * jnp.log(n) - 2*ll)
+            self.aic = float(2*k - 2*corrected_ll)
+            self.bic = float(k * jnp.log(n) - 2*corrected_ll)
+            self.aic_mle = float(2*k - 2*mle_ll)
+            self.bic_mle = float(k * jnp.log(n) - 2*mle_ll)
 
         elif name == "test":
-            self.test_ll = float(ll)
-            self.test_metrics = metrics
+            self.test_ll           = mle_ll
+            self.test_ll_corrected = corrected_ll
+            self.test_metrics      = metrics
 
         elif name == "validation":
-            self.validation_ll = float(ll)
-            self.validation_metrics = metrics
+            self.validation_ll           = mle_ll
+            self.validation_ll_corrected = corrected_ll
+            self.validation_metrics      = metrics
 
     # -------------------------------------
     # Print summary
@@ -480,20 +510,32 @@ class ModelSolution:
 
         print("\n================ MODEL PERFORMANCE ================")
 
+        def _ll_line(mle, corrected):
+            line = f"  LL (MLE):              {mle:.4f}"
+            if corrected != mle:
+                line += f"\n  LL (PARTE-corrected):  {corrected:.4f}  [d={corrected-mle:+.4f} vs MLE]"
+            return line
+
         print("\n--- TRAIN ---")
-        print(f"LogLik: {self.train_ll:.4f}")
+        print(_ll_line(self.train_ll, getattr(self, "train_ll_corrected", self.train_ll)))
         print(self.train_metrics)
 
-        print("\n--- TEST ---")
-        print(f"LogLik: {self.test_ll:.4f}")
-        print(self.test_metrics)
+        if getattr(self, "test_ll", None) is not None:
+            print("\n--- TEST ---")
+            print(_ll_line(self.test_ll, getattr(self, "test_ll_corrected", self.test_ll)))
+            print(self.test_metrics)
 
-        print("\n--- VALIDATION ---")
-        print(f"LogLik: {self.validation_ll:.4f}")
-        print(self.validation_metrics)
+        if getattr(self, "validation_ll", None) is not None:
+            print("\n--- VALIDATION ---")
+            print(_ll_line(self.validation_ll,
+                           getattr(self, "validation_ll_corrected", self.validation_ll)))
+            print(self.validation_metrics)
 
-        print("\nAIC:", self.aic)
-        print("BIC:", self.bic)
+        print(f"\nAIC (PARTE LL): {self.aic}")
+        print(f"BIC (PARTE LL): {self.bic}")
+        if hasattr(self, "aic_mle"):
+            print(f"AIC (MLE LL):   {self.aic_mle}")
+            print(f"BIC (MLE LL):   {self.bic_mle}")
 
         print("===================================================")
 
@@ -521,6 +563,14 @@ class ModelSpec:
     random_ind_dists: tuple
     random_cor_dists: tuple
     grouped_dists: tuple
+    # ── VARIANCE REGULARISATION ────────────────────────────────────────
+    # Log-barrier that keeps random-SD / dispersion scale parameters
+    # strictly away from zero, so random-parameters and NB2 models cannot
+    # degenerate into fixed-effect / Poisson specifications.  Set
+    # variance_reg = 0.0 to disable.  variance_floor is the minimum allowed
+    # scale for any random-SD or dispersion parameter.
+    variance_reg:   float = 10.0
+    variance_floor: float = 1e-3
     latent_classes: int =1
     @property
     def K_random_total(self):
@@ -611,10 +661,18 @@ def build_eta(params, data, spec: ModelSpec):
     # FIXED EFFECTS
     # =====================================================
     if spec.Kf > 0:
+        if data["Xf"].shape[-1] != spec.Kf:
+            raise ValueError(
+                f"ModelSpec.Kf={spec.Kf} does not match data['Xf'] width "
+                f"({data['Xf'].shape[-1]}). The spec and data were built for "
+                f"different fixed-effect variable sets — e.g. a per-class "
+                f"Kf reduction (class_fixed_idx) was applied to the spec but "
+                f"data['Xf'] was not sliced to the same columns, or vice versa."
+            )
         eta = jnp.einsum("npk,k->np", data["Xf"], blocks["beta_f"])[..., None]
 
     # =====================================================
-    # HETEROGENEITY SHIFT
+    # HETEROGENEITY SHIFT (MEANS)
     # =====================================================
     shift = None
     if spec.Kh > 0 and spec.K_random_total > 0:
@@ -631,6 +689,23 @@ def build_eta(params, data, spec: ModelSpec):
         shift = jnp.mean(shift_full, axis=1)  # (N,K_random_total)
 
     # =====================================================
+    # HETEROGENEITY SHIFT (VARIANCES)
+    # =====================================================
+    shift_var = None
+    if spec.Kv > 0 and spec.K_random_total > 0:
+
+        Z_var = data["Xh_var"]  # (N,P,Kv)
+
+        shift_var_full = jnp.einsum(
+            "npk,km->npm",
+            Z_var,
+            blocks["gamma_var"]
+        )
+
+        # average across panel dimension
+        shift_var = jnp.mean(shift_var_full, axis=1)  # (N,K_random_total)
+
+    # =====================================================
     # CORRELATED RANDOM EFFECTS
     # =====================================================
     if spec.Kr_cor > 0:
@@ -640,9 +715,19 @@ def build_eta(params, data, spec: ModelSpec):
         if shift is not None:
             mean_cor = mean_cor[None, :] + shift[:, :spec.Kr_cor]
 
+        # For correlated effects, variance heterogeneity affects the Cholesky factor
+        # We apply the mean shift across observations to the log-diagonal
+        chol = blocks["chol"]
+        if shift_var is not None:
+            # Average variance heterogeneity shift across observations for the Cholesky diagonal
+            shift_var_cor = jnp.mean(shift_var[:, :spec.Kr_cor], axis=0)
+            K = spec.Kr_cor
+            diag_idx = jnp.array([i * (i + 3) // 2 for i in range(K)])
+            chol = chol.at[diag_idx].add(shift_var_cor)
+
         beta_cor = random_correlated(
             mean_cor,
-            blocks["chol"],
+            chol,
             data["draws_cor"],
             spec.Kr_cor,
             jnp.array([DIST_MAP[d] for d in spec.random_cor_dists])
@@ -660,9 +745,14 @@ def build_eta(params, data, spec: ModelSpec):
         if shift is not None:
             mean_ind = mean_ind[None, :] + shift[:, spec.Kr_cor:]
 
+        sd_ind = blocks["sd_ind"]
+        if shift_var is not None:
+            # Apply variance heterogeneity shift to log-SDs
+            sd_ind = sd_ind + shift_var[:, spec.Kr_cor:]
+
         beta_ind = random_independent(
             mean_ind,
-            blocks["sd_ind"],
+            sd_ind,
             data["draws_ind"],
             jnp.array([DIST_MAP[d] for d in spec.random_ind_dists])
         )
@@ -674,10 +764,29 @@ def build_eta(params, data, spec: ModelSpec):
     # =====================================================
     if spec.Kg > 0:
 
+        mean_g = blocks["mean_g"]
+        sd_g = blocks["sd_g"]
+
+        if shift_var is not None:
+            # Apply variance heterogeneity shift to grouped log-SDs
+            # Use pre-computed group-level variance heterogeneity shift
+            g_start = spec.Kr_cor + spec.Kr_ind
+            g_end = g_start + spec.Kg
+            
+            # Use pre-computed group-level shift from Xh_var_group
+            Xh_var_group = data.get("Xh_var_group")
+            if Xh_var_group is not None and Xh_var_group.shape[0] > 0 and Xh_var_group.shape[1] > 0:
+                # Xh_var_group has shape (n_groups, Kv)
+                # We need to map this to the grouped random effects
+                # The grouped effects are at position g_start:g_end in random total
+                # For simplicity, apply the same group-level shift to all grouped effects
+                if g_end <= Xh_var_group.shape[1] + g_start:
+                    sd_g = sd_g + Xh_var_group[:, :spec.Kg]
+
         beta_g_all = transform_draws(
             data["draws_g"],
-            blocks["mean_g"],
-            blocks["sd_g"],
+            mean_g,
+            sd_g,
             jnp.array([DIST_MAP[d] for d in spec.grouped_dists])
         )
 
@@ -707,7 +816,7 @@ def transform_draws(draws, mean, scale, dist_codes):
     """
     draws: (N,K,R) standard normal or uniform
     mean:  (K,) or (N,K)
-    scale: (K,)
+    scale: (K,) or (N,K)  # per-observation scale for heterogeneity in variances
     dist_codes: integer array (K,)
         0 = normal
         1 = lognormal
@@ -721,7 +830,11 @@ def transform_draws(draws, mean, scale, dist_codes):
     else:
         mean = mean[:, :, None]
 
-    scale = scale[None, :, None]
+    # Handle scale: can be (K,) or (N,K)
+    if scale.ndim == 1:
+        scale = scale[None, :, None]
+    else:
+        scale = scale[:, :, None]
 
     z = draws
 
@@ -744,9 +857,9 @@ def transform_draws(draws, mean, scale, dist_codes):
     betas = jnp.stack([beta_normal, beta_lognormal, beta_tri, beta_uniform], axis=-1)
 
     # dist_codes shape (K,)
-    selector = jax.nn.one_hot(dist_codes, 4)  # (K,3)
+    selector = jax.nn.one_hot(dist_codes, 4)  # (K,4)
 
-    selector = selector[None, :, None, :]  # (1,K,1,3)
+    selector = selector[None, :, None, :]  # (1,K,1,4)
 
     beta = jnp.sum(betas * selector, axis=-1)
 
@@ -757,13 +870,12 @@ def transform_draws(draws, mean, scale, dist_codes):
     """
     draws: (N,K,R) standard normal or uniform
     mean:  (K,) or (N,K)
-    scale: (K,)
+    scale: (K,) or (N,K)  # per-observation scale for heterogeneity in variances
     dist_codes: integer array (K,)
         0 = normal
         1 = lognormal
         2 = triangular
     """
-    #scale = jnp.abs(scale)
     scale = jax.nn.softplus(scale)
 
     if mean.ndim == 1:
@@ -771,7 +883,11 @@ def transform_draws(draws, mean, scale, dist_codes):
     else:
         mean = mean[:, :, None]
 
-    scale = scale[None, :, None]
+    # Handle scale: can be (K,) or (N,K)
+    if scale.ndim == 1:
+        scale = scale[None, :, None]
+    else:
+        scale = scale[:, :, None]
 
     z = draws
 
@@ -794,9 +910,9 @@ def transform_draws(draws, mean, scale, dist_codes):
     betas = jnp.stack([beta_normal, beta_lognormal, beta_tri, beta_uniform], axis=-1)
 
     # dist_codes shape (K,)
-    selector = jax.nn.one_hot(dist_codes, 4)  # (K,3)
+    selector = jax.nn.one_hot(dist_codes, 4)  # (K,4)
 
-    selector = selector[None, :, None, :]  # (1,K,1,3)
+    selector = selector[None, :, None, :]  # (1,K,1,4)
 
     beta = jnp.sum(betas * selector, axis=-1)
 
@@ -1292,7 +1408,7 @@ def build_base_index(spec, model=None):
     index["fixed"] = (idx, idx + spec.Kf)
     idx += spec.Kf
     
-    #Zero Inflate
+    # Zero Inflate
     if spec.Kzi > 0:
         index["zi_beta"] = (idx, idx + spec.Kzi)
         idx += spec.Kzi
@@ -1325,10 +1441,17 @@ def build_base_index(spec, model=None):
         index["group_sd"] = (idx, idx + spec.Kg)
         idx += spec.Kg
 
+    # Heterogeneity in MEANS of random parameters
     if spec.Kh > 0 and spec.K_random_total > 0:
         Khet = spec.Kh * spec.K_random_total
         index["hetro"] = (idx, idx + Khet)
         idx += Khet
+
+    # Heterogeneity in VARIANCES of random parameters
+    if spec.Kv > 0 and spec.K_random_total > 0:
+        Khet_var = spec.Kv * spec.K_random_total
+        index["hetro_var"] = (idx, idx + Khet_var)
+        idx += Khet_var
 
     if _model == "nb":
         index["dispersion"] = idx
@@ -1394,6 +1517,10 @@ def compute_standard_errors(params, objective):
     informative for diagnosing identification problems.
 
     Ridge strength: λ = max_ev * 1e-6,  clamped to [1e-12, 1e-4].
+
+    See also: compute_regularized_estimates() which applies the PARTE
+    post-MLE shrinkage (Alghamdi et al. 2026) before computing SEs,
+    giving lower-MSE coefficient estimates when predictors are correlated.
     """
     params_np = np.asarray(params, dtype=float)
     hess_np   = np.asarray(jax.hessian(objective)(jnp.asarray(params_np)), dtype=float)
@@ -1423,6 +1550,113 @@ def compute_standard_errors(params, objective):
 
     se = np.sqrt(diag_cov)
     return jnp.asarray(se, dtype=float)
+
+
+def compute_regularized_estimates(
+    params,
+    objective,
+    param_index: dict,
+    variant: str = "k3d3",
+    check_multicollinearity: bool = True,
+):
+    """
+    Apply PARTE post-MLE shrinkage to the fixed-effect coefficients,
+    yielding lower-MSE estimates under multicollinearity.
+
+    Works for ALL model types (Poisson, NB, ZINB, Gaussian, Tobit,
+    latent-class, random-effects) — only the fixed-effect block (β_f)
+    is modified; all other parameters are left at their MLE values.
+
+    Algorithm (Alghamdi et al. 2026, eq 23):
+        β̂_PARTE = (F + k(1+d)I)⁻¹ (F + kdI) β̂_MLE
+    where F = X'WX is the Fisher information matrix at the MLE, and
+    (k, d) are selected via data-adaptive rules (eqs 37-41).
+
+    Parameters
+    ----------
+    params    : full MLE parameter vector (JAX or numpy array)
+    objective : callable  params → negative log-likelihood  (no grad needed)
+    param_index : dict from build_param_index() or build_base_index()
+    variant   : "k3d3" (default, best by paper), "k1d1", or "k2d2"
+    check_multicollinearity : if True, print a diagnostic warning when the
+                              condition number of F exceeds 30
+
+    Returns
+    -------
+    params_parte : full param vector with β_f replaced by PARTE estimate
+    se_parte     : standard errors — PARTE for β_f, ridge-MLE for the rest
+    parte_result : regularization.ParteResult for the fixed-effect block,
+                   or None when fewer than 2 fixed effects exist
+    """
+    from regularization import (
+        compute_regularized_estimates_jax,
+        compute_regularized_estimates as _compute_np,
+        multicollinearity_diagnostics,
+        condition_number_jax,
+        ParteResult,
+        apply_parte_to_fixed_effects,
+    )
+
+    params_jax = jnp.asarray(params, dtype=float)
+    # Hessian of the negative log-likelihood at the MLE — the Fisher
+    # information matrix.  jax.hessian gives us this as a jnp array,
+    # so we can feed it directly into the JAX-native PARTE path without
+    # any numpy round-trip.
+    hess_jax = jax.hessian(objective)(params_jax)
+
+    # Identify fixed-effect block indices (static at JIT compile time)
+    fixed_key = "fixed" if "fixed" in param_index else "beta_f"
+    if fixed_key not in param_index or (param_index[fixed_key][1] - param_index[fixed_key][0]) < 2:
+        # Intercept-only or no fixed effects — fall back to plain ridge SEs
+        se = compute_standard_errors(params, objective)
+        return params_jax, se, None
+
+    i0, i1 = int(param_index[fixed_key][0]), int(param_index[fixed_key][1])
+
+    if check_multicollinearity:
+        # Condition number is also JAX-native (one extra eigvalsh call)
+        kappa = float(condition_number_jax(hess_jax, i0, i1))
+        if kappa > 1000.0:
+            print(
+                f"[PARTE] WARNING: severe multicollinearity "
+                f"(condition number = {kappa:.1f}). "
+                "PARTE shrinkage strongly recommended."
+            )
+        elif kappa > 30.0:
+            print(
+                f"[PARTE] NOTE: moderate multicollinearity "
+                f"(condition number = {kappa:.1f}). "
+                "PARTE shrinkage applied."
+            )
+
+    # ── JAX-native path (JIT-compiled, GPU-ready) ──────────────────────────
+    params_parte_jax, se_full_jax, beta_parte_jax, k_jax, d_jax = \
+        compute_regularized_estimates_jax(
+            params_jax, hess_jax, i0, i1, variant
+        )
+
+    # Build a lightweight ParteResult for the caller without a numpy round-trip
+    # on the main arrays (only the scalars and diagnostics need np.array()).
+    beta_f_np = np.asarray(params_jax[i0:i1])
+    F_np = np.asarray(hess_jax[i0:i1, i0:i1])
+    q_raw, theta = np.linalg.eigh(
+        np.where(np.isfinite(F_np), F_np, 0.0)
+    )
+    parte_result = ParteResult(
+        beta_mle=beta_f_np,
+        beta_parte=np.asarray(beta_parte_jax),
+        k=float(k_jax),
+        d=float(d_jax),
+        se_mle=np.asarray(se_full_jax[i0:i1]),   # ridge-MLE SE for the block
+        se_parte=np.asarray(se_full_jax[i0:i1]),  # these are PARTE SEs
+        condition_number=float(np.maximum(q_raw, 1e-12)[-1] /
+                               float(max(np.maximum(q_raw, 1e-12)[0], 1e-12))),
+        eigenvalues=q_raw,
+        alpha=theta.T @ beta_f_np,
+        variant=variant,
+    )
+
+    return params_parte_jax, se_full_jax, parte_result
 
 def build_cholesky_from_params(chol_params, K):
     L = np.zeros((K, K))
@@ -1710,7 +1944,8 @@ def print_summary(result, objective, data, spec, param_index):
 
         logits = params[C * K_base:]
         logits_full = np.concatenate(([0.0], logits))
-        pi = np.exp(logits_full) / np.sum(np.exp(logits_full))
+        pi = np.exp(logits_full - np.max(logits_full))
+        pi /= pi.sum()
 
         print("\n====================================================")
         print("        LATENT CLASS MIXED MODEL SUMMARY")
@@ -1748,18 +1983,50 @@ def print_summary(result, objective, data, spec, param_index):
     
 
     params = result.params
-    se = compute_standard_errors(params, objective)
-
-    z_vals = params / se
-    p_vals = 2 * (1 - stats.norm.cdf(np.abs(z_vals)))
-
-    # Log-likelihood
-    final_ll = -objective(params)
     k = len(params)
     n = data["y"].shape[0]
 
-    aic = 2*k - 2*final_ll
-    bic = k * np.log(n) - 2*final_ll
+    # ── MLE log-likelihood (upper bound — always reported) ────────────────
+    mle_ll = float(-objective(params))
+
+    # ── PARTE regularisation ──────────────────────────────────────────────
+    # Apply PARTE shrinkage when a valid param_index is supplied.  The
+    # corrected LL (evaluated at PARTE parameters) is always lower than the
+    # MLE LL because the MLE maximises the likelihood, but it reflects the
+    # actual goodness-of-fit of the parameter vector used for inference and
+    # prediction.  AIC / BIC are computed from the corrected LL.
+    parte_applied = False
+    params_eval = params                    # params used for display & IC
+    se_eval      = None
+
+    if objective is not None and param_index is not None:
+        try:
+            params_parte_j, se_parte_j, parte_result = compute_regularized_estimates(
+                params, objective, param_index,
+                variant="k3d3", check_multicollinearity=True,
+            )
+            corrected_ll = float(-objective(params_parte_j))
+            params_eval  = np.asarray(params_parte_j)
+            se_eval      = np.asarray(se_parte_j)
+            parte_applied = True
+        except Exception as _e:
+            corrected_ll = mle_ll           # fall back silently
+
+    if not parte_applied:
+        corrected_ll = mle_ll
+        se_eval = np.asarray(compute_standard_errors(params, objective))
+        params_eval = np.asarray(params)
+
+    # ICs use the corrected LL so that model comparison reflects the
+    # parameter vector that is actually used.
+    eval_ll = corrected_ll
+    aic = 2*k - 2*eval_ll
+    bic = k * np.log(n) - 2*eval_ll
+
+    # z / p for the displayed (PARTE) estimates
+    se_eval_safe = np.where(se_eval > 1e-12, se_eval, np.nan)
+    z_vals = params_eval / se_eval_safe
+    p_vals = 2 * (1 - stats.norm.cdf(np.abs(z_vals)))
 
     names = []
 
@@ -1819,13 +2086,19 @@ def print_summary(result, objective, data, spec, param_index):
     elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic"}:
         names.append("sigma")
 
-    summary_df = pd.DataFrame({
-        "Parameter": names,
-        "Estimate": np.array(params),
-        "Std.Err": np.array(se),
-        "z-value": np.array(z_vals),
-        "p-value": np.array(p_vals)
-    })
+    params_mle_np = np.asarray(params)
+    df_cols = {
+        "Parameter":        names,
+        "Estimate (MLE)":   params_mle_np,
+        "Estimate":         params_eval,   # PARTE when applied, otherwise MLE
+        "Std.Err":          se_eval,
+        "z-value":          z_vals,
+        "p-value":          p_vals,
+    }
+    if parte_applied:
+        # Show the shrinkage so the user can see which params moved
+        df_cols["Shrinkage"] = params_eval - params_mle_np
+    summary_df = pd.DataFrame(df_cols)
 
     # ==========================================================
     # PRINT CLEAN SECTIONS
@@ -1872,6 +2145,10 @@ def print_summary(result, objective, data, spec, param_index):
         main_df["Parameter"].str.contains("hetro")
     ]
 
+    het_var_df = main_df[
+        main_df["Parameter"].str.contains("hetro_var")
+    ]
+
     disp_df = main_df[
         main_df["Parameter"] == "dispersion"
     ]
@@ -1885,6 +2162,7 @@ def print_summary(result, objective, data, spec, param_index):
     print_section(sd_df, "INDEPENDENT RANDOM SDs")
     print_section(group_df, "GROUPED RANDOM EFFECTS")
     print_section(het_df, "HETEROGENEITY IN MEANS")
+    print_section(het_var_df, "HETEROGENEITY IN VARIANCES")
     print_section(disp_df, "DISPERSION")
 
     # ==========================================================
@@ -1929,9 +2207,18 @@ def print_summary(result, objective, data, spec, param_index):
                 print(f"Corr({cols[i]},{cols[j]}) = {Corr[i,j]:.6f}")
 
     print("\n------------------------------------------------")
-    print(f"Log-Likelihood: {float(final_ll):.4f}")
-    print(f"AIC: {float(aic):.4f}")
-    print(f"BIC: {float(bic):.4f}")
+    print(f"Log-Likelihood (MLE):              {mle_ll:>14.4f}")
+    if parte_applied:
+        ll_cost = corrected_ll - mle_ll     # always ≤ 0
+        print(f"Log-Likelihood (PARTE-corrected):  {corrected_ll:>14.4f}"
+              f"  [d = {ll_cost:+.4f} vs MLE]")
+        print(f"  (k = {parte_result.k:.4f},  d = {parte_result.d:.4f},"
+              f"  cond = {parte_result.condition_number:.1f})")
+        print(f"AIC  (PARTE LL): {float(aic):>14.4f}")
+        print(f"BIC  (PARTE LL): {float(bic):>14.4f}")
+    else:
+        print(f"AIC: {float(aic):>14.4f}")
+        print(f"BIC: {float(bic):>14.4f}")
     print("================================================\n")
 
 
@@ -2609,6 +2896,12 @@ def print_summary(result, objective, data, spec, param_index):
             for z in spec.hetro_names:
                 names.append(f"hetro({rnd}|{z})")
 
+    # Heterogeneity in VARIANCES
+    if spec.Kv > 0:
+        for rnd in spec.random_cor_names + spec.random_ind_names + spec.grouped_names:
+            for z in spec.hetro_var_names:
+                names.append(f"hetro_var({rnd}|{z})")
+
     # NB dispersion / Tobit-Gaussian scale
     if spec.model == "nb":
         names.append("dispersion")
@@ -2690,6 +2983,10 @@ def print_summary(result, objective, data, spec, param_index):
         main_df["Parameter"].str.contains("hetro")
     ]
 
+    het_var_df = main_df[
+        main_df["Parameter"].str.contains("hetro_var")
+    ]
+
     disp_df = main_df[
         main_df["Parameter"] == "dispersion"
     ]
@@ -2703,6 +3000,7 @@ def print_summary(result, objective, data, spec, param_index):
     print_section(sd_df, "INDEPENDENT RANDOM SDs")
     print_section(group_df, "GROUPED RANDOM EFFECTS")
     print_section(het_df, "HETEROGENEITY IN MEANS")
+    print_section(het_var_df, "HETEROGENEITY IN VARIANCES")
     print_section(disp_df, "DISPERSION")
 
     # ==========================================================
@@ -2786,7 +3084,8 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
 
         logits = params[C * K_base:]
         logits_full = np.concatenate(([0.0], logits))
-        pi = np.exp(logits_full) / np.sum(np.exp(logits_full))
+        pi = np.exp(logits_full - np.max(logits_full))
+        pi /= pi.sum()
 
         print("\n====================================================")
         print("        LATENT CLASS MIXED MODEL SUMMARY")
@@ -2832,14 +3131,40 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
     def sigmoid(x):
         return 1 / (1 + np.exp(-x))
 
-    params_raw = np.asarray(result.params, dtype=np.float64)
-    if se is None:
-        se_raw = np.asarray(
-            compute_standard_errors(result.params, objective),
-            dtype=np.float64
-        )
-    else:
-        se_raw = se
+    params_mle = np.asarray(result.params, dtype=np.float64)
+
+    # ── PARTE shrinkage (post-MLE) ─────────────────────────────────────────
+    # When an objective and param_index are available, apply the PARTE
+    # adjusted ridge-type estimator (Alghamdi et al. 2026) to the
+    # fixed-effect block.  The corrected LL (evaluated at PARTE params)
+    # is used for AIC / BIC; the MLE LL is also reported for reference.
+    parte_applied = False
+    params_raw    = params_mle      # default: show MLE params
+    corrected_ll  = None
+
+    if objective is not None and param_index is not None and se is None:
+        try:
+            params_parte_j, se_parte_j, _pr = compute_regularized_estimates(
+                result.params, objective, param_index,
+                variant="k3d3", check_multicollinearity=True,
+            )
+            corrected_ll   = float(-objective(params_parte_j))
+            params_raw     = np.asarray(params_parte_j, dtype=np.float64)
+            se_raw         = np.asarray(se_parte_j,     dtype=np.float64)
+            parte_applied  = True
+            _parte_result  = _pr
+        except Exception:
+            pass                    # fall back to MLE
+
+    if not parte_applied:
+        params_raw = params_mle
+        if se is None:
+            se_raw = np.asarray(
+                compute_standard_errors(result.params, objective),
+                dtype=np.float64,
+            )
+        else:
+            se_raw = se
 
     names = []
 
@@ -2889,17 +3214,19 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
         names.append("sigma")
 
     df = pd.DataFrame({
-        "Parameter": names,
-        "Estimate_raw": params_raw,
-        "StdErr_raw": se_raw
+        "Parameter":    names,
+        "Estimate_raw": params_raw,       # PARTE if applied, else MLE
+        "MLE_raw":      params_mle,       # always the MLE (for shrinkage column)
+        "StdErr_raw":   se_raw,
     })
 
     # ==========================================================
     # ✅ APPLY DELTA METHOD WHERE NEEDED
     # ==========================================================
 
-    df["Estimate"] = df["Estimate_raw"]
-    df["Std.Err"] = df["StdErr_raw"]
+    df["Estimate"]     = df["Estimate_raw"]
+    df["Estimate_MLE"] = df["MLE_raw"]
+    df["Std.Err"]      = df["StdErr_raw"]
 
     for i, row in df.iterrows():
 
@@ -2960,7 +3287,18 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
     # CLEAN DISPLAY (remove raw columns)
     # ==========================================================
 
-    df_display = df[["Parameter", "Estimate", "Std.Err", "z-value", "p-value"]]
+    disp_cols = ["Parameter", "Estimate", "Std.Err", "z-value", "p-value"]
+    if parte_applied:
+        # Show MLE and shrinkage amount alongside the PARTE estimates
+        df["Estimate_MLE_display"] = df["Estimate_MLE"]
+        df["Shrinkage"] = df["Estimate"] - df["Estimate_MLE_display"]
+        disp_cols = ["Parameter", "Estimate (MLE)", "Estimate (PARTE)",
+                     "Std.Err", "z-value", "p-value", "Shrinkage"]
+        df = df.rename(columns={
+            "Estimate_MLE_display": "Estimate (MLE)",
+            "Estimate":             "Estimate (PARTE)",
+        })
+    df_display = df[disp_cols]
 
     # Remove raw chol from main table
     main_df = df_display[~df_display["Parameter"].isin(chol_names)]
@@ -3012,17 +3350,29 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
     # ==========================================================
     if objective is not None:
 
-        final_ll = -objective(result.params)
+        mle_ll = float(-objective(result.params))
         k = len(result.params)
         n = data["y"].shape[0]
 
-        aic = 2*k - 2*final_ll
-        bic = k * np.log(n) - 2*final_ll
+        # Use corrected LL (at PARTE params) for AIC/BIC when available
+        eval_ll = corrected_ll if (parte_applied and corrected_ll is not None) else mle_ll
+        aic = 2*k - 2*eval_ll
+        bic = k * np.log(n) - 2*eval_ll
 
         print("\n------------------------------------------------")
-        print(f"Log-Likelihood: {float(final_ll):.4f}")
-        print(f"AIC: {float(aic):.4f}")
-        print(f"BIC: {float(bic):.4f}")
+        print(f"Log-Likelihood (MLE):              {mle_ll:>14.4f}")
+        if parte_applied and corrected_ll is not None:
+            ll_delta = corrected_ll - mle_ll
+            print(f"Log-Likelihood (PARTE-corrected):  {corrected_ll:>14.4f}"
+                  f"  [d = {ll_delta:+.4f} vs MLE]")
+            if _parte_result is not None:
+                print(f"  (k = {_parte_result.k:.4f},  d = {_parte_result.d:.4f},"
+                      f"  cond = {_parte_result.condition_number:.1f})")
+            print(f"AIC  (PARTE LL): {float(aic):>14.4f}")
+            print(f"BIC  (PARTE LL): {float(bic):>14.4f}")
+        else:
+            print(f"AIC: {float(aic):>14.4f}")
+            print(f"BIC: {float(bic):>14.4f}")
         print("================================================\n")
         if return_df is not None and return_df:
             return df
@@ -3359,57 +3709,55 @@ class CountModel:
         # --------------------------------------------------
         # 1️⃣ INITIALIZATION
         # --------------------------------------------------
-        key = jax.random.PRNGKey(0)
-        init = 0.01 * jax.random.normal(key, (n_params,))
-
-        if use_prefit:
-            try:
-                pre_beta = fit_simple_poisson_full(self.data, self.spec)
-
-                cursor_pre = 0  # position inside pre_beta
-
-                # ✅ Fixed
-                if self.spec.Kf > 0:
-                    start, end = self.param_index["fixed"]
-                    k = self.spec.Kf
-                    init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
-                    cursor_pre += k
-
-                # ✅ Correlated means
-                if self.spec.Kr_cor > 0:
-                    start, end = self.param_index["cor_mean"]
-                    k = self.spec.Kr_cor
-                    init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
-                    cursor_pre += k
-
-                # ✅ Independent means
-                if self.spec.Kr_ind > 0:
-                    start, end = self.param_index["ind_mean"]
-                    k = self.spec.Kr_ind
-                    init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
-                    cursor_pre += k
-
-                # ✅ Grouped means
-                if self.spec.Kg > 0:
-                    start, end = self.param_index["group_mean"]
-                    k = self.spec.Kg
-                    init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
-                    cursor_pre += k
-
-                # Everything else stays zero:
-                # sd's
-                # chol params
-                # heterogeneity
-                # dispersion
-
-            except Exception as e:
-                print("Prefit failed:", e)
-                key = jax.random.PRNGKey(0)
-                init = 0.001 * jax.random.normal(key, (n_params,))
-
+        # Check for externally-supplied initial parameters first
+        custom_init = getattr(self, "_init_params", None)
+        if custom_init is not None:
+            init = jnp.asarray(custom_init, dtype=float)
         else:
             key = jax.random.PRNGKey(0)
-            init = 0.001 * jax.random.normal(key, (n_params,))
+            init = 0.01 * jax.random.normal(key, (n_params,))
+
+            if use_prefit:
+                try:
+                    pre_beta = fit_simple_poisson_full(self.data, self.spec)
+
+                    cursor_pre = 0  # position inside pre_beta
+
+                    # ✅ Fixed
+                    if self.spec.Kf > 0:
+                        start, end = self.param_index["fixed"]
+                        k = self.spec.Kf
+                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        cursor_pre += k
+
+                    # ✅ Correlated means
+                    if self.spec.Kr_cor > 0:
+                        start, end = self.param_index["cor_mean"]
+                        k = self.spec.Kr_cor
+                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        cursor_pre += k
+
+                    # ✅ Independent means
+                    if self.spec.Kr_ind > 0:
+                        start, end = self.param_index["ind_mean"]
+                        k = self.spec.Kr_ind
+                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        cursor_pre += k
+
+                    # ✅ Grouped means
+                    if self.spec.Kg > 0:
+                        start, end = self.param_index["group_mean"]
+                        k = self.spec.Kg
+                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        cursor_pre += k
+
+                    # Everything else stays zero:
+                    # sd's / chol params / heterogeneity / dispersion
+
+                except Exception as e:
+                    print("Prefit failed:", e)
+                    key = jax.random.PRNGKey(0)
+                    init = 0.001 * jax.random.normal(key, (n_params,))
 
         # Track objective at the optimiser start point for diagnostics.
         try:
@@ -3441,8 +3789,18 @@ class CountModel:
         # --------------------------------------------------
         # 2️⃣ OPTIMIZE
         # --------------------------------------------------
-        solver = LBFGS(fun=self.objective)
-        result = solver.run(init)
+        if getattr(self, "_use_slsqp", False):
+            import jaxopt
+            solver = jaxopt.ScipyMinimize(
+                fun=self.objective, method="SLSQP", maxiter=3000, tol=1e-8
+            )
+        else:
+            solver = LBFGS(fun=self.objective)
+        # OOM-aware: on a GPU out-of-memory the call is retried after cache
+        # clears and finally falls back to the CPU device instead of crashing.
+        result = run_with_oom_recovery(
+            solver.run, init, label="CountModel.fit"
+        )
 
         try:
             self.last_de_report["final_obj"] = float(self.objective(result.params))
@@ -3642,6 +4000,7 @@ def compute_skewed_transforms(df, cols, skew_threshold=1.5):
         vals = df[col].dropna()
         if len(vals) < 10:
             continue
+        # Skip binary columns
         unique_vals = set(float(v) for v in vals.unique())
         if unique_vals.issubset({0.0, 1.0}):
             continue
@@ -3896,6 +4255,8 @@ class StructureEvaluator:
 
         self.cache = {}
         self.structure_cache = set()
+        self._failed_structures = set()  # structural signatures that failed to converge
+        self._last_successful_decision = None   # for progressive variable-ban
 
     # ----------------------------------------
     # Build Spec
@@ -4073,8 +4434,12 @@ class StructureEvaluator:
 
         spec_dict = self.build_spec(decision)
         if spec_dict is None:
+            self.cache[key] = np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
             return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
         sig = self.structural_signature(spec_dict)
+
+        if sig in self._failed_structures:
+            return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
 
         if sig in self.structure_cache:
             return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
@@ -4100,6 +4465,7 @@ class StructureEvaluator:
             if self.mode == "single":
                 value = float(bic)
                 self.cache[key] = value
+                self._last_successful_decision = decision.copy()
                 return value
 
             # ✅ TEST
@@ -4119,11 +4485,49 @@ class StructureEvaluator:
             value = np.array([float(bic), float(rmse)])
 
             self.cache[key] = value
+            self._last_successful_decision = decision.copy()
             return value
 
         except Exception as e:
             print("Fitness error:", e)
-            return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
+            # Only count newly-activated variables (role 0→non-zero
+            # vs the last successful fit) as culprits of this failure.
+            if (sig is not None and self._last_successful_decision is not None
+                    and len(decision) >= len(self.vars)
+                    and len(self._last_successful_decision) >= len(self.vars)):
+                for i in range(len(self.vars)):
+                    if (int(self._last_successful_decision[i]) == 0
+                            and int(decision[i]) != 0):
+                        var = self.vars[i]
+                        if not hasattr(self, "_variable_failure_counts"):
+                            self._variable_failure_counts = {}
+                        if not hasattr(self, "_banned_variables"):
+                            self._banned_variables = set()
+                        if not hasattr(self, "_force_included_vars"):
+                            self._force_included_vars = {
+                                v for v, a in self.allowed_roles.items() if 0 not in a
+                            }
+                        if not hasattr(self, "_BAN_THRESHOLD"):
+                            self._BAN_THRESHOLD = 10
+                        if var not in self._force_included_vars:
+                            cnt = self._variable_failure_counts.get(var, 0) + 1
+                            self._variable_failure_counts[var] = cnt
+                            if cnt >= self._BAN_THRESHOLD and var not in self._banned_variables:
+                                self._banned_variables.add(var)
+                                print(f"  [ban] '{var}' excluded from future"
+                                      f" candidates ({cnt} failure{'' if cnt == 1 else 's'}"
+                                      f" when newly added); threshold = {self._BAN_THRESHOLD}")
+                if len(getattr(self, "_banned_variables", set())) > 50:
+                    self._banned_variables.clear()
+                    if hasattr(self, "_variable_failure_counts"):
+                        self._variable_failure_counts.clear()
+            if sig is not None:
+                self._failed_structures.add(sig)
+                if len(self._failed_structures) > 2000:
+                    self._failed_structures.clear()
+            fail_val = np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
+            self.cache[key] = fail_val
+            return fail_val
 
 
 
@@ -4202,7 +4606,7 @@ def unpack_params(params, spec: ModelSpec, model=None):
             out["mean_g"] = None
             out["sd_g"] = None
 
-        # HETEROGENEITY
+        # HETEROGENEITY (MEANS)
         if spec.Kh > 0 and spec.K_random_total > 0:
             Khet = spec.Kh * spec.K_random_total
             gamma = params[idx:idx + Khet]
@@ -4211,6 +4615,16 @@ def unpack_params(params, spec: ModelSpec, model=None):
             out["gamma"] = gamma.reshape(spec.Kh, spec.K_random_total)
         else:
             out["gamma"] = None
+
+        # HETEROGENEITY (VARIANCES)
+        if spec.Kv > 0 and spec.K_random_total > 0:
+            Khet_var = spec.Kv * spec.K_random_total
+            gamma_var = params[idx:idx + Khet_var]
+            idx += Khet_var
+
+            out["gamma_var"] = gamma_var.reshape(spec.Kv, spec.K_random_total)
+        else:
+            out["gamma_var"] = None
 
         # NB DISPERSION / SCALE
         if _model == "nb":
@@ -4533,6 +4947,11 @@ def run_nsga(evaluator, operator, seed, pop_size=30, max_iter=40, n_jobs=1):
     seed=seed,
     config_id=seed
     )
+    stats_csv = engine.save_search_stats_csv(
+    algo=operator.__class__.__name__,
+    seed=seed,
+    config_id=seed
+    )
     engine.finalize_plots(
     algo=operator.__class__.__name__,
     seed=seed
@@ -4544,7 +4963,9 @@ def run_nsga(evaluator, operator, seed, pop_size=30, max_iter=40, n_jobs=1):
         "scores": scores,
         "fitness_history": engine.fitness_history,
         "hypervolume_history": engine.hypervolume_history,
-        "pareto_history": engine.pareto_history
+        "pareto_history": engine.pareto_history,
+        "search_stats": engine.search_stats,
+        "stats_csv": [stats_csv],   # list, for consistency with the sa/hc branch's one-per-restart shape
     }
 
 
@@ -5787,7 +6208,8 @@ def e_step(params, data, spec):
 
     logits = params[C*K:]
     logits_full = np.concatenate(([0.0], logits))
-    pi = np.exp(logits_full) / np.sum(np.exp(logits_full))
+    pi = np.exp(logits_full - np.max(logits_full))
+    pi /= pi.sum()
 
     N = data["N_ids"]
 
@@ -5858,7 +6280,7 @@ def fit_em(init_params, data, spec, max_iter=100, tol=1e-6, verbose=True):
         logits = params[C * K_base:]
 
         logits_full = np.concatenate(([0.0], logits))
-        pi = np.exp(logits_full)
+        pi = np.exp(logits_full - np.max(logits_full))
         pi /= pi.sum()
 
         logL = np.zeros((N, C))

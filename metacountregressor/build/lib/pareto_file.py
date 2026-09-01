@@ -539,12 +539,13 @@ class Pareto(object):
                 if v[0] == j or v[-1] == j:
                     v_dis.update({j: 1000000})
                 else:
+                    _hi = max(Struct[x][val_key_1] for x
+                              in range(len(Struct)))
+                    _lo = min(Struct[x][val_key_1] for x
+                              in range(len(Struct)))
                     dis = abs(v_dis.get(j) +
                               ((Struct[v[v.index(j) + 1]][val_key_1] -
-                                Struct[j][val_key_1]) / (max(Struct[x][val_key_1] for x in
-                                                             range(len(Struct))) -
-                                                         min(Struct[x][val_key_1] for x in
-                                                             range(len(Struct))))))
+                                Struct[j][val_key_1]) / (_hi - _lo))) if _hi != _lo else v_dis.get(j)
                     v_dis.update({j: dis})
 
         # Calculate crowding distance based on second objective
@@ -558,12 +559,12 @@ class Pareto(object):
                 if v[0] == k or v[-1] == k:
                     q_dis.update({k: 1000000})
                 else:
-                    dis = abs(q_dis.get(k) + ((Struct[v[v.index(k)+1]][val_key_2] -
+                    _qhi = max(Struct[x][val_key_2] for x in range(len(Struct)))
+                    _qlo = min(Struct[x][val_key_2] for x in range(len(Struct)))
+                    dis = (abs(q_dis.get(k) + ((Struct[v[v.index(k)+1]][val_key_2] -
                                                Struct[k][val_key_2])
-                                              / (max(Struct[x][val_key_2] for x
-                                                     in range(len(Struct))) -
-                                                  min(Struct[x][val_key_2] for x in
-                                                      range(len(Struct))))))
+                                              / (_qhi - _qlo)))
+                           if _qhi != _qlo else q_dis.get(k))
                     q_dis.update({k: dis})
         # Adding crowding distance from both objectives
         crowd = {k: q_dis[k] + v_dis[k] for k in v_dis.keys()}

@@ -143,6 +143,7 @@ def _legacy_cmf_spec(payload, builder, metadata=None) -> dict[str, Any]:
         "rdm_cor_terms": [],
         "grouped_terms": [],
         "hetro_in_means": [],
+        "hetro_in_variances": [],
         "zi_terms": [],
         "membership_terms": [],
         "dispersion": int(str(_field(payload, "model", "poisson")).lower() == "nb"),
@@ -355,6 +356,8 @@ def _build_random_eta(
         return pt.zeros(n), {"id_values": id_values}
 
     name_prefix = f"{name_suffix}_" if name_suffix else ""
+    
+    # Heterogeneity in MEANS
     hetero_names = _unique_names(spec.get("hetro_in_means", []))
     hetero_rows = _matrix(frame, hetero_names)
     hetero_id = _group_means(hetero_rows, id_codes, n_ids)
@@ -366,23 +369,45 @@ def _build_random_eta(
             sigma=coef_scale,
             shape=(len(hetero_names), total_random),
         )
+    
+    # Heterogeneity in VARIANCES
+    hetero_var_names = _unique_names(spec.get("hetro_in_variances", []))
+    hetero_var_rows = _matrix(frame, hetero_var_names)
+    hetero_var_id = _group_means(hetero_var_rows, id_codes, n_ids)
+    hetero_var_gamma = None
+    if hetero_var_names:
+        hetero_var_gamma = pm.Normal(
+            f"{name_prefix}random_var_heterogeneity",
+            mu=0.0,
+            sigma=coef_scale,
+            shape=(len(hetero_var_names), total_random),
+        )
+    
     base_mean = pm.Normal(
         f"{name_prefix}random_mean", mu=0.0, sigma=coef_scale, shape=total_random
     )
     base_sd = pm.HalfNormal(
         f"{name_prefix}random_sd", sigma=sd_scale, shape=total_random
     )
+    
+    # Apply heterogeneity in means
     if hetero_gamma is None:
         id_means = pt.ones((n_ids, 1)) @ base_mean[None, :]
     else:
         id_means = pt.ones((n_ids, 1)) @ base_mean[None, :] + pt.dot(hetero_id, hetero_gamma)
+    
+    # Apply heterogeneity in variances (log-scale for SDs)
+    if hetero_var_gamma is None:
+        id_sds = pt.ones((n_ids, 1)) @ base_sd[None, :]
+    else:
+        id_sds = pt.exp(pt.log(pt.ones((n_ids, 1)) @ base_sd[None, :]) + pt.dot(hetero_var_id, hetero_var_gamma))
 
     eta = pt.zeros(n)
     position = 0
     for index, (term, distribution) in enumerate(ind_terms):
         coefficients = _random_draw(
             pm, pt, f"{name_prefix}random_ind_{_safe_name(term)}", id_means[:, position],
-            base_sd[position], distribution, n_ids,
+            id_sds[:, position], distribution, n_ids,
         )
         values = _matrix(frame, [term]).ravel()
         eta = eta + values * coefficients[id_codes]
@@ -394,11 +419,13 @@ def _build_random_eta(
             raise BayesianModelError(
                 "Correlated random parameters currently require normal marginals."
             )
+        # For correlated terms, variance heterogeneity affects the Cholesky SDs
+        cor_sd_dist = pm.HalfNormal.dist(sigma=sd_scale)
         chol, _, _ = pm.LKJCholeskyCov(
             f"{name_prefix}random_cor_chol",
             n=len(cor_terms),
             eta=2.0,
-            sd_dist=pm.HalfNormal.dist(sigma=sd_scale),
+            sd_dist=cor_sd_dist,
             compute_corr=True,
         )
         cor_mean = id_means[:, position:position + len(cor_terms)]
@@ -421,7 +448,7 @@ def _build_random_eta(
             coefficients = _random_draw(
                 pm, pt, f"{name_prefix}random_group_{_safe_name(term)}",
                 base_mean[position + index],
-                base_sd[position + index], distribution, n_groups,
+                id_sds[:, position + index] if hasattr(id_sds, 'ndim') and id_sds.ndim > 1 else base_sd[position + index], distribution, n_groups,
             )
             values = _matrix(frame, [term]).ravel()
             eta = eta + values * coefficients[group_codes]

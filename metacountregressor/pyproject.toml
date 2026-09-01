@@ -43,6 +43,7 @@ py-modules = [
   "_version",
   "_device_cust",
   "_device_jax_cust",
+  "_jax_config",
   "cmf_package",
   "data_split_helper",
   "experiment_package",
