@@ -378,10 +378,11 @@ def main(args, **kwargs):
                                 '_crossover_perc': args['crossover'],
                                 'MAX_ITERATIONS': int(args['_max_imp']),
                                 '_num_intl_slns': 25,
+                                '_max_changes': 5,     # larger for 10-role space
+                                '_min_changes': 1,
                                 'Manual_Fit': args['Manual_Fit'],
                                 'MP': int(args['MP'])}
         helperprocess.entries_to_remove(('crossover', '_max_imp', '_hms', '_hmcr', '_par'), args)
-        print(args)
 
         obj_fun = ObjectiveFunction(x_df, y_df, **args)
 
@@ -401,7 +402,8 @@ def main(args, **kwargs):
         obj_fun = ObjectiveFunction(x_df, y_df, **args)
         args_hyperparameters = {
             'Manual_Fit': args['Manual_Fit'],
-            'MP': int(args['MP'])
+            'MP': int(args['MP']),
+            '_hms': int(args.get('_hms', 30)),  # larger HMS for expanded role space
         }
 
         results = harmony_search(obj_fun, None, **args_hyperparameters)
@@ -421,10 +423,11 @@ def main(args, **kwargs):
         args_hyperparameters = {'_AI': args.get('_AI', 2),
                                 '_crossover_perc': float(args['crossover']),
                                 '_max_iter': int(args['_max_imp'])
-            , '_pop_size': int(args['_hms']), 'instance_number': int(args['line'])
+            , '_pop_size': int(args.get('_hms', 30)),  # larger pop for expanded role space
+            'instance_number': int(args['line'])
             , 'Manual_Fit': args['Manual_Fit'],
-                                'MP': int(args['MP'])
-                                }
+                            'MP': int(args['MP'])
+                            }
 
         args_hyperparameters = dict(args_hyperparameters)
 
@@ -448,7 +451,7 @@ def main(args, **kwargs):
         args['must_include'] = args.get('force', [])
         obj_fun = ObjectiveFunction(x_df, y_df, **args)
         args_hyperparameters = {
-            '_pop_size': int(args.get('_hms', 20)),
+            '_pop_size': int(args.get('_hms', 30)),  # larger pop for expanded role space
             '_max_iter': int(args.get('_max_imp', 100)),
             '_pc0': float(args.get('_pc0', 0.9)),
             'Manual_Fit': args['Manual_Fit'],
