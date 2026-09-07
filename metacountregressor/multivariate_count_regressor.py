@@ -947,7 +947,10 @@ def _frank_debye(rho: float, n_terms: int = 50) -> float:
         return 1.0
     t_vals = np.linspace(1e-8, abs(rho), n_terms)
     integrand = t_vals / (np.exp(t_vals) - 1.0)
-    return float(np.trapz(integrand, t_vals) / abs(rho))
+    # np.trapz was removed in NumPy 2.0; np.trapezoid is the successor
+    # (present since 1.26). Fall back for older NumPy.
+    _trapz = getattr(np, "trapezoid", None) or np.trapz
+    return float(_trapz(integrand, t_vals) / abs(rho))
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
