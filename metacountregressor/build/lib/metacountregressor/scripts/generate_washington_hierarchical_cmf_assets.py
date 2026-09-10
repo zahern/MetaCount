@@ -1352,7 +1352,8 @@ def _random_search(
             if fit is None:
                 _ga_cache[key] = float("inf")
                 return float("inf")
-            score = _eval(fit, y_val_np, phase="ga")
+            _eval(fit, y_val_np, phase="ga")
+            score = _bic_penalised(fit)
             _ga_cache[key] = float(score)
             return float(score)
 
