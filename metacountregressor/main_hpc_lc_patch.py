@@ -218,9 +218,11 @@ class ModelSpec:
     grouped_names:       tuple
     hetro_names:         tuple
     hetro_var_names:     tuple
-    random_ind_dists:    tuple
-    random_cor_dists:    tuple
-    grouped_dists:       tuple
+    Kgse:                int   = 0
+    gse_names:           tuple = ()
+    random_ind_dists:    tuple = ()
+    random_cor_dists:    tuple = ()
+    grouped_dists:       tuple = ()
     latent_classes:      int   = 1
     # ——— MEMBERSHIP ————
     membership_names:    tuple = ()   # pooled set of all membership variables (union over classes)
@@ -365,6 +367,8 @@ def build_jax_data(
     grouped_cols=None,
     hetro_cols=None,
     hetro_var_cols=None,
+    gse_cols=None,
+    gse_scores=None,
     offset_col=None,
     draws_ind=None,
     draws_cor=None,
@@ -387,6 +391,7 @@ def build_jax_data(
     grouped_cols      = grouped_cols      or []
     hetro_cols        = hetro_cols        or []
     hetro_var_cols    = hetro_var_cols    or []
+    gse_cols          = gse_cols          or []
     zi_cols           = zi_cols           or []
     membership_cols   = membership_cols   or []          # NEW
     random_ind_dists  = random_ind_dists  or []
@@ -400,7 +405,7 @@ def build_jax_data(
     # ——— Standardise continuous predictors (membership cols too) ————
     _predictor_cols = list(set(
         fixed_cols + random_ind_cols + random_cor_cols
-        + grouped_cols + hetro_cols + hetro_var_cols + zi_cols + membership_cols
+        + grouped_cols + hetro_cols + hetro_var_cols + gse_cols + zi_cols + membership_cols
     ))
     _scaler = _hpc.compute_scaler(df, _predictor_cols)
     if _scaler:
@@ -409,7 +414,7 @@ def build_jax_data(
     all_features = list(set(
         [intercept_name]
         + fixed_cols + random_ind_cols + random_cor_cols
-        + grouped_cols + hetro_cols + hetro_var_cols + zi_cols + membership_cols   # NEW
+        + grouped_cols + hetro_cols + hetro_var_cols + gse_cols + zi_cols + membership_cols   # NEW
     ))
 
     X_all, y, mask = balance_panel_dataframe(df, id_col, y_col, all_features)
@@ -439,6 +444,7 @@ def build_jax_data(
     Xg     = extract(grouped_cols)
     Xh     = extract(hetro_cols)
     Xh_var = extract(hetro_var_cols)
+    Xgse   = extract(gse_cols)
     Xzi    = extract(zi_cols)
     Xmem   = extract(membership_cols)    # NEW  shape (N, P, K_mem)
 
@@ -497,6 +503,18 @@ def build_jax_data(
                 else:
                     Xh_var_group = np.hstack([Xh_var_group, grp_mean.reshape(-1, 1)])
 
+    # GSE gradient scores (N, P, Kgse): explicit array wins, else df columns.
+    # Callers standardise via random_parameter_structure.standardise_scores.
+    if gse_scores is not None:
+        _g = np.asarray(gse_scores, dtype=float)
+        if _g.ndim == 2:
+            _g = np.broadcast_to(_g[:, None, :], (N, P, _g.shape[1])).copy()
+        _G = _g
+    else:
+        _G = np.asarray(Xgse, dtype=float)
+    if _G.shape[2] == 0:
+        _G = np.zeros((N, P, 0))
+
     data = {
         "Xf":       jnp.array(Xf),
         "Xr_ind":   jnp.array(Xr_ind),
@@ -504,6 +522,7 @@ def build_jax_data(
         "Xg":       jnp.array(Xg),
         "Xh":       jnp.array(Xh),
         "Xh_var":   jnp.array(Xh_var),
+        "G":        jnp.array(_G),
         "Xh_var_group": jnp.array(Xh_var_group) if Xh_var_group is not None else jnp.zeros((0, 0)),
         "Xzi":      jnp.array(Xzi),
         "Xmem":     jnp.array(Xmem),    # NEW
@@ -536,6 +555,8 @@ def build_jax_data(
         grouped_names=tuple(grouped_cols),
         hetro_names=tuple(hetro_cols),
         hetro_var_names=tuple(hetro_var_cols),
+        Kgse=int(_G.shape[2]),
+        gse_names=tuple(gse_cols),
         random_ind_dists=tuple(random_ind_dists),
         random_cor_dists=tuple(random_cor_dists),
         grouped_dists=tuple(grouped_dists),
@@ -576,6 +597,8 @@ def parse_manual_spec(manual_spec: dict):
     grouped_cols     = [t.split(":")[0] for t in grouped_terms]
     hetro_cols       = [t.split(":")[0].strip() for t in hetro_terms]
     hetro_var_cols   = [t.split(":")[0].strip() for t in hetro_var_terms]
+    gse_cols         = list(manual_spec.get("gse_cols", []))
+    gse_scores       = manual_spec.get("gse_scores", None)
 
     random_ind_dists  = [t.split(":")[1] for t in rdm_terms]
     random_cor_dists  = [t.split(":")[1] for t in rdm_cor_terms]
@@ -587,6 +610,7 @@ def parse_manual_spec(manual_spec: dict):
         zi_cols, membership_cols,
         class_fixed, class_rdm_ind, class_rdm_cor,
         class_membership,
+        gse_cols, gse_scores,
     )
 
 
@@ -609,6 +633,7 @@ def build_model_from_manual_spec(
         zi_cols, membership_cols,
         class_fixed, class_rdm_ind, class_rdm_cor,
         class_membership,
+        gse_cols, gse_scores,
     ) = parse_manual_spec(manual_spec)
 
     data, spec = build_jax_data(
@@ -622,6 +647,8 @@ def build_model_from_manual_spec(
         grouped_cols=grouped_cols,
         hetro_cols=hetro_cols,
         hetro_var_cols=hetro_var_cols,
+        gse_cols=gse_cols,
+        gse_scores=gse_scores,
         zi_cols=zi_cols,
         membership_cols=membership_cols,
         class_membership_cols=class_membership,   # NEW: per-class membership lists

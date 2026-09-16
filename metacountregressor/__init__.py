@@ -14,6 +14,14 @@ __all__ = [
     # Constraints & config
     "ModelConstraints",
     "SearchOutputConfig",
+    # Random-parameter structural equation (means/vars helping hands + GSE)
+    "RPStructuralSpec",
+    "rp_local_mean",
+    "rp_local_logsd",
+    "rp_draws_independent",
+    "rp_draws_correlated",
+    "standardise_scores",
+    "structural_equation_latex",
     # Family search problems
     "CMFFamilySearchProblem",
     "DurationSearchProblem",
@@ -131,6 +139,14 @@ _EXPORTS = {
     "build_bayesian_model": ("bayesian_model", "build_bayesian_model"),
     "resolve_search_spec": ("bayesian_model", "resolve_search_spec"),
     "ModelConstraints": ("model_constraints", "ModelConstraints"),
+    "RPStructuralSpec": ("random_parameter_structure", "RPStructuralSpec"),
+    "rp_local_mean": ("random_parameter_structure", "rp_local_mean"),
+    "rp_local_logsd": ("random_parameter_structure", "rp_local_logsd"),
+    "rp_draws_independent": ("random_parameter_structure", "rp_draws_independent"),
+    "rp_draws_correlated": ("random_parameter_structure", "rp_draws_correlated"),
+    "standardise_scores": ("random_parameter_structure", "standardise_scores"),
+    "structural_equation_latex": (
+        "random_parameter_structure", "structural_equation_latex"),
     "SearchOutputConfig": ("output_config", "SearchOutputConfig"),
     "StructureEvaluatorLC": ("experiment_package", "StructureEvaluatorLC"),
     "load_example16_3_model_data": ("sample_data", "load_example16_3_model_data"),
