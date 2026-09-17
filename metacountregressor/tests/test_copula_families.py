@@ -88,3 +88,36 @@ def test_unknown_copula_rejected():
     with pytest.raises(ValueError):
         mv.MultivariateCountRegressor(activity_names=["a", "b"],
                                       copula="vine-banana")
+
+
+@pytest.mark.parametrize("copula", ["gaussian", "vine-joe"])
+def test_convergence_and_scale_invariance(copula):
+    """A large-scale covariate previously caused ABNORMAL_TERMINATION_IN_LNSRCH
+    (|grad|~90). Internal standardisation must (a) converge and (b) give a fit
+    that is invariant to covariate rescaling (same loglik; predict() matches)."""
+    rng = np.random.default_rng(5)
+    n = 1500
+    z = rng.gamma(2.0, 0.5, n)
+    x_raw = rng.standard_normal(n)
+    X_unit = np.c_[np.ones(n), x_raw]
+    X_big = np.c_[np.ones(n), x_raw * 1000.0]          # ill-scaled covariate
+    betas = [np.array([0.2, 0.3]), np.array([0.1, 0.2]), np.array([0.3, -0.1])]
+    Y = np.column_stack([rng.poisson(np.exp(Xb @ b) * z)
+                         for Xb, b in ((X_unit, betas[0]),
+                                       (X_unit, betas[1]),
+                                       (X_unit, betas[2]))])
+
+    def _fit(X):
+        m = mv.MultivariateCountRegressor(activity_names=["a", "b", "c"],
+                                          copula=copula, marginal="nb",
+                                          maxiter=300, verbose=False)
+        return m.fit([X, X, X], Y, feature_names=[["const", "x"]] * 3)
+
+    f_unit = _fit(X_unit)
+    f_big = _fit(X_big)
+    assert f_unit.converged and f_big.converged            # (a) converges
+    # (b) scale-invariant: same maximised loglik regardless of covariate scale
+    assert abs(f_unit.loglik - f_big.loglik) < 1.0
+    # and the rescaled slope is ~1000x smaller (raw-scale back-transform)
+    b_unit = np.asarray(f_unit.coef[0]); b_big = np.asarray(f_big.coef[0])
+    assert np.isclose(b_unit[1], b_big[1] * 1000.0, rtol=0.05, atol=1e-3)
