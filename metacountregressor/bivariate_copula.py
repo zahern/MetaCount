@@ -181,11 +181,67 @@ def kimeldorf_sampson_logpdf(u, v, rho):
     return jnp.where(near_zero, jnp.log(u_cl) + jnp.log(v_cl), unsafe_val)
 
 
+def joe_logcdf(u, v, theta):
+    """log C_Joe(u, v; theta)  (Joe, 1997; Nelsen, 2006 eq 4.2.16).
+
+        C_Joe(u,v;th) = 1 - [ ub^th + vb^th - ub^th * vb^th ]^{1/th},
+        ub = 1-u,  vb = 1-v,  th >= 1.
+
+    Archimedean copula with UPPER-tail dependence (lambda_U = 2 - 2^{1/th}),
+    well suited to jointly-heavy count outcomes (e.g. crash severities).
+    ``theta`` is passed already mapped to [1, inf) by the caller (th = 1 +
+    exp(rho_u)); th = 1 collapses to the independence copula C = u*v, and the
+    expression is smooth through th = 1 (no 1/th singularity), so unlike the
+    Frank/Kimeldorf primitives no near-zero special-case branch is needed.
+    """
+    eps = 1e-12
+    u_cl = jnp.clip(u, eps, 1.0 - eps)
+    v_cl = jnp.clip(v, eps, 1.0 - eps)
+    th = jnp.maximum(theta, 1.0)
+    lub = jnp.log1p(-u_cl)            # log(1-u), numerically stable near u->1
+    lvb = jnp.log1p(-v_cl)
+    ub_th = jnp.exp(th * lub)
+    vb_th = jnp.exp(th * lvb)
+    A = ub_th + vb_th - ub_th * vb_th   # in (0, 1]
+    A = jnp.clip(A, eps, 1.0)
+    s = jnp.exp(jnp.log(A) / th)        # A^{1/th} in (0, 1)
+    s = jnp.clip(s, eps, 1.0 - eps)
+    return jnp.log1p(-s)               # log(1 - A^{1/th})
+
+
+def gumbel_logcdf(u, v, theta):
+    """log C_Gumbel(u, v; theta)  (Gumbel, 1960; Nelsen, 2006 eq 4.2.4).
+
+        C_Gumbel(u,v;th) = exp( -[ (-ln u)^th + (-ln v)^th ]^{1/th} ),  th >= 1.
+
+    Archimedean copula with UPPER-tail dependence (lambda_U = 2 - 2^{1/th}).
+    The log-CDF is exactly ``-(a^th + b^th)^{1/th}`` (a = -ln u, b = -ln v),
+    evaluated via a log-sum-exp so the inner power sum never overflows. th = 1
+    collapses to the independence copula C = u*v (log C = ln u + ln v).
+    ``theta`` is passed already mapped to [1, inf) by the caller.
+    """
+    eps = 1e-12
+    u_cl = jnp.clip(u, eps, 1.0 - eps)
+    v_cl = jnp.clip(v, eps, 1.0 - eps)
+    th = jnp.maximum(theta, 1.0)
+    a = jnp.maximum(-jnp.log(u_cl), eps)   # >= 0
+    b = jnp.maximum(-jnp.log(v_cl), eps)
+    la = th * jnp.log(a)
+    lb = th * jnp.log(b)
+    m = jnp.maximum(la, lb)
+    # log( a^th + b^th ) = m + log( exp(la-m) + exp(lb-m) )
+    lse = m + jnp.log(jnp.exp(la - m) + jnp.exp(lb - m))
+    val = jnp.exp(lse / th)                 # (a^th + b^th)^{1/th} >= 0
+    return -val
+
+
 COPULA_LOGS = {
     "frank": frank_logpdf,
     "normal": normal_logpdf,
     "kimeldorf": kimeldorf_sampson_logpdf,
     "kimeldorf_sampson": kimeldorf_sampson_logpdf,
+    "joe": joe_logcdf,
+    "gumbel": gumbel_logcdf,
 }
 
 
@@ -273,7 +329,8 @@ def bivariate_copula_loglik(
     off1, off2 : (n,)
     params : (k1 + k2 + 1,) array
         ``[beta1 (k1), beta2 (k2), rho_u]``.
-    copula : str  - one of ``"frank"``, ``"normal"``, ``"kimeldorf"``.
+    copula : str  - one of ``"frank"``, ``"normal"``, ``"kimeldorf"``,
+        ``"joe"`` or ``"gumbel"``.
     alpha_1, alpha_2 : scalar jax arrays  (FROZEN).
     """
     cop_fn = COPULA_LOGS[copula.lower()]
@@ -290,6 +347,10 @@ def bivariate_copula_loglik(
     elif copula in ("kimeldorf", "kimeldorf_sampson"):
         rho = jnp.exp(rho_u) - 1.0
         rho = jnp.maximum(rho, -0.999)
+    elif copula in ("joe", "gumbel"):
+        # Archimedean dependence parameter theta >= 1 (theta = 1 == independence).
+        # theta = 1 + exp(rho_u) keeps rho_u unconstrained on the real line.
+        rho = 1.0 + jnp.exp(rho_u)
     else:
         raise ValueError(f"unknown copula {copula!r}")
 
@@ -690,6 +751,10 @@ def fit_copula_bivariate_nb(
         rho_u0 = max(0.5, r * 4.0)  # conservative positive start
     elif copula == "normal":
         rho_u0 = float(0.5 * np.arctanh(max(min(r, 0.9), -0.9))) if abs(r) > 1e-6 else 0.1
+    elif copula in ("joe", "gumbel"):
+        # theta = 1 + exp(rho_u); warm-start a modest positive dependence
+        # (theta ~ 1.2-1.8) scaled by the empirical correlation.
+        rho_u0 = float(np.log(max(0.2, 2.0 * max(r, 0.0))))
     else:  # kimeldorf
         rho_u0 = max(0.1, float(np.log(1.0 + max(r, 0.0))))
     init = init.at[k1 + k2].set(rho_u0)
@@ -713,6 +778,9 @@ def fit_copula_bivariate_nb(
             rho_lb, rho_ub = -8.0, 8.0
         elif copula == "normal":
             rho_lb, rho_ub = -3.0, 3.0
+        elif copula in ("joe", "gumbel"):
+            # theta = 1 + exp(rho_u) in ~(1.0003, 55.6) over this interval.
+            rho_lb, rho_ub = -8.0, 4.0
         else:  # kimeldorf
             rho_lb, rho_ub = -8.0, 6.0
         bounds = [(None, None)] * (k1 + k2) + [(rho_lb, rho_ub)]
@@ -730,7 +798,9 @@ def fit_copula_bivariate_nb(
         rho = rho_u
     elif copula == "normal":
         rho = (np.exp(2.0 * rho_u) - 1.0) / (np.exp(2.0 * rho_u) + 1.0)
-    else:
+    elif copula in ("joe", "gumbel"):
+        rho = float(1.0 + np.exp(rho_u))          # theta >= 1
+    else:  # kimeldorf
         rho = float(np.exp(rho_u) - 1.0)
     ll_val = -float(neg_ll(jnp.asarray(pp)))
     kpar = len(pp)
@@ -743,6 +813,9 @@ def fit_copula_bivariate_nb(
         se_rho = se_rho_u
     elif copula == "normal":
         se_rho = se_rho_u * (1.0 - rho ** 2)
+    elif copula in ("joe", "gumbel"):
+        # theta = 1 + exp(rho_u)  =>  d theta / d rho_u = exp(rho_u) = theta - 1
+        se_rho = se_rho_u * (rho - 1.0)
     else:  # kimeldorf
         se_rho = se_rho_u * (rho + 1.0)
 
@@ -935,7 +1008,7 @@ def fit_marshall_olkin_nb(
 def compare_bivariate_copulas(
     y1, y2, x1, x2, offset1, offset2,
     feature_names_1=None, feature_names_2=None,
-    copulas=("frank", "normal", "kimeldorf"),
+    copulas=("frank", "normal", "kimeldorf", "joe", "gumbel"),
     method="scipy-lbfgsb",
 ):
     """Fit Famoye + Marshall-Olkin + each requested copula and return a
@@ -1049,6 +1122,9 @@ __all__ = [
     "frank_logpdf",
     "normal_logpdf",
     "kimeldorf_sampson_logpdf",
+    "joe_logcdf",
+    "gumbel_logcdf",
+    "COPULA_LOGS",
     "nb_log_pmf",
     "univariate_nb_loglik",
     "bivariate_copula_loglik",

@@ -41,9 +41,10 @@ Notes
 * For Poisson marginals set ``marginal='poisson'``.
 * Shared covariates (same X for all outcomes) or outcome-specific covariate
   matrices ``X_list`` are both accepted.
-* The Gaussian copula is the default.  A vine-copula decomposition into
-  sequential bivariate Frank copulas is also available via
-  ``copula='vine-frank'``.
+* The Gaussian copula is the default.  A pairwise vine decomposition into
+  bivariate copulas is also available and supports several families:
+  ``copula='vine-frank'`` | ``'vine-joe'`` | ``'vine-gumbel'`` |
+  ``'vine-clayton'`` (joe/gumbel = upper-tail, clayton = lower-tail).
 """
 
 from __future__ import annotations
@@ -85,6 +86,9 @@ try:
         _hessian_se,
         _z_p,
         _sig_stars,
+        joe_logcdf,
+        gumbel_logcdf,
+        kimeldorf_sampson_logpdf,
     )
 except ImportError:
     from bivariate_copula import (
@@ -94,12 +98,16 @@ except ImportError:
         _hessian_se,
         _z_p,
         _sig_stars,
+        joe_logcdf,
+        gumbel_logcdf,
+        kimeldorf_sampson_logpdf,
     )
 
 __all__ = [
     "MultivariateCountRegressor",
     "MultivariateCountFit",
     "gaussian_copula_loglik",
+    "vine_copula_loglik",
     "vine_frank_copula_loglik",
 ]
 
@@ -327,19 +335,89 @@ def _frank_copula_cdf(u: jnp.ndarray, v: jnp.ndarray, rho: jnp.ndarray) -> jnp.n
     return jnp.clip(C, eps, 1.0 - eps)
 
 
-def vine_frank_copula_loglik(
+# ── Pair-level copula CDFs C(u,v;theta) for the vine (return C, not log C) ────
+# Joe/Gumbel/Clayton reuse the numerically-hardened primitives in
+# bivariate_copula (which return log C); exponentiate for the vine's cell-mass
+# differencing. Each family also declares how the UNCONSTRAINED optimiser
+# parameter maps to its native copula parameter.
+def _joe_copula_cdf(u, v, theta):
+    return jnp.clip(jnp.exp(joe_logcdf(u, v, theta)), 1e-12, 1.0 - 1e-12)
+
+
+def _gumbel_copula_cdf(u, v, theta):
+    return jnp.clip(jnp.exp(gumbel_logcdf(u, v, theta)), 1e-12, 1.0 - 1e-12)
+
+
+def _clayton_copula_cdf(u, v, theta):
+    return jnp.clip(jnp.exp(kimeldorf_sampson_logpdf(u, v, theta)), 1e-12, 1.0 - 1e-12)
+
+
+def _vine_raw_to_param(raw, copula):
+    """Map an unconstrained optimiser parameter to a family's copula parameter."""
+    if copula == "frank":
+        return raw                                   # rho unrestricted
+    if copula in ("joe", "gumbel"):
+        return 1.0 + jnp.exp(raw)                    # theta >= 1
+    if copula in ("clayton", "kimeldorf", "kimeldorf_sampson"):
+        return jnp.maximum(jnp.exp(raw) - 1.0, -0.999)
+    raise ValueError(f"unknown vine copula family {copula!r}")
+
+
+_VINE_PAIR_CDF = {
+    "frank":   _frank_copula_cdf,
+    "joe":     _joe_copula_cdf,
+    "gumbel":  _gumbel_copula_cdf,
+    "clayton": _clayton_copula_cdf,
+    "kimeldorf": _clayton_copula_cdf,
+    "kimeldorf_sampson": _clayton_copula_cdf,
+}
+
+
+def _vine_param_to_tau(raw: float, copula: str) -> float:
+    """Kendall's tau implied by an unconstrained vine parameter for ``copula``.
+
+    Used post-fit to build the implied rank-correlation matrix that the
+    prediction-time Gaussian sampler consumes. Gumbel/Clayton have closed-form
+    tau; Joe uses a truncated series; Frank uses the Debye-1 form.
+    """
+    if copula == "frank":
+        rho = float(raw)
+        if abs(rho) < 1e-8:
+            return 0.0
+        try:
+            return 1.0 - 4.0 / rho * (1.0 - _frank_debye(rho))
+        except Exception:
+            return 0.0
+    if copula == "gumbel":
+        theta = 1.0 + np.exp(raw)
+        return float(1.0 - 1.0 / theta)
+    if copula == "joe":
+        theta = 1.0 + np.exp(raw)
+        # tau_Joe = 1 - 4 * sum_{k>=1} 1/(k (theta*k + 2)(theta*(k-1) + 2))
+        k = np.arange(1, 2001, dtype=float)
+        s = float(np.sum(1.0 / (k * (theta * k + 2.0) * (theta * (k - 1.0) + 2.0))))
+        return 1.0 - 4.0 * s
+    # clayton / kimeldorf: theta = exp(raw) - 1, tau = theta / (theta + 2)
+    theta = max(float(np.exp(raw) - 1.0), -0.999)
+    return theta / (theta + 2.0)
+
+
+def vine_copula_loglik(
     Y: jnp.ndarray,         # (n, M)
     mus: jnp.ndarray,       # (n, M)
     alphas: jnp.ndarray,    # (M,)
-    rho_params: jnp.ndarray,  # (M*(M-1)//2,)  one rho per pair (i<j)
+    rho_params: jnp.ndarray,  # (M*(M-1)//2,)  one raw param per pair (i<j)
     M: int,
     marginal: str = "nb",
+    copula: str = "frank",
 ) -> jnp.ndarray:
     """
-    D-vine (pair-copula construction) log-likelihood using Frank bivariate
-    copulas.  The vine factorises the M-dimensional density as a product of
-    M*(M-1)/2 bivariate copula densities, one for each adjacent pair in
-    each tree level.
+    Pairwise (tree-1) copula composite log-likelihood using a selectable
+    bivariate copula FAMILY for every pair. Supported families: ``"frank"``,
+    ``"joe"``, ``"gumbel"``, ``"clayton"`` (alias ``"kimeldorf"``). The
+    M-dimensional dependence is captured as the sum of all M*(M-1)/2 bivariate
+    copula densities (one raw parameter per pair, mapped to the family's native
+    copula parameter by :func:`_vine_raw_to_param`).
 
     This is equivalent to the R-vine representation with a path graph
     structure (1-2, 2-3, â€¦, (M-1)-M in tree 1; conditional pairs in tree 2â€¦).
@@ -388,6 +466,7 @@ def vine_frank_copula_loglik(
     # first variable (m=0) is the hub and all M-1 pairs involve variable 0.
     # Additional tree pairs (j,k | 0) use conditional CDFs.
     # Here we implement tree-1 only (the dominant term) for tractability.
+    cop_fn = _VINE_PAIR_CDF[copula.lower()]
     rho_idx = 0
     log_vine = jnp.zeros(Y.shape[0])
 
@@ -395,21 +474,21 @@ def vine_frank_copula_loglik(
         for j in range(i + 1, M):
             if rho_idx >= len(rho_params):
                 break
-            rho = rho_params[rho_idx]
+            theta = _vine_raw_to_param(rho_params[rho_idx], copula.lower())
             rho_idx += 1
 
             ui = u[:, i]
             uj = u[:, j]
 
-            # Frank copula CDF at (ui, uj) and boundary terms
-            # Compute cell mass: C(F_i, F_j) - C(F_im1, F_j) - C(F_i, F_jm1) + C(F_im1, F_jm1)
+            # Selected copula CDF at (ui, uj) and boundary terms.
+            # Cell mass: C(F_i, F_j) - C(F_im1, F_j) - C(F_i, F_jm1) + C(F_im1, F_jm1)
             cdf_hi_i  = cdf_hi[:, i];   cdf_lo_i = cdf_lo[:, i]
             cdf_hi_j  = cdf_hi[:, j];   cdf_lo_j = cdf_lo[:, j]
 
-            C_pp = _frank_copula_cdf(cdf_hi_i, cdf_hi_j, rho)
-            C_pm = _frank_copula_cdf(cdf_hi_i, cdf_lo_j, rho)
-            C_mp = _frank_copula_cdf(cdf_lo_i, cdf_hi_j, rho)
-            C_mm = _frank_copula_cdf(cdf_lo_i, cdf_lo_j, rho)
+            C_pp = cop_fn(cdf_hi_i, cdf_hi_j, theta)
+            C_pm = cop_fn(cdf_hi_i, cdf_lo_j, theta)
+            C_mp = cop_fn(cdf_lo_i, cdf_hi_j, theta)
+            C_mm = cop_fn(cdf_lo_i, cdf_lo_j, theta)
 
             mass_ij = jnp.clip(C_pp - C_pm - C_mp + C_mm, eps, None)
             f_i = jnp.clip(cdf_hi_i - cdf_lo_i, eps, None)
@@ -418,6 +497,15 @@ def vine_frank_copula_loglik(
             log_vine = log_vine + jnp.log(mass_ij) - jnp.log(f_i) - jnp.log(f_j)
 
     return jnp.sum(ll_marginals) + jnp.sum(log_vine)
+
+
+def vine_frank_copula_loglik(
+    Y: jnp.ndarray, mus: jnp.ndarray, alphas: jnp.ndarray,
+    rho_params: jnp.ndarray, M: int, marginal: str = "nb",
+) -> jnp.ndarray:
+    """Backward-compatible Frank-only entry point (see vine_copula_loglik)."""
+    return vine_copula_loglik(Y, mus, alphas, rho_params, M, marginal,
+                              copula="frank")
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -562,8 +650,11 @@ class MultivariateCountRegressor:
         Length determines M.
     copula : str
         Copula family for joint dependence:
-        - ``'gaussian'``   M-variate Gaussian copula (default, recommended).
-        - ``'vine-frank'`` C-vine with Frank bivariate copulas.
+        - ``'gaussian'``    M-variate Gaussian copula (default, recommended).
+        - ``'vine-frank'``  pairwise vine with Frank bivariate copulas.
+        - ``'vine-joe'``    pairwise vine with Joe copulas (upper-tail dep.).
+        - ``'vine-gumbel'`` pairwise vine with Gumbel copulas (upper-tail dep.).
+        - ``'vine-clayton'``pairwise vine with Clayton copulas (lower-tail dep.).
     marginal : str
         Marginal distribution: ``'nb'`` (negative binomial, default) or
         ``'poisson'``.
@@ -616,6 +707,22 @@ class MultivariateCountRegressor:
 
         self.activity_names = activity_names or []
         self.copula = copula.lower()
+        # Resolve the vine bivariate FAMILY. Accepts 'gaussian', 'vine'
+        # (== vine-frank), 'vine-<family>' (frank/joe/gumbel/clayton), or a bare
+        # family name. Non-gaussian copulas all use the pairwise-vine likelihood.
+        self._is_gaussian = (self.copula == "gaussian")
+        if self._is_gaussian:
+            self._vine_family = None
+        elif self.copula in ("vine", "vine-frank"):
+            self._vine_family = "frank"
+        elif self.copula.startswith("vine-"):
+            self._vine_family = self.copula.split("-", 1)[1]
+        else:
+            self._vine_family = self.copula   # bare 'frank'/'joe'/'gumbel'/...
+        if self._vine_family is not None and self._vine_family not in _VINE_PAIR_CDF:
+            raise ValueError(
+                f"unknown copula {copula!r}; expected 'gaussian' or "
+                f"'vine-{{{'/'.join(sorted(set(_VINE_PAIR_CDF)))}}}'")
         self.marginal = marginal.lower()
         self.maxiter = maxiter
         self.stage1_maxiter = stage1_maxiter
@@ -760,14 +867,21 @@ class MultivariateCountRegressor:
                 chol_init = chol_flat
             except np.linalg.LinAlgError:
                 pass
-        else:  # vine-frank
+        else:  # vine (frank/joe/gumbel/clayton) — one raw param per pair
             n_copula = M * (M - 1) // 2
-            # Warm-start rho from empirical correlation
+            fam = self._vine_family
             rho_init = []
             for i in range(M):
                 for j in range(i + 1, M):
                     r = float(emp_corr[i, j])
-                    rho_init.append(np.clip(r * 4.0, -8.0, 8.0))
+                    if fam == "frank":
+                        raw0 = np.clip(r * 4.0, -8.0, 8.0)
+                    elif fam in ("joe", "gumbel"):
+                        # theta = 1 + exp(raw); warm-start modest positive dep.
+                        raw0 = float(np.log(max(0.2, 2.0 * max(r, 0.0))))
+                    else:  # clayton / kimeldorf: theta = exp(raw) - 1
+                        raw0 = float(np.log(1.0 + max(r, 0.0)))
+                    rho_init.append(raw0)
             chol_init = np.array(rho_init)
 
         init_params = _pack_joint_params(beta_init_list, chol_init)
@@ -787,13 +901,14 @@ class MultivariateCountRegressor:
                  for m in range(M)],
                 axis=1,
             )
-            if self.copula == "gaussian":
+            if self._is_gaussian:
                 ll = gaussian_copula_loglik(
                     Y_jax, mus, a_jax, copula_p, M, self.marginal
                 )
             else:
-                ll = vine_frank_copula_loglik(
-                    Y_jax, mus, a_jax, copula_p, M, self.marginal
+                ll = vine_copula_loglik(
+                    Y_jax, mus, a_jax, copula_p, M, self.marginal,
+                    copula=self._vine_family,
                 )
             return -ll
 
@@ -805,11 +920,18 @@ class MultivariateCountRegressor:
 
         # Bounds: copula params bounded for stability
         n_beta = sum(ks)
-        if self.copula == "gaussian":
+        if self._is_gaussian:
             # Off-diagonal Cholesky entries unbounded; diagonal > -inf (exp'd)
             bounds = [(None, None)] * n_beta + [(None, None)] * n_copula
         else:
-            bounds = [(None, None)] * n_beta + [(-8.0, 8.0)] * n_copula
+            fam = self._vine_family
+            if fam in ("joe", "gumbel"):
+                pair_lb, pair_ub = -8.0, 4.0      # theta = 1+exp(raw) in ~(1, 55)
+            elif fam in ("clayton", "kimeldorf", "kimeldorf_sampson"):
+                pair_lb, pair_ub = -8.0, 6.0
+            else:  # frank
+                pair_lb, pair_ub = -8.0, 8.0
+            bounds = [(None, None)] * n_beta + [(pair_lb, pair_ub)] * n_copula
 
         res = _scipy_minimize(
             obj,
@@ -829,23 +951,23 @@ class MultivariateCountRegressor:
         # â”€â”€ Unpack results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         betas_list_opt, copula_params_opt = _unpack_joint_params(params_opt, ks, n_copula)
 
-        if self.copula == "gaussian":
+        if self._is_gaussian:
             L_opt = _unpack_chol(jnp.asarray(copula_params_opt), M)
             corr_matrix = np.asarray(_chol_to_corr(L_opt))
         else:
-            # Vine: build implied pairwise corr matrix
+            # Vine: build the implied pairwise (rank) correlation matrix so a
+            # downstream Gaussian sampler can reproduce the estimated dependence.
+            # Each raw optimiser param -> the family's copula parameter -> the
+            # family's Kendall tau -> Pearson r via r = sin(pi/2 * tau).
+            fam = self._vine_family
             corr_matrix = np.eye(M)
             idx = 0
             for i in range(M):
                 for j in range(i + 1, M):
-                    rho = float(copula_params_opt[idx])
+                    raw = float(copula_params_opt[idx])
                     idx += 1
-                    # Frank rho â†’ Kendall tau â†’ Pearson (approx)
-                    try:
-                        tau = 1.0 - 4.0 / rho * (1.0 - _frank_debye(rho))
-                    except Exception:
-                        tau = 0.0
-                    r = np.sin(np.pi / 2.0 * np.clip(tau, -0.99, 0.99))
+                    tau = _vine_param_to_tau(raw, fam)
+                    r = np.sin(np.pi / 2.0 * np.clip(tau, -0.999, 0.999))
                     corr_matrix[i, j] = r
                     corr_matrix[j, i] = r
 
@@ -985,7 +1107,8 @@ def fit_multivariate_activity_model(
         Column name for log-offset (e.g. 'log_exposure').
         If dict: activity-specific offset columns.
     copula : str
-        'gaussian' (default) or 'vine-frank'.
+        'gaussian' (default), or a vine family: 'vine-frank' | 'vine-joe' |
+        'vine-gumbel' | 'vine-clayton'.
     marginal : str
         'nb' (default) or 'poisson'.
     add_intercept : bool
