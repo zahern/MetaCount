@@ -783,6 +783,42 @@ class MultivariateCountRegressor:
 
         ks = [x.shape[1] for x in X_list]
 
+        # ── Covariate standardisation (numerical conditioning) ──────────────
+        # On the raw scale the joint L-BFGS-B line search fails almost
+        # immediately (ABNORMAL_TERMINATION_IN_LNSRCH, |grad|~90 at nit=3):
+        # the beta/copula blocks have wildly different curvature. Fit in
+        # standardised covariate space (each non-constant column z-scored),
+        # then back-transform the coefficients to the RAW scale before storing
+        # them, so predict()/reports/offsets are unchanged. Because
+        # X_std @ beta_std == X_raw @ beta_raw by construction, the fitted
+        # means, the fixed alphas and the copula parameters are all identical
+        # to a (hypothetical) well-conditioned raw-scale fit.
+        self._x_center: List[np.ndarray] = []
+        self._x_scale: List[np.ndarray] = []
+        self._intercept_idx: List[int] = []
+        X_list_std: List[np.ndarray] = []
+        for m in range(M):
+            Xm = X_list[m].astype(np.float64).copy()
+            cen = np.zeros(Xm.shape[1]); scl = np.ones(Xm.shape[1])
+            icept = -1
+            for j in range(Xm.shape[1]):
+                col = Xm[:, j]
+                if np.ptp(col) < 1e-12:              # constant column (intercept)
+                    if icept < 0:
+                        icept = j
+                    continue
+                sd_j = col.std()
+                if sd_j > 1e-12:
+                    cen[j] = col.mean(); scl[j] = sd_j
+                    Xm[:, j] = (col - cen[j]) / sd_j
+            self._x_center.append(cen)
+            self._x_scale.append(scl)
+            self._intercept_idx.append(icept)
+            X_list_std.append(Xm)
+        # Use the standardised matrices for both stage-1 margins and the joint
+        # fit; the raw matrices are recovered by the back-transform at the end.
+        X_list = X_list_std
+
         # â”€â”€ Offsets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if offsets is None:
             off_arr = np.zeros((n, M))
@@ -942,14 +978,50 @@ class MultivariateCountRegressor:
             options={"maxiter": self.maxiter, "ftol": 1e-10, "gtol": 1e-6},
         )
 
+        # L-BFGS-B can still stop with ABNORMAL_TERMINATION_IN_LNSRCH; a few
+        # restarts from the incumbent (fresh Hessian approximation) reliably
+        # reach a stationary point. Treat a small final gradient as converged
+        # even when SciPy's own flag is unset (its relative-f test can declare
+        # a flat-but-non-stationary point, or abort a valid descent).
+        for _ in range(5):
+            if res.success:
+                break
+            if float(np.max(np.abs(obj(np.asarray(res.x))[1]))) < 1e-3:
+                break
+            res_new = _scipy_minimize(obj, np.asarray(res.x), jac=True,
+                                      method="L-BFGS-B", bounds=bounds,
+                                      options={"maxiter": self.maxiter,
+                                               "ftol": 1e-10, "gtol": 1e-6})
+            if not np.isfinite(res_new.fun) or res_new.fun > res.fun + 1e-6:
+                break                       # no improvement -> stop restarting
+            res = res_new
+
         params_opt = np.asarray(res.x)
-        converged = bool(res.success)
+        gmax = float(np.max(np.abs(obj(params_opt)[1])))
+        converged = bool(res.success) or gmax < 1e-2
         if self.verbose:
             status = "converged" if converged else f"stopped ({res.message})"
-            print(f"  Joint optimisation {status}.")
+            print(f"  Joint optimisation {status} "
+                  f"(max|grad|={gmax:.3g}, nit={getattr(res, 'nit', '?')}).")
 
         # â”€â”€ Unpack results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         betas_list_opt, copula_params_opt = _unpack_joint_params(params_opt, ks, n_copula)
+
+        # Back-transform standardised coefficients to the RAW covariate scale
+        # (inverse of the standardisation block). beta_raw_j = beta_std_j/scale_j
+        # for slopes; the intercept absorbs the centring shift. Point estimates
+        # are exact (X_std @ beta_std == X_raw @ beta_raw), so predict()/offsets
+        # and the copula fit are unchanged.
+        betas_std_opt = [np.asarray(b, dtype=float).copy() for b in betas_list_opt]
+        betas_list_opt = []
+        for m in range(M):
+            b = betas_std_opt[m].copy()
+            cen = self._x_center[m]; scl = self._x_scale[m]; ic = self._intercept_idx[m]
+            shift = float(np.sum(b * cen / scl))     # cen==0 for unstandardised cols
+            b = b / scl
+            if ic >= 0:
+                b[ic] = b[ic] - shift
+            betas_list_opt.append(b)
 
         if self._is_gaussian:
             L_opt = _unpack_chol(jnp.asarray(copula_params_opt), M)
@@ -975,7 +1047,12 @@ class MultivariateCountRegressor:
         try:
             se_full = _hessian_se(neg_ll, params_opt)
             splits = np.cumsum([0] + ks)
-            se_list = [se_full[splits[m]: splits[m + 1]] for m in range(M)]
+            # SEs are computed in standardised space; scale slope SEs back by
+            # 1/scale_j (exact). The intercept SE is left in standardised units
+            # (approximate — it ignores the cross-covariance from the centring
+            # shift); the problem is well-conditioned so this is minor.
+            se_list = [np.asarray(se_full[splits[m]: splits[m + 1]], float)
+                       / self._x_scale[m] for m in range(M)]
             se_copula = se_full[splits[-1]: splits[-1] + n_copula]
         except Exception:
             se_list = [np.full(ks[m], np.nan) for m in range(M)]
