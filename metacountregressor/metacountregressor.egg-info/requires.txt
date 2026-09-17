@@ -1,15 +1,15 @@
-jax>=0.4.1
-jaxlib>=0.4.1
-jaxopt>=0.6
+jax>=0.4.30
+jaxlib>=0.4.30
+jaxopt>=0.8
 joblib>=1.2
 latextable>=0.2
-matplotlib<3.10,>=3.5
-numpy<2,>=1.23
-pandas<3,>=1.5
+matplotlib>=3.5
+numpy<3,>=1.26.4
+pandas<4,>=1.5
 psutil>=5.9
-scikit-learn<1.7,>=1.1
-scipy<1.15,>=1.9
-statsmodels<0.15,>=0.13
+scikit-learn<2,>=1.1
+scipy<2,>=1.9
+statsmodels<1,>=0.13
 texttable>=1.6
 
 [dev]

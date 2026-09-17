@@ -4,9 +4,13 @@ _device_cust
 _device_jax_cust
 _jax_config
 _version
+bayesian_model
+bivariate_copula
 cmf_package
 data_split_helper
+duration_main
 experiment_package
+family_search
 fitted_specifications
 halton
 help_guide
@@ -16,6 +20,7 @@ main_hpc_lc_patch
 metacountregressor
 metaheuristics
 model_constraints
+multivariate_count_regressor
 output_config
 pareto_file
 pavement_clr

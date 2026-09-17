@@ -5,9 +5,13 @@ _device_cust.py
 _device_jax_cust.py
 _jax_config.py
 _version.py
+bayesian_model.py
+bivariate_copula.py
 cmf_package.py
 data_split_helper.py
+duration_main.py
 experiment_package.py
+family_search.py
 fitted_specifications.py
 halton.py
 help_guide.py
@@ -16,6 +20,7 @@ main_hpc.py
 main_hpc_lc_patch.py
 metaheuristics.py
 model_constraints.py
+multivariate_count_regressor.py
 output_config.py
 pareto_file.py
 pavement_clr.py
@@ -58,3 +63,5 @@ tests/test_bayesian_model.py
 tests/test_cmf_pymc_comparison.py
 tests/test_experiment_builder.py
 tests/test_package_api.py
+tests/test_rp_hierarchical_smoke.py
+tests/test_rp_structural_equation.py

@@ -1236,6 +1236,16 @@ def balance_panel_dataframe(df, id_col, y_col, feature_cols):
     N = len(ids)
 
     counts = df.groupby(id_col).size().values
+    # Guard against an empty / degenerate panel (e.g. a per-cluster subset that
+    # filtered out every row). Without this, counts.max() raises an opaque
+    # "zero-size array to reduction operation maximum" error deep in NumPy.
+    if N == 0 or counts.size == 0:
+        raise ValueError(
+            f"balance_panel_dataframe received an empty panel: 0 observations "
+            f"and {N} unique '{id_col}' values. This usually means an upstream "
+            f"filter or cluster subset removed all rows. Check the caller's data "
+            f"selection (e.g. skip clusters with too few segments before fitting)."
+        )
     P = counts.max()
 
     K = len(feature_cols)
@@ -1259,6 +1269,11 @@ def extract_offset(df, id_col, offset_col):
     ids = df[id_col].unique()
     N = len(ids)
     counts = df.groupby(id_col).size().values
+    if N == 0 or counts.size == 0:
+        raise ValueError(
+            f"extract_offset received an empty panel: 0 observations and {N} "
+            f"unique '{id_col}' values (likely an empty cluster subset)."
+        )
     P = counts.max()
 
     offset = np.zeros((N, P, 1))
@@ -1378,6 +1393,17 @@ def build_jax_data(
     Xh_var = extract(hetro_var_cols)
     Xgse = extract(gse_cols)
     Xzi = extract(zi_cols)
+
+    # Auto-generate simulation draws when random blocks are present but no
+    # draws were supplied (mirrors main_hpc_lc_patch; without draws the
+    # random blocks are silently dead weight).
+    _n_draw = int(X_all.shape[0])
+    if draws_ind is None and Xr_ind.shape[2] > 0:
+        draws_ind = generate_halton_normal(_n_draw, Xr_ind.shape[2], R, seed=42)
+    if draws_cor is None and Xr_cor.shape[2] > 0:
+        draws_cor = generate_halton_normal(_n_draw, Xr_cor.shape[2], R, seed=43)
+    if draws_g is None and Xg.shape[2] > 0:
+        draws_g = generate_halton_normal(_n_draw, Xg.shape[2], R, seed=44)
 
     N, P = y.shape[0], y.shape[1]
 

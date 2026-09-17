@@ -106,17 +106,17 @@ class AdvancedSimulatedAnnealing:
     def __init__(self,
                  evaluator,
                  dimension,
-                 max_iter=3000,
+                 max_iter=5000,        # more iterations for larger search space
                  max_time=None,
                  T0=None,
                  alpha=0.995,
                  mutation_rate=0.3,
                  min_changes=1,
-                 max_changes=3,
+                 max_changes=5,        # larger for 10-role space
                  adaptive=True,
                  step_size=1,
                  archive_limit=100,
-                 restart_threshold=500, patience =400, tol = 1e-6,
+                 restart_threshold=500, patience=400, tol=1e-6,
                  init_solution=None):
 
         self.init_solution = None
@@ -1172,7 +1172,7 @@ class MultiStartSA:
     def __init__(self,
                  evaluator,
                  dimension,
-                 n_starts=10,
+                 n_starts=5,          # more restarts for better coverage
                  n_jobs=1,
                  init_solutions=None,
                  **sa_kwargs):

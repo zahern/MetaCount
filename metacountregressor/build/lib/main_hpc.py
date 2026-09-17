@@ -551,18 +551,25 @@ class ModelSpec:
     Kr_cor: int
     Kg: int
     Kh: int
-    Kzi: int 
-    model: str
-    zero_inflated: bool  # ✅ NEW
-    fixed_names: tuple
-    zi_names: tuple
-    random_ind_names: tuple
-    random_cor_names: tuple
-    grouped_names: tuple
-    hetro_names: tuple
-    random_ind_dists: tuple
-    random_cor_dists: tuple
-    grouped_dists: tuple
+    Kv: int = 0
+    Kzi: int = 0
+    model: str = "poisson"
+    zero_inflated: bool = False  # ✅ NEW
+    fixed_names: tuple = ()
+    zi_names: tuple = ()
+    random_ind_names: tuple = ()
+    random_cor_names: tuple = ()
+    grouped_names: tuple = ()
+    hetro_names: tuple = ()
+    hetro_var_names: tuple = ()
+    # ── GSE GRADIENT-SCORE LOADINGS ────────────────────────────────────
+    # Kgse = number of gradient-score columns; one loading gamma_gse[k] per
+    # random coefficient (structural equation in random_parameter_structure).
+    Kgse: int = 0
+    gse_names: tuple = ()
+    random_ind_dists: tuple = ()
+    random_cor_dists: tuple = ()
+    grouped_dists: tuple = ()
     # ── VARIANCE REGULARISATION ────────────────────────────────────────
     # Log-barrier that keeps random-SD / dispersion scale parameters
     # strictly away from zero, so random-parameters and NB2 models cannot
@@ -706,14 +713,36 @@ def build_eta(params, data, spec: ModelSpec):
         shift_var = jnp.mean(shift_var_full, axis=1)  # (N,K_random_total)
 
     # =====================================================
+    # GSE GRADIENT-SCORE SHIFT (structural equation)
+    # =====================================================
+    # gamma_k * g_nk per random coefficient; G columns align with the
+    # random-coefficient order (cor, then ind).  See
+    # random_parameter_structure for the canonical equation.
+    gse_shift = None
+    if getattr(spec, "Kgse", 0) > 0 and spec.K_random_total > 0:
+        _G = data.get("G") if isinstance(data, dict) else None
+        _gg = blocks.get("gamma_gse")
+        if _G is not None and _gg is not None and _G.shape[-1] > 0:
+            if _G.shape[-1] != spec.K_random_total:
+                raise ValueError(
+                    f"GSE scores have {_G.shape[-1]} columns but the spec has "
+                    f"{spec.K_random_total} random coefficients — G must align "
+                    f"with the random-coefficient order (cor, then ind)."
+                )
+            gse_shift = jnp.mean(_G * _gg[None, None, :], axis=1)
+
+    # =====================================================
     # CORRELATED RANDOM EFFECTS
     # =====================================================
     if spec.Kr_cor > 0:
 
-        mean_cor = blocks["mean_cor"]
-
+        _shift_cor = 0.0
         if shift is not None:
-            mean_cor = mean_cor[None, :] + shift[:, :spec.Kr_cor]
+            _shift_cor = _shift_cor + shift[:, :spec.Kr_cor]
+        if gse_shift is not None:
+            _shift_cor = _shift_cor + gse_shift[:, :spec.Kr_cor]
+        mean_cor = blocks["mean_cor"]
+        mean_cor = mean_cor[None, :] + _shift_cor
 
         # For correlated effects, variance heterogeneity affects the Cholesky factor
         # We apply the mean shift across observations to the log-diagonal
@@ -740,10 +769,13 @@ def build_eta(params, data, spec: ModelSpec):
     # =====================================================
     if spec.Kr_ind > 0:
 
-        mean_ind = blocks["mean_ind"]
-
+        _shift_ind = 0.0
         if shift is not None:
-            mean_ind = mean_ind[None, :] + shift[:, spec.Kr_cor:]
+            _shift_ind = _shift_ind + shift[:, spec.Kr_cor:]
+        if gse_shift is not None:
+            _shift_ind = _shift_ind + gse_shift[:, spec.Kr_cor:]
+        mean_ind = blocks["mean_ind"]
+        mean_ind = mean_ind[None, :] + _shift_ind
 
         sd_ind = blocks["sd_ind"]
         if shift_var is not None:
@@ -1139,12 +1171,16 @@ def parse_manual_spec(manual_spec):
     grouped_cols = [term.split(":")[0] for term in grouped_terms]
     hetro_terms = manual_spec.get("hetro_in_means", [])
     hetro_cols = [term.split(":")[0].strip() for term in hetro_terms]
+    hetro_var_terms = manual_spec.get("hetro_in_variances", [])
+    hetro_var_cols = [term.split(":")[0].strip() for term in hetro_var_terms]
+    gse_cols = list(manual_spec.get("gse_cols", []))
+    gse_scores = manual_spec.get("gse_scores", None)
     random_ind_dists = [term.split(":")[1] for term in rdm_terms]
     random_cor_dists = [term.split(":")[1] for term in rdm_cor_terms]
     grouped_dists = [term.split(":")[1] for term in grouped_terms]
     zi_cols = manual_spec.get("zi_terms", [])
 
-    return fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, random_ind_dists, random_cor_dists, grouped_dists, zi_cols
+    return fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, hetro_var_cols, gse_cols, gse_scores, random_ind_dists, random_cor_dists, grouped_dists, zi_cols
 
 
 def build_model_from_manual_spec(
@@ -1159,7 +1195,7 @@ def build_model_from_manual_spec(
     R=200
 ):
 
-    (fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, random_ind_dists, random_cor_dists,
+    (fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, hetro_var_cols, gse_cols, gse_scores, random_ind_dists, random_cor_dists,
     grouped_dists, zi_cols) = parse_manual_spec(manual_spec)
 
     data, spec = build_jax_data(
@@ -1172,6 +1208,9 @@ def build_model_from_manual_spec(
         random_cor_cols=random_cor,
         grouped_cols=grouped_cols,
         hetro_cols=hetro_cols,
+        hetro_var_cols=hetro_var_cols,
+        gse_cols=gse_cols,
+        gse_scores=gse_scores,
         zi_cols=zi_cols,
         offset_col=offset_col,
         draws_ind=draws_ind,
@@ -1197,6 +1236,16 @@ def balance_panel_dataframe(df, id_col, y_col, feature_cols):
     N = len(ids)
 
     counts = df.groupby(id_col).size().values
+    # Guard against an empty / degenerate panel (e.g. a per-cluster subset that
+    # filtered out every row). Without this, counts.max() raises an opaque
+    # "zero-size array to reduction operation maximum" error deep in NumPy.
+    if N == 0 or counts.size == 0:
+        raise ValueError(
+            f"balance_panel_dataframe received an empty panel: 0 observations "
+            f"and {N} unique '{id_col}' values. This usually means an upstream "
+            f"filter or cluster subset removed all rows. Check the caller's data "
+            f"selection (e.g. skip clusters with too few segments before fitting)."
+        )
     P = counts.max()
 
     K = len(feature_cols)
@@ -1220,6 +1269,11 @@ def extract_offset(df, id_col, offset_col):
     ids = df[id_col].unique()
     N = len(ids)
     counts = df.groupby(id_col).size().values
+    if N == 0 or counts.size == 0:
+        raise ValueError(
+            f"extract_offset received an empty panel: 0 observations and {N} "
+            f"unique '{id_col}' values (likely an empty cluster subset)."
+        )
     P = counts.max()
 
     offset = np.zeros((N, P, 1))
@@ -1244,6 +1298,9 @@ def build_jax_data(
     random_cor_cols=None,
     grouped_cols=None,
     hetro_cols=None,
+    hetro_var_cols=None,
+    gse_cols=None,
+    gse_scores=None,
     offset_col=None,
     draws_ind=None,
     draws_cor=None,
@@ -1263,6 +1320,8 @@ def build_jax_data(
     random_cor_cols = random_cor_cols or []
     grouped_cols = grouped_cols or []
     hetro_cols = hetro_cols or []
+    hetro_var_cols = hetro_var_cols or []
+    gse_cols = gse_cols or []
     zi_cols = zi_cols or  []
 
     random_ind_dists = random_ind_dists or []
@@ -1283,14 +1342,14 @@ def build_jax_data(
     # can back-transform to original-scale coefficients for reporting.
     _predictor_cols = list(set(
         fixed_cols + random_ind_cols + random_cor_cols
-        + grouped_cols + hetro_cols + zi_cols
+        + grouped_cols + hetro_cols + hetro_var_cols + gse_cols + zi_cols
     ))
     _scaler = compute_scaler(df, _predictor_cols)
     if _scaler:
         df = apply_scaler(df, _scaler)
 
     all_features = list(set(
-        ["__INTERCEPT__"] + fixed_cols + random_ind_cols + random_cor_cols + grouped_cols + hetro_cols +zi_cols
+        ["__INTERCEPT__"] + fixed_cols + random_ind_cols + random_cor_cols + grouped_cols + hetro_cols + hetro_var_cols + gse_cols + zi_cols
     ))
 
     X_all, y, mask = balance_panel_dataframe(
@@ -1327,14 +1386,42 @@ def build_jax_data(
     X_fixed = extract(fixed_cols)
     X_intercept = extract(["__INTERCEPT__"])
     Xf = np.concatenate([X_intercept, X_fixed], axis=2)
-    #Xf = extract(fixed_cols)
     Xr_ind = extract(random_ind_cols)
     Xr_cor = extract(random_cor_cols)
     Xg = extract(grouped_cols)
     Xh = extract(hetro_cols)
+    Xh_var = extract(hetro_var_cols)
+    Xgse = extract(gse_cols)
     Xzi = extract(zi_cols)
 
+    # Auto-generate simulation draws when random blocks are present but no
+    # draws were supplied (mirrors main_hpc_lc_patch; without draws the
+    # random blocks are silently dead weight).
+    _n_draw = int(X_all.shape[0])
+    if draws_ind is None and Xr_ind.shape[2] > 0:
+        draws_ind = generate_halton_normal(_n_draw, Xr_ind.shape[2], R, seed=42)
+    if draws_cor is None and Xr_cor.shape[2] > 0:
+        draws_cor = generate_halton_normal(_n_draw, Xr_cor.shape[2], R, seed=43)
+    if draws_g is None and Xg.shape[2] > 0:
+        draws_g = generate_halton_normal(_n_draw, Xg.shape[2], R, seed=44)
+
     N, P = y.shape[0], y.shape[1]
+
+    # -----------------------------
+    # GSE gradient scores (N, P, Kgse)
+    # -----------------------------
+    # Either extracted from df columns (gse_cols) or passed explicitly as
+    # gse_scores with shape (N, Kgse) / (N, P, Kgse).  Callers standardise
+    # via random_parameter_structure.standardise_scores first.
+    if gse_scores is not None:
+        _g = np.asarray(gse_scores, dtype=float)
+        if _g.ndim == 2:
+            _g = np.broadcast_to(_g[:, None, :], (N, P, _g.shape[1])).copy()
+        G = _g
+    else:
+        G = np.asarray(Xgse, dtype=float)
+    if G.shape[2] == 0:
+        G = np.zeros((N, P, 0))
 
     # -----------------------------
     # Offset
@@ -1353,6 +1440,8 @@ def build_jax_data(
         "Xr_cor": jnp.array(Xr_cor),
         "Xg": jnp.array(Xg),
         "Xh": jnp.array(Xh),
+        "Xh_var": jnp.array(Xh_var),
+        "G": jnp.array(G),
         "Xzi": jnp.array(Xzi),
         "y": jnp.array(y),
         "mask": jnp.array(mask),
@@ -1379,6 +1468,7 @@ def build_jax_data(
         Kr_cor=Xr_cor.shape[2],
         Kg=Xg.shape[2],
         Kh=Xh.shape[2],
+        Kv=Xh_var.shape[2],
         zi_names=tuple(zi_cols),
         Kzi=Xzi.shape[2],
         zero_inflated = (len(zi_cols) > 0),
@@ -1388,6 +1478,9 @@ def build_jax_data(
         random_cor_names=tuple(random_cor_cols),
         grouped_names=tuple(grouped_cols),
         hetro_names=tuple(hetro_cols),
+        hetro_var_names=tuple(hetro_var_cols),
+        Kgse=G.shape[2],
+        gse_names=tuple(gse_cols),
         random_ind_dists=tuple(random_ind_dists),
         random_cor_dists=tuple(random_cor_dists),
         grouped_dists=tuple(grouped_dists),
@@ -1452,6 +1545,12 @@ def build_base_index(spec, model=None):
         Khet_var = spec.Kv * spec.K_random_total
         index["hetro_var"] = (idx, idx + Khet_var)
         idx += Khet_var
+
+    # GSE gradient-score loadings: one gamma per random coefficient.
+    # G columns align with the random-coefficient order (cor, then ind).
+    if getattr(spec, "Kgse", 0) > 0 and spec.K_random_total > 0:
+        index["gse_gamma"] = (idx, idx + spec.K_random_total)
+        idx += spec.K_random_total
 
     if _model == "nb":
         index["dispersion"] = idx
@@ -2902,6 +3001,11 @@ def print_summary(result, objective, data, spec, param_index):
             for z in spec.hetro_var_names:
                 names.append(f"hetro_var({rnd}|{z})")
 
+    # GSE gradient-score loadings
+    if getattr(spec, "Kgse", 0) > 0:
+        for rnd in spec.random_cor_names + spec.random_ind_names:
+            names.append(f"gse({rnd})")
+
     # NB dispersion / Tobit-Gaussian scale
     if spec.model == "nb":
         names.append("dispersion")
@@ -3207,6 +3311,15 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
         for rnd in spec.random_cor_names + spec.random_ind_names:
             for z in spec.hetro_names:
                 names.append(f"hetro({rnd}|{z})")
+
+    if getattr(spec, "Kv", 0) > 0:
+        for rnd in spec.random_cor_names + spec.random_ind_names + spec.grouped_names:
+            for z in spec.hetro_var_names:
+                names.append(f"hetro_var({rnd}|{z})")
+
+    if getattr(spec, "Kgse", 0) > 0:
+        for rnd in spec.random_cor_names + spec.random_ind_names:
+            names.append(f"gse({rnd})")
 
     if spec.model == "nb":
         names.append("dispersion")
@@ -4625,6 +4738,13 @@ def unpack_params(params, spec: ModelSpec, model=None):
             out["gamma_var"] = gamma_var.reshape(spec.Kv, spec.K_random_total)
         else:
             out["gamma_var"] = None
+
+        # GSE GRADIENT-SCORE LOADINGS (one gamma per random coefficient)
+        if getattr(spec, "Kgse", 0) > 0 and spec.K_random_total > 0:
+            out["gamma_gse"] = params[idx:idx + spec.K_random_total]
+            idx += spec.K_random_total
+        else:
+            out["gamma_gse"] = None
 
         # NB DISPERSION / SCALE
         if _model == "nb":

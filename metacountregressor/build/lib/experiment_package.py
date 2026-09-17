@@ -3474,9 +3474,12 @@ class ExperimentBuilder:
         if algo in ("sa", "hc"):
             defaults = dict(
                 max_iter=max_iter,
-                mutation_rate=0.3, step_size=1,
-                min_changes=1, max_changes=3,
-                n_starts=1, alpha=0.995,
+                mutation_rate=0.3,
+                step_size=1,
+                min_changes=1,
+                max_changes=5,  # increased for larger role space (10 roles vs old 6)
+                n_starts=3,     # multiple restarts for better coverage
+                alpha=0.995,
             )
             defaults.update(algo_kwargs)
             # Warm-start resume: harvest the best decision vector already in
@@ -3585,8 +3588,8 @@ class ExperimentBuilder:
             return result
 
         elif algo in ("de", "hs"):
-            de_def = dict(population_size=20, F=0.5, CR=0.7)
-            hs_def = dict(population_size=20, hmcr=0.9,
+            de_def = dict(population_size=30, F=0.5, CR=0.7)  # larger pop for expanded role space
+            hs_def = dict(population_size=30, hmcr=0.9,
                           par_min=0.1, par_max=0.9, bw_min=1, bw_max=3)
 
             if algo == "de":
