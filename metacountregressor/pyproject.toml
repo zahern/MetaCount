@@ -30,6 +30,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Optional Numba acceleration for the NumPy-only fitting paths (pavement
+# CLR near-unit-root / AR(1) MLEs).  The JAX estimators do not need it.
+numba = ["numba>=0.58"]
 
 # Single source of truth for the version: _version.py (__version__).
 # Bump the number there only; the build metadata and runtime

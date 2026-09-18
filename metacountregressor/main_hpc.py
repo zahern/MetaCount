@@ -1622,7 +1622,11 @@ def compute_standard_errors(params, objective):
     giving lower-MSE coefficient estimates when predictors are correlated.
     """
     params_np = np.asarray(params, dtype=float)
-    hess_np   = np.asarray(jax.hessian(objective)(jnp.asarray(params_np)), dtype=float)
+    # Compile the Hessian as a single executable: differentiating the
+    # (already-jitted) objective otherwise emits a swarm of tiny helper
+    # executables on every call.
+    hess_fn   = jax.jit(jax.hessian(objective))
+    hess_np   = np.asarray(hess_fn(jnp.asarray(params_np)), dtype=float)
 
     H = np.where(np.isfinite(hess_np), hess_np, 0.0)
 
@@ -1700,8 +1704,9 @@ def compute_regularized_estimates(
     # Hessian of the negative log-likelihood at the MLE — the Fisher
     # information matrix.  jax.hessian gives us this as a jnp array,
     # so we can feed it directly into the JAX-native PARTE path without
-    # any numpy round-trip.
-    hess_jax = jax.hessian(objective)(params_jax)
+    # any numpy round-trip.  Wrapped in jit so the forward-over-forward
+    # helpers compile as one executable instead of many tiny ones.
+    hess_jax = jax.jit(jax.hessian(objective))(params_jax)
 
     # Identify fixed-effect block indices (static at JIT compile time)
     fixed_key = "fixed" if "fixed" in param_index else "beta_f"
@@ -3666,6 +3671,12 @@ def run_with_oom_recovery(fn, *args, label="operation", **kwargs):
                 return fn(*args, **kwargs)
 
 
+# Jitted linear-predictor builder for post-fit prediction paths.  Calling
+# ``build_eta`` eagerly on committed device arrays compiles a tiny kernel per
+# primitive; one shared compilation is reused for every prediction call.
+_build_eta_jit = jax.jit(build_eta, static_argnames=("spec",))
+
+
 class CountModel:
 
     def __init__(self, spec, data):
@@ -3825,14 +3836,17 @@ class CountModel:
         # Check for externally-supplied initial parameters first
         custom_init = getattr(self, "_init_params", None)
         if custom_init is not None:
-            init = jnp.asarray(custom_init, dtype=float)
+            init = np.array(custom_init, dtype=float, copy=True)
         else:
+            # Build the start vector in NumPy: eager JAX slicing/updates on
+            # committed arrays compile one tiny executable per operation.
+            # np.array (not asarray) copies: device_get buffers are read-only.
             key = jax.random.PRNGKey(0)
-            init = 0.01 * jax.random.normal(key, (n_params,))
+            init = np.array(0.01 * jax.random.normal(key, (n_params,)), copy=True)
 
             if use_prefit:
                 try:
-                    pre_beta = fit_simple_poisson_full(self.data, self.spec)
+                    pre_beta = np.asarray(fit_simple_poisson_full(self.data, self.spec))
 
                     cursor_pre = 0  # position inside pre_beta
 
@@ -3840,28 +3854,28 @@ class CountModel:
                     if self.spec.Kf > 0:
                         start, end = self.param_index["fixed"]
                         k = self.spec.Kf
-                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        init[start:end] = pre_beta[cursor_pre:cursor_pre+k]
                         cursor_pre += k
 
                     # ✅ Correlated means
                     if self.spec.Kr_cor > 0:
                         start, end = self.param_index["cor_mean"]
                         k = self.spec.Kr_cor
-                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        init[start:end] = pre_beta[cursor_pre:cursor_pre+k]
                         cursor_pre += k
 
                     # ✅ Independent means
                     if self.spec.Kr_ind > 0:
                         start, end = self.param_index["ind_mean"]
                         k = self.spec.Kr_ind
-                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        init[start:end] = pre_beta[cursor_pre:cursor_pre+k]
                         cursor_pre += k
 
                     # ✅ Grouped means
                     if self.spec.Kg > 0:
                         start, end = self.param_index["group_mean"]
                         k = self.spec.Kg
-                        init = init.at[start:end].set(pre_beta[cursor_pre:cursor_pre+k])
+                        init[start:end] = pre_beta[cursor_pre:cursor_pre+k]
                         cursor_pre += k
 
                     # Everything else stays zero:
@@ -3870,7 +3884,7 @@ class CountModel:
                 except Exception as e:
                     print("Prefit failed:", e)
                     key = jax.random.PRNGKey(0)
-                    init = 0.001 * jax.random.normal(key, (n_params,))
+                    init = np.array(0.001 * jax.random.normal(key, (n_params,)), copy=True)
 
         # Track objective at the optimiser start point for diagnostics.
         try:
@@ -3933,19 +3947,19 @@ class CountModel:
         return -2*self.loglik() + k*np.log(n)
 
     def predict(self):
-        eta = build_eta(self.params, self.data, self.spec)
+        eta = np.asarray(_build_eta_jit(self.params, self.data, self.spec))
         if self.spec.model == "gaussian":
             return eta.mean(axis=-1)
         if self.spec.model == "tobit":
             # E[Y_obs | X] = Phi(z)*eta + sigma*phi(z),  z = eta/sigma
             # Eq. (11) in Chand & Dixit (2018)
             blocks = unpack_params(self.params, self.spec)
-            sigma  = jax.nn.softplus(blocks["sigma"])
+            sigma  = float(np.logaddexp(0.0, np.asarray(blocks["sigma"])))
             eta_m  = eta.mean(axis=-1)                  # (N, P)
             z      = eta_m / sigma
-            phi_z  = jnp.exp(-0.5 * z ** 2) / jnp.sqrt(2.0 * jnp.pi)
-            return jsp.special.ndtr(z) * eta_m + sigma * phi_z
-        mu = jnp.exp(eta)
+            phi_z  = np.exp(-0.5 * z ** 2) / np.sqrt(2.0 * np.pi)
+            return stats.norm.cdf(z) * eta_m + sigma * phi_z
+        mu = np.exp(eta)
         return mu.mean(axis=-1)
 
     def scipy_trust(self, seed=0):

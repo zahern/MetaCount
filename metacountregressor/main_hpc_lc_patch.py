@@ -810,6 +810,92 @@ def _parte_shrink_theta(theta_c, objective, param_index_c: dict, variant: str = 
     return theta_parte
 
 
+# ── JIT-stable EM M-step machinery ──────────────────────────────────────
+# jaxopt re-traces and re-compiles its while-loop on every ``solver.run()``
+# call, and the original EM built a fresh objective closure per class per
+# iteration with the current NumPy weights captured as a traced constant.
+# The two combined made every EM iteration pay several XLA compilations.
+# The helpers below build each objective once per class and keep the
+# per-iteration quantities (weights, other-class gammas, balance penalty)
+# as *dynamic* arguments, so one ``jax.jit(solver.run)`` compilation is
+# reused across the whole EM run.
+_LC_MSTEP_MAXITER = 300
+
+
+def _make_weighted_theta_objective(data_c, spec_c, l2_penalty):
+    """Stable per-class M-step objective; ``w_c`` is a dynamic argument."""
+
+    def objective(theta_c, w_c):
+        ll_ind = mixed_model_loglik(theta_c, data_c, spec_c, indivi=True)
+        loss = -jnp.sum(w_c * ll_ind)
+        if l2_penalty > 0.0 and theta_c.shape[0] > 1:
+            loss = loss + l2_penalty * jnp.sum(theta_c[1:] ** 2)
+        return loss
+
+    return objective
+
+
+def _make_gamma_objective(cc, Z_mats_jnp, gamma_slices):
+    """Stable per-class gamma objective; class ``cc``'s slice is optimised.
+
+    ``gamma_all`` (flat gamma vector), ``w`` (posterior weights) and
+    ``prior_weight`` (balance-prior strength) are all dynamic arguments.
+    """
+    n_classes = len(Z_mats_jnp)
+    Ncur = Z_mats_jnp[cc].shape[0]
+    zeros_col = jnp.zeros((Ncur, 1))
+
+    def objective(gamma_c, w, gamma_all, prior_weight):
+        logit_cols = []
+        for tc in range(n_classes):
+            if tc == cc:
+                g_t = gamma_c
+            else:
+                i0, i1 = gamma_slices[tc]
+                g_t = gamma_all[i0:i1]
+            logit_cols.append(Z_mats_jnp[tc] @ g_t)
+        li = jnp.stack(logit_cols, axis=1)
+        lf = jnp.concatenate([zeros_col, li], axis=1)
+        lp = jax.nn.log_softmax(lf, axis=1)
+        ce = -jnp.sum(w * lp)
+        log_pi_marg = jax.nn.log_softmax(
+            jnp.mean(lf, axis=0, keepdims=True), axis=1
+        )
+        return ce - prior_weight * jnp.sum(log_pi_marg)
+
+    return objective
+
+
+def _make_jitted_runner(objective, maxiter=_LC_MSTEP_MAXITER):
+    """Compile ``LBFGS.run`` once for a stable objective function."""
+    solver = LBFGS(fun=objective, maxiter=int(maxiter), implicit_diff=False)
+    return jax.jit(solver.run)
+
+
+def _build_mstep_runners(C, class_data, class_base_specs, Z_mats_jnp,
+                         per_class_K_mem, total_theta, l2_penalty):
+    """Build stable jitted M-step runners for outcome and gamma blocks."""
+    theta_objectives = [
+        _make_weighted_theta_objective(
+            class_data[c], class_base_specs[c], float(l2_penalty)
+        )
+        for c in range(C)
+    ]
+    theta_runners = [_make_jitted_runner(obj) for obj in theta_objectives]
+
+    gamma_slices = []
+    g_off = total_theta
+    for _c in range(C - 1):
+        Kc = per_class_K_mem[_c]
+        gamma_slices.append((g_off, g_off + Kc + 1))
+        g_off += (Kc + 1)
+    gamma_runners = [
+        _make_jitted_runner(_make_gamma_objective(_c, Z_mats_jnp, gamma_slices))
+        for _c in range(C - 1)
+    ]
+    return theta_objectives, theta_runners, gamma_runners
+
+
 @partial(jax.jit, static_argnames=("spec", "indivi"))
 def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
 
@@ -1103,6 +1189,12 @@ def fit_em(init_params, data, spec: ModelSpec,
     # Pre-convert to JAX once (used inside gamma objective)
     Z_mats_jnp = tuple(jnp.array(Z_c) for Z_c in Z_mats)
 
+    # Stable, once-compiled M-step runners (see _build_mstep_runners)
+    theta_objectives, theta_runners, gamma_runners = _build_mstep_runners(
+        C, class_data, class_base_specs, Z_mats_jnp,
+        per_class_K_mem, total_theta, spec.l2_penalty,
+    )
+
     # Track best params seen across all iterations
     best_params = params.copy()
     try:
@@ -1133,9 +1225,10 @@ def fit_em(init_params, data, spec: ModelSpec,
         T = max(1.0, 2.0 - warmup_frac)              # 2.0 â†’ 1.0 over first 40%
 
         # ==============================================================
-        # Progressive M-step budget
+        # M-step budget (fixed: the jitted runners compile once per class,
+        # so there is nothing to gain from a progressive budget)
         # ==============================================================
-        m_iters = min(50 + 25 * (iteration // 3), 300)
+        m_iters = _LC_MSTEP_MAXITER
 
         # ==========================================================
         # E-STEP
@@ -1208,23 +1301,13 @@ def fit_em(init_params, data, spec: ModelSpec,
         # Update class-specific outcome parameters (progressive LBFGS budget)
         theta_new = []
         for c in range(C):
-            wc = w[:, c].copy()
-            _base_c = class_base_specs[c]
-            _data_c = class_data[c]
-
-            def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
-                ll_ind = mixed_model_loglik(
-                    theta_c, _data, _spec, indivi=True
-                )
-                loss = -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
-                if spec.l2_penalty > 0.0 and len(theta_c) > 1:
-                    loss = loss + spec.l2_penalty * jnp.sum(theta_c[1:] ** 2)
-                return loss
-
-            solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
-            result = solver_theta.run(jnp.array(theta_all[c]))
+            wc = jnp.asarray(w[:, c])
+            result = theta_runners[c](jnp.asarray(theta_all[c]), wc)
             theta_c_mle = jnp.array(result.params)
             if spec.parte_shrinkage_in_loop:
+                def weighted_objective(theta_c, _wc=wc, _obj=theta_objectives[c]):
+                    return _obj(theta_c, _wc)
+
                 theta_c_mle = _parte_shrink_theta(
                     theta_c_mle, weighted_objective,
                     class_param_index[c], spec.parte_variant
@@ -1233,45 +1316,20 @@ def fit_em(init_params, data, spec: ModelSpec,
 
         theta_new_flat = np.concatenate(theta_new)
 
-        # â”€â”€ Update each per-class gamma independently â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        _w_jnp = jnp.array(w)
-        _pw = prior_weight  # capture for closure
+        # ── Update each per-class gamma independently ───────────────────
+        _w_jnp = jnp.asarray(w)
+        gamma_all = np.concatenate(gamma_list)
         gamma_new_parts = []
         for _c in range(C - 1):
-            Z_c_jnp = Z_mats_jnp[_c]
-            Kc = per_class_K_mem[_c]
-            _class_c = _c  # capture for closure
-
-            def gamma_objective_c(gamma_c, _Zc=Z_c_jnp, _cc=_class_c):
-                """Per-class gamma objective: optimises only class c+1's gamma."""
-                # Build full logits including all other classes' contributions
-                Ncur = _Zc.shape[0]
-                logit_cols = []
-                for _tc in range(C - 1):
-                    if _tc == _cc:
-                        logit_cols.append(_Zc @ gamma_c)  # optimised class (N,)
-                    else:
-                        # Use current (non-optimised) gamma for other classes
-                        gc_other = gamma_list[_tc]
-                        Z_other = Z_mats_jnp[_tc]
-                        logit_cols.append(Z_other @ jnp.array(gc_other))
-                li = jnp.stack(logit_cols, axis=1)                      # (N, C-1)
-                zeros_col = jnp.zeros((Ncur, 1))
-                lf = jnp.concatenate([zeros_col, li], axis=1)          # (N, C)
-                lp = _log_softmax(lf, axis=1)                           # (N, C)
-                ce = -jnp.sum(_w_jnp * lp)
-                # Dirichlet balance prior
-                log_pi_marg = jax.nn.log_softmax(
-                    jnp.mean(lf, axis=0, keepdims=True), axis=1
-                )
-                balance_penalty = -_pw * jnp.sum(log_pi_marg)
-                return ce + balance_penalty
-
-            solver_gamma_c = LBFGS(fun=gamma_objective_c, maxiter=m_iters)
-            gamma_c_prev = jnp.array(gamma_list[_c])
-            result_gamma_c = solver_gamma_c.run(gamma_c_prev)
-            gamma_c_new = np.array(result_gamma_c.params)
+            result_gamma_c = gamma_runners[_c](
+                jnp.asarray(gamma_list[_c]),
+                _w_jnp,
+                jnp.asarray(gamma_all),
+                jnp.asarray(prior_weight),
+            )
+            gamma_c_new = np.asarray(result_gamma_c.params)
             gamma_list[_c] = gamma_c_new  # update for next class's optimisation
+            gamma_all = np.concatenate(gamma_list)
             gamma_new_parts.append(gamma_c_new)
 
         gamma_new = np.concatenate(gamma_new_parts)
@@ -1436,6 +1494,12 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
     Z_mats_jnp = tuple(jnp.array(Z_c) for Z_c in Z_mats)
 
     # â”€â”€ Quick marginal loglik (no M-step) for step-halving checks â”€â”€â”€â”€â”€â”€
+    # Stable, once-compiled M-step runners (see _build_mstep_runners)
+    theta_objectives, theta_runners, gamma_runners = _build_mstep_runners(
+        C, class_data, class_base_specs, Z_mats_jnp,
+        per_class_K_mem, total_theta, spec.l2_penalty,
+    )
+
     def _eval_loglik(p):
         try:
             return -float(mixed_model_loglik(jnp.array(p), data, spec))
@@ -1452,8 +1516,8 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
     trace   = []
     em_calls = 0
 
-    # â”€â”€ Single E+M step (mirrors the body of fit_em's inner loop) â”€â”€â”€â”€â”€â”€â”€
-    def _one_em_step(p, m_iters, T=1.0):
+    # ── Single E+M step (mirrors the body of fit_em's inner loop) ────────
+    def _one_em_step(p, T=1.0):
         theta_all = []
         for c in range(C):
             oc = class_offsets[c]; kc = class_K_base[c]
@@ -1490,21 +1554,13 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
         # M-step: outcome params
         theta_new = []
         for c in range(C):
-            wc = w[:, c].copy()
-            _base_c = class_base_specs[c]
-            _data_c = class_data[c]
-
-            def weighted_objective(theta_c, _wc=wc, _spec=_base_c, _data=_data_c):
-                ll_ind = mixed_model_loglik(theta_c, _data, _spec, indivi=True)
-                loss = -jnp.sum(jnp.array(_wc) * jnp.array(ll_ind))
-                if spec.l2_penalty > 0.0 and len(theta_c) > 1:
-                    loss = loss + spec.l2_penalty * jnp.sum(theta_c[1:] ** 2)
-                return loss
-
-            solver_theta = LBFGS(fun=weighted_objective, maxiter=m_iters)
-            result = solver_theta.run(jnp.array(theta_all[c]))
+            wc = jnp.asarray(w[:, c])
+            result = theta_runners[c](jnp.asarray(theta_all[c]), wc)
             theta_c_mle = jnp.array(result.params)
             if spec.parte_shrinkage_in_loop:
+                def weighted_objective(theta_c, _wc=wc, _obj=theta_objectives[c]):
+                    return _obj(theta_c, _wc)
+
                 theta_c_mle = _parte_shrink_theta(
                     theta_c_mle, weighted_objective,
                     class_param_index[c], spec.parte_variant
@@ -1516,40 +1572,21 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
         min_prop = max(0.02, _raw_prop / max(1, C * 0.5))
         below_thresh = np.maximum(0.0, min_prop - mean_w)
         prior_weight = float(np.sum(below_thresh) * max(5.0, C * 2.0))
-        _w_jnp = jnp.array(w)
-        _pw    = prior_weight
+        _w_jnp = jnp.asarray(w)
 
         gamma_new_parts = []
         _glist = [np.copy(x) for x in gamma_list]  # mutable copy for sequential updates
+        gamma_all = np.concatenate(_glist)
         for _c in range(C - 1):
-            Z_c_jnp = Z_mats_jnp[_c]
-            _cc = _c
-
-            def gamma_objective_c(gamma_c, _Zc=Z_c_jnp, _cc=_cc):
-                Ncur = _Zc.shape[0]
-                logit_cols = []
-                for _tc in range(C - 1):
-                    if _tc == _cc:
-                        logit_cols.append(_Zc @ gamma_c)
-                    else:
-                        gc_other = _glist[_tc]
-                        Z_other = Z_mats_jnp[_tc]
-                        logit_cols.append(Z_other @ jnp.array(gc_other))
-                li = jnp.stack(logit_cols, axis=1)
-                zeros_col = jnp.zeros((Ncur, 1))
-                lf = jnp.concatenate([zeros_col, li], axis=1)
-                lp = _log_softmax(lf, axis=1)
-                ce = -jnp.sum(_w_jnp * lp)
-                log_pi_marg = jax.nn.log_softmax(
-                    jnp.mean(lf, axis=0, keepdims=True), axis=1
-                )
-                balance_penalty = -_pw * jnp.sum(log_pi_marg)
-                return ce + balance_penalty
-
-            solver_gamma_c = LBFGS(fun=gamma_objective_c, maxiter=m_iters)
-            result_gamma_c = solver_gamma_c.run(jnp.array(_glist[_c]))
-            gc_new = np.array(result_gamma_c.params)
+            result_gamma_c = gamma_runners[_c](
+                jnp.asarray(_glist[_c]),
+                _w_jnp,
+                jnp.asarray(gamma_all),
+                jnp.asarray(prior_weight),
+            )
+            gc_new = np.asarray(result_gamma_c.params)
             _glist[_c] = gc_new
+            gamma_all = np.concatenate(_glist)
             gamma_new_parts.append(gc_new)
         gamma_new = np.concatenate(gamma_new_parts)
 
@@ -1559,12 +1596,11 @@ def fit_em_squarem(init_params, data, spec: ModelSpec,
     for outer_iter in range(max_iter):
         warmup_frac = min(1.0, outer_iter / max(1, max_iter * 0.4))
         T      = max(1.0, 2.0 - warmup_frac)
-        m_iters = min(50 + 25 * (outer_iter // 3), 300)
 
         # Two full E+M steps
-        params1, mean_w1 = _one_em_step(params,  m_iters, T=T)
+        params1, mean_w1 = _one_em_step(params,  T=T)
         em_calls += 1
-        params2, mean_w2 = _one_em_step(params1, m_iters, T=T)
+        params2, mean_w2 = _one_em_step(params1, T=T)
         em_calls += 1
 
         # Collapse guard (after warmup) â€” threshold relaxes with more classes
@@ -1680,6 +1716,14 @@ def _seed_classes_from_clusters(
         mixed_model_loglik(theta_1, data, base_spec, indivi=True)
     )                                                       # (N,)
 
+    def _cluster_obj(theta_c_jax, w_hard):
+        ll_c = mixed_model_loglik(theta_c_jax, data, base_spec, indivi=True)
+        return -jnp.sum(w_hard * ll_c)
+
+    _cluster_runner = jax.jit(
+        LBFGS(fun=_cluster_obj, maxiter=30, implicit_diff=False).run
+    )
+
     Xf = np.array(data["Xf"])                              # (N, P, Kf)
     if Xf.ndim == 3:
         Xf_mean = Xf.mean(axis=1)                          # (N, Kf)
@@ -1747,15 +1791,10 @@ def _seed_classes_from_clusters(
                 w_hard = np.zeros(ll_ind.shape[0], dtype=float)
                 w_hard[in_cluster] = 1.0
 
-                def _cluster_obj(theta_c_jax, _w=w_hard):
-                    ll_c = mixed_model_loglik(
-                        theta_c_jax, data, base_spec, indivi=True
-                    )
-                    return -jnp.sum(jnp.array(_w) * jnp.array(ll_c))
-
-                from jaxopt import LBFGS as _LBFGS
-                _sol = _LBFGS(fun=_cluster_obj, maxiter=30).run(jnp.array(theta_c))
-                theta_c = np.array(_sol.params)
+                # Stable objective + once-compiled runner: weights are a
+                # dynamic argument so every cluster reuses one compilation.
+                _sol = _cluster_runner(jnp.asarray(theta_c), jnp.asarray(w_hard))
+                theta_c = np.asarray(_sol.params)
             except Exception:
                 pass  # Keep intercept-shifted theta_c on failure
 

@@ -54,6 +54,7 @@ __all__ = [
     "log_transform_pavement",
     "forecast_deterioration",
     "forecast_to_threshold",
+    "warm_up_numba_kernels",
 ]
 
 
@@ -65,21 +66,22 @@ __all__ = [
 if JAX_PRESENT:
 
     @jax.jit
-    def _jax_ar1_neg_ll(beta, rho_raw, log_sig, X, y, seg_delta_idx):
+    def _jax_ar1_neg_ll(beta, rho_raw, log_sig, X, y,
+                        prev_idx, next_idx, seg_start_idx):
+        # Transition indices and segment-start indices have different
+        # lengths, so they are passed as separate arrays (the previous
+        # single stacked array could not be built).
         rho = jnp.clip(rho_raw, -0.999, 0.999)
         sigma2 = jnp.exp(2.0 * log_sig)
         resid = y - X @ beta
-        r_next = resid[seg_delta_idx[1]]
-        r_prev = resid[seg_delta_idx[0]]
-        innov = r_next - rho * r_prev
-        n_transitions = seg_delta_idx.shape[1]
+        innov = resid[next_idx] - rho * resid[prev_idx]
+        n_transitions = prev_idx.shape[0]
         ll_transitions = (
             0.5 * n_transitions * jnp.log(2.0 * jnp.pi * sigma2)
             + 0.5 * jnp.sum(innov * innov) / sigma2
         )
-        seps = jnp.concatenate([jnp.array([0]), seg_delta_idx[2], jnp.array([len(resid)])])
         var_init = sigma2 / jnp.maximum(1.0 - rho * rho, 1e-10)
-        r_first = resid[seps[:-2]]
+        r_first = resid[seg_start_idx]
         ll_init = jnp.sum(
             0.5 * jnp.log(2.0 * jnp.pi * var_init) + 0.5 * r_first * r_first / var_init
         )
@@ -103,7 +105,136 @@ if JAX_PRESENT:
         return ll_main + ll_init
 
 
+# ============================================================
+# Optional Numba kernels
+#
+# The temporal MLE objectives below are minimised by scipy.optimize with
+# plain NumPy callbacks; their Python-level loops over segments/time
+# dominate the fit.  Numba compiles them once and reuses the machine code
+# for every optimiser iteration.  Numba is optional — when it is not
+# installed the original NumPy implementations run unchanged.
+# ============================================================
+
+try:
+    from numba import njit as _njit
+    NUMBA_AVAILABLE = True
+except ImportError:  # pragma: no cover - numba is optional
+    NUMBA_AVAILABLE = False
+
+    def _njit(*args, **kwargs):
+        if len(args) == 1 and callable(args[0]) and not kwargs:
+            return args[0]
+
+        def _decorator(func):
+            return func
+
+        return _decorator
+
+
+@_njit(cache=True)
+def _nur_neg_ll_kernel(params, X, y, seg_starts, seg_ends, lo, hi):
+    """Numba version of the near-unit-root negative log-likelihood."""
+    p = X.shape[1]
+    beta = params[:p]
+    rho = lo + (hi - lo) / (1.0 + np.exp(-params[p]))
+    sigma2 = np.exp(2.0 * params[p + 1])
+    mu = params[p + 2]
+    two_sigma2 = 2.0 * sigma2
+    log_2pi_sigma2 = np.log(2.0 * np.pi * sigma2)
+    total = 0.0
+    for s in range(seg_starts.shape[0]):
+        i0 = seg_starts[s]
+        i1 = seg_ends[s]
+        T = i1 - i0 + 1
+        for t in range(i0, i1 + 1):
+            xb = 0.0
+            for k in range(p):
+                xb += X[t, k] * beta[k]
+            if t == i0:
+                r = y[t] - mu - xb
+            else:
+                r = y[t] - rho * y[t - 1] - (1.0 - rho) * mu - xb
+            total += r * r / two_sigma2
+        total += 0.5 * (T - 1) * log_2pi_sigma2
+        if abs(rho) < 0.999:
+            var_init = sigma2 / max(1.0 - rho * rho, 1e-10)
+            xb0 = 0.0
+            for k in range(p):
+                xb0 += X[i0, k] * beta[k]
+            r0 = y[i0] - mu - xb0
+            total += 0.5 * np.log(2.0 * np.pi * var_init) + 0.5 * r0 * r0 / var_init
+    return total
+
+
+@_njit(cache=True)
+def _nur_predict_kernel(beta, rho, mu, X, y, seg_starts, seg_ends):
+    """Numba version of the NUR prediction reconstruction."""
+    n = X.shape[0]
+    p = X.shape[1]
+    est = np.empty(n)
+    for s in range(seg_starts.shape[0]):
+        i0 = seg_starts[s]
+        i1 = seg_ends[s]
+        for t in range(i0, i1 + 1):
+            xb = 0.0
+            for k in range(p):
+                xb += X[t, k] * beta[k]
+            if t == i0:
+                est[t] = mu + xb
+            else:
+                est[t] = rho * y[t - 1] + (1.0 - rho) * mu + xb
+    return est
+
+
+@_njit(cache=True)
+def _ar1_seg_indices_kernel(seg_ids):
+    """Numba version of the AR(1) transition / segment-start index builder.
+
+    Segment starts for singleton segments are omitted so the JAX and NumPy
+    AR(1) likelihoods treat panels of length < 2 identically.
+    """
+    n = seg_ids.shape[0]
+    prev_idx = np.empty(max(n - 1, 0), dtype=np.int64)
+    next_idx = np.empty(max(n - 1, 0), dtype=np.int64)
+    seg_start_idx = np.empty(n, dtype=np.int64)
+    n_tr = 0
+    n_start = 0
+    for i in range(n - 1):
+        if seg_ids[i] == seg_ids[i + 1]:
+            prev_idx[n_tr] = i
+            next_idx[n_tr] = i + 1
+            n_tr += 1
+    for i in range(n):
+        if i == 0 or seg_ids[i] != seg_ids[i - 1]:
+            if i + 1 < n and seg_ids[i] == seg_ids[i + 1]:
+                seg_start_idx[n_start] = i
+                n_start += 1
+    return prev_idx[:n_tr], next_idx[:n_tr], seg_start_idx[:n_start]
+
+
+def warm_up_numba_kernels() -> bool:
+    """Force one-time compilation of the Numba kernels.
+
+    Call this before a parallel section so the first kernel invocation does
+    not happen concurrently in several worker threads.  Idempotent and a
+    no-op when Numba is unavailable; returns True when kernels are active.
+    """
+    if not NUMBA_AVAILABLE:
+        return False
+    X = np.zeros((2, 1), dtype=float)
+    y = np.zeros(2, dtype=float)
+    starts = np.array([0], dtype=np.int64)
+    ends = np.array([1], dtype=np.int64)
+    _nur_neg_ll_kernel(np.zeros(3, dtype=float), X, y, starts, ends, 0.85, 1.0)
+    _nur_predict_kernel(np.zeros(1, dtype=float), 0.9, 0.0, X, y, starts, ends)
+    _ar1_seg_indices_kernel(np.array([0, 0], dtype=np.int64))
+    return True
+
+
 def _build_ar1_seg_indices(seg_ids: np.ndarray) -> tuple:
+    seg_ids = np.asarray(seg_ids, dtype=np.int64)
+    if NUMBA_AVAILABLE:
+        return _ar1_seg_indices_kernel(seg_ids)
     n = len(seg_ids)
     next_idx = []; prev_idx = []; seg_start_idx = []
     for i in range(n - 1):
@@ -111,7 +242,8 @@ def _build_ar1_seg_indices(seg_ids: np.ndarray) -> tuple:
             next_idx.append(i + 1); prev_idx.append(i)
     for i in range(n):
         if i == 0 or seg_ids[i] != seg_ids[i - 1]:
-            seg_start_idx.append(i)
+            if i + 1 < n and seg_ids[i] == seg_ids[i + 1]:
+                seg_start_idx.append(i)
     return (np.array(prev_idx, dtype=np.int32),
             np.array(next_idx, dtype=np.int32),
             np.array(seg_start_idx, dtype=np.int32))
@@ -413,12 +545,15 @@ def fit_cluster_ar1(
 
     if JAX_PRESENT:
         prev_idx, next_idx, seg_start_idx = _build_ar1_seg_indices(seg_ids)
-        delta_idx = jnp.array([prev_idx, next_idx, seg_start_idx], dtype=jnp.int32)
+        prev_j = jnp.asarray(prev_idx, dtype=jnp.int32)
+        next_j = jnp.asarray(next_idx, dtype=jnp.int32)
+        start_j = jnp.asarray(seg_start_idx, dtype=jnp.int32)
         X_j = jnp.asarray(X); y_j = jnp.asarray(y)
 
         def neg_ll_jax(params):
             return _jax_ar1_neg_ll(
-                params[:p], params[p], params[p + 1], X_j, y_j, delta_idx)
+                params[:p], params[p], params[p + 1], X_j, y_j,
+                prev_j, next_j, start_j)
 
         jax_ok = False
         try:
@@ -641,32 +776,40 @@ def fit_cluster_nur(
     unique_segs = np.unique(seg_ids)
     seg_starts = {s: int(np.where(seg_ids == s)[0][0]) for s in unique_segs}
     seg_ends = {s: int(np.where(seg_ids == s)[0][-1]) for s in unique_segs}
+    seg_starts_arr = np.array([seg_starts[s] for s in unique_segs], dtype=np.int64)
+    seg_ends_arr = np.array([seg_ends[s] for s in unique_segs], dtype=np.int64)
     lo, hi = rho_bounds
 
-    def neg_ll(params):
-        beta = params[:p]
-        # Map unconstrained → [lo, hi]
-        rho = lo + (hi - lo) / (1.0 + np.exp(-params[p]))
-        log_sig = params[p + 1]
-        sigma2 = np.exp(2 * log_sig)
-        mu = params[p + 2]
+    if NUMBA_AVAILABLE:
+        def neg_ll(params):
+            return float(_nur_neg_ll_kernel(
+                np.asarray(params, dtype=float), X, y,
+                seg_starts_arr, seg_ends_arr, lo, hi))
+    else:
+        def neg_ll(params):
+            beta = params[:p]
+            # Map unconstrained → [lo, hi]
+            rho = lo + (hi - lo) / (1.0 + np.exp(-params[p]))
+            log_sig = params[p + 1]
+            sigma2 = np.exp(2 * log_sig)
+            mu = params[p + 2]
 
-        total = 0.0
-        for s in unique_segs:
-            i0, i1 = seg_starts[s], seg_ends[s]
-            T = i1 - i0 + 1
-            for t in range(i0, i1 + 1):
-                if t == i0:
-                    r = y[t] - mu - X[t] @ beta
-                else:
-                    r = y[t] - rho * y[t - 1] - (1.0 - rho) * mu - X[t] @ beta
-                total += r ** 2 / (2 * sigma2)
-            total += 0.5 * (T - 1) * log(2 * pi * sigma2)
-            if abs(rho) < 0.999:
-                var_init = sigma2 / max(1.0 - rho ** 2, 1e-10)
-                r0 = y[i0] - mu - X[i0] @ beta
-                total += 0.5 * log(2 * pi * var_init) + 0.5 * r0 ** 2 / var_init
-        return total
+            total = 0.0
+            for s in unique_segs:
+                i0, i1 = seg_starts[s], seg_ends[s]
+                T = i1 - i0 + 1
+                for t in range(i0, i1 + 1):
+                    if t == i0:
+                        r = y[t] - mu - X[t] @ beta
+                    else:
+                        r = y[t] - rho * y[t - 1] - (1.0 - rho) * mu - X[t] @ beta
+                    total += r ** 2 / (2 * sigma2)
+                total += 0.5 * (T - 1) * log(2 * pi * sigma2)
+                if abs(rho) < 0.999:
+                    var_init = sigma2 / max(1.0 - rho ** 2, 1e-10)
+                    r0 = y[i0] - mu - X[i0] @ beta
+                    total += 0.5 * log(2 * pi * var_init) + 0.5 * r0 ** 2 / var_init
+            return total
 
     x0 = np.zeros(p + 3)
     x0[:p] = beta0
@@ -687,14 +830,19 @@ def fit_cluster_nur(
     mu = float(params[p + 2])
 
     # Reconstruct predictions
-    est = np.full(n, np.nan)
-    for s in unique_segs:
-        i0, i1 = seg_starts[s], seg_ends[s]
-        for t in range(i0, i1 + 1):
-            if t == i0:
-                est[t] = mu + X[t] @ beta
-            else:
-                est[t] = rho * y[t - 1] + (1.0 - rho) * mu + X[t] @ beta
+    if NUMBA_AVAILABLE:
+        est = _nur_predict_kernel(
+            np.asarray(beta, dtype=float), rho, mu, X, y,
+            seg_starts_arr, seg_ends_arr)
+    else:
+        est = np.full(n, np.nan)
+        for s in unique_segs:
+            i0, i1 = seg_starts[s], seg_ends[s]
+            for t in range(i0, i1 + 1):
+                if t == i0:
+                    est[t] = mu + X[t] @ beta
+                else:
+                    est[t] = rho * y[t - 1] + (1.0 - rho) * mu + X[t] @ beta
 
     valid = ~np.isnan(est)
     resid = y[valid] - est[valid]
@@ -879,6 +1027,11 @@ class PavementCLROptimizer:
         Number of segment reassignments per SA neighbour.
     n_jobs : int
         Number of parallel workers for cluster fitting (-1 = all cores).
+    temporal_model : str
+        Per-cluster error structure used by the SA objective:
+        "ols" (default), "ar1", "random_walk", or "nur".  The AR(1) and
+        near-unit-root (NUR) likelihoods are accelerated by the optional
+        Numba kernels.  Forecast helpers assume the default OLS fits.
 
     Examples
     --------
@@ -890,6 +1043,8 @@ class PavementCLROptimizer:
     >>> result = opt.fit(df_log, n_clusters=4, seed=42)
     >>> print(result["bic"], result["fits"][0]["r2"])
     """
+
+    _TEMPORAL_MODELS = ("ols", "ar1", "random_walk", "nur")
 
     def __init__(
         self,
@@ -906,7 +1061,13 @@ class PavementCLROptimizer:
         n_changes: int = 80,
         n_neighbors: int = 3,
         n_jobs: int = 1,
+        temporal_model: str = "ols",
     ):
+        if temporal_model not in self._TEMPORAL_MODELS:
+            raise ValueError(
+                f"temporal_model must be one of {self._TEMPORAL_MODELS}, "
+                f"got {temporal_model!r}"
+            )
         self.variable_names = list(variable_names)
         self.categorical_vars = set(categorical_vars)
         self.psi_col = psi_col
@@ -920,6 +1081,7 @@ class PavementCLROptimizer:
         self.n_changes = n_changes
         self.n_neighbors = n_neighbors
         self.n_jobs = n_jobs
+        self.temporal_model = temporal_model
 
     # ----------------------------------------------------------
     # Public interface
@@ -1244,13 +1406,26 @@ class PavementCLROptimizer:
         dfc = df_log[df_log[self.segment_col].isin(segs)]
         if len(dfc) < self.min_observations:
             return None
-        return fit_cluster_ols(dfc, self.psi_col, self.variable_names,
-                               self.categorical_vars,
-                               self.level_of_significance, self.max_vif)
+        if self.temporal_model == "ols":
+            return fit_cluster_ols(dfc, self.psi_col, self.variable_names,
+                                   self.categorical_vars,
+                                   self.level_of_significance, self.max_vif)
+        if self.temporal_model == "ar1":
+            return fit_cluster_ar1(dfc, self.psi_col, self.variable_names,
+                                   self.categorical_vars, self.segment_col)
+        if self.temporal_model == "random_walk":
+            return fit_cluster_random_walk(dfc, self.psi_col, self.variable_names,
+                                           self.categorical_vars, self.segment_col)
+        return fit_cluster_nur(dfc, self.psi_col, self.variable_names,
+                               self.categorical_vars, self.segment_col)
 
     def _fit_all_clusters(self, df_log, clusters, n_cl):
         if self.n_jobs == 1 or n_cl < 2:
             return [self._fit_cluster(df_log, ci, clusters) for ci in range(1, n_cl + 1)]
+        # Compile the Numba kernels once in the main thread so the AR(1)/NUR
+        # fitters do not trigger concurrent first-call compilation.
+        if self.temporal_model in ("ar1", "nur"):
+            warm_up_numba_kernels()
         try:
             from joblib import Parallel, delayed
             return Parallel(n_jobs=self.n_jobs, prefer="threads")(
@@ -1292,11 +1467,59 @@ class PavementTemporalComparison:
         categorical_vars: set[str],
         psi_col: str = "psi",
         segment_col: str = "sample_id",
+        n_jobs: int = 1,
     ):
         self.variable_names = list(variable_names)
         self.categorical_vars = set(categorical_vars)
         self.psi_col = psi_col
         self.segment_col = segment_col
+        self.n_jobs = n_jobs
+
+    def _compare_cluster(
+        self,
+        df_log: pd.DataFrame,
+        ci: int,
+        clusters: np.ndarray,
+    ) -> list:
+        """Fit all four temporal models for one cluster (thread-safe)."""
+        segs = set(np.where(clusters == ci)[0])
+        dfc = df_log[df_log[self.segment_col].isin(segs)]
+        n_obs = len(dfc)
+
+        models = {
+            "OLS": fit_cluster_ols(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars),
+            "AR(1)": fit_cluster_ar1(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars, self.segment_col),
+            "Random_Walk": fit_cluster_random_walk(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars, self.segment_col),
+            "Near_Unit_Root": fit_cluster_nur(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars, self.segment_col),
+        }
+
+        rows = []
+        for mname, mf in models.items():
+            row = {"cluster": ci, "n_obs": n_obs, "model": mname}
+            if mf is None:
+                for k in ["r2", "adj_r2", "bic", "rho_ar1",
+                          "drift_rw", "rho_nur", "sigma"]:
+                    row[k] = np.nan
+            else:
+                row["r2"] = mf["r2"]
+                row["adj_r2"] = mf["adj_r2"]
+                row["bic"] = mf.get("bic", np.nan)
+                row["rho_ar1"] = mf.get("rho_ar1", np.nan)
+                row["drift_rw"] = mf.get("drift_rw", np.nan)
+                row["rho_nur"] = mf.get("rho_nur", np.nan)
+                row["sigma"] = mf.get("sigma_ar1",
+                              mf.get("sigma_rw",
+                              mf.get("sigma_nur", np.nan)))
+            rows.append(row)
+        return rows
 
     def compare(
         self,
@@ -1321,45 +1544,25 @@ class PavementTemporalComparison:
         DataFrame with columns: cluster, n_obs, model, r2, adj_r2, bic,
         rho_ar1, drift_rw, rho_nur, sigma.
         """
-        rows = []
-        for ci in range(1, n_clusters + 1):
-            segs = set(np.where(clusters == ci)[0])
-            dfc = df_log[df_log[self.segment_col].isin(segs)]
-            n_obs = len(dfc)
+        cluster_ids = list(range(1, n_clusters + 1))
+        if self.n_jobs == 1 or n_clusters < 2:
+            row_groups = [self._compare_cluster(df_log, ci, clusters)
+                          for ci in cluster_ids]
+        else:
+            # Compile the Numba kernels once in the main thread before the
+            # parallel section (NUR/AR(1) fits call them from every worker).
+            warm_up_numba_kernels()
+            try:
+                from joblib import Parallel, delayed
+                row_groups = Parallel(n_jobs=self.n_jobs, prefer="threads")(
+                    delayed(self._compare_cluster)(df_log, ci, clusters)
+                    for ci in cluster_ids
+                )
+            except ImportError:
+                row_groups = [self._compare_cluster(df_log, ci, clusters)
+                              for ci in cluster_ids]
 
-            models = {
-                "OLS": fit_cluster_ols(
-                    dfc, self.psi_col, self.variable_names,
-                    self.categorical_vars),
-                "AR(1)": fit_cluster_ar1(
-                    dfc, self.psi_col, self.variable_names,
-                    self.categorical_vars, self.segment_col),
-                "Random_Walk": fit_cluster_random_walk(
-                    dfc, self.psi_col, self.variable_names,
-                    self.categorical_vars, self.segment_col),
-                "Near_Unit_Root": fit_cluster_nur(
-                    dfc, self.psi_col, self.variable_names,
-                    self.categorical_vars, self.segment_col),
-            }
-
-            for mname, mf in models.items():
-                row = {"cluster": ci, "n_obs": n_obs, "model": mname}
-                if mf is None:
-                    for k in ["r2", "adj_r2", "bic", "rho_ar1",
-                              "drift_rw", "rho_nur", "sigma"]:
-                        row[k] = np.nan
-                else:
-                    row["r2"] = mf["r2"]
-                    row["adj_r2"] = mf["adj_r2"]
-                    row["bic"] = mf.get("bic", np.nan)
-                    row["rho_ar1"] = mf.get("rho_ar1", np.nan)
-                    row["drift_rw"] = mf.get("drift_rw", np.nan)
-                    row["rho_nur"] = mf.get("rho_nur", np.nan)
-                    row["sigma"] = mf.get("sigma_ar1",
-                                  mf.get("sigma_rw",
-                                  mf.get("sigma_nur", np.nan)))
-                rows.append(row)
-
+        rows = [row for group in row_groups for row in group]
         return pd.DataFrame(rows)
 
     def summary(self, df_results: pd.DataFrame) -> pd.DataFrame:

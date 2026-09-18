@@ -184,6 +184,7 @@ def aft_loglik(y, event, eta, sigma_raw, family: str):
 #     latent_classes=1.
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+@partial(jax.jit, static_argnames=("spec", "family", "indivi"))
 def survival_mixed_model_loglik(
     params,
     data: dict,
@@ -450,6 +451,7 @@ def _build_survival_data_simple(
         Kr_cor           = Kr_cor,
         Kg               = 0,
         Kh               = Kh if Kh > 0 else 0,
+        Kv               = 0,
         Kzi              = 0,
         model            = family,
         zero_inflated    = False,
@@ -459,6 +461,7 @@ def _build_survival_data_simple(
         random_cor_names = tuple(random_cor_cols),
         grouped_names    = (),
         hetro_names      = tuple(hetro_cols),
+        hetro_var_names  = (),
         random_ind_dists = tuple(["normal"] * Kr_ind),
         random_cor_dists = tuple(["normal"] * Kr_cor),
         grouped_dists    = (),
@@ -542,14 +545,17 @@ class SurvivalModel:
         p0     = jnp.array(p0_np)
 
         solver = LBFGS(fun=self._objective, maxiter=self.maxiter)
-        result = solver.run(p0)
+        # Compile the solver once and reuse it for the restart runs;
+        # jaxopt re-traces/re-compiles on every ``run`` otherwise.
+        run_solver = jax.jit(solver.run)
+        result = run_solver(p0)
         best   = result
 
         # Restarts with small perturbations
         rng = np.random.default_rng(0)
         for _ in range(self.n_restarts - 1):
             p_try = jnp.array(np.array(result.params) + rng.normal(0, 0.05, K))
-            r_try = solver.run(p_try)
+            r_try = run_solver(p_try)
             if float(r_try.state.value) < float(best.state.value):
                 best = r_try
 
