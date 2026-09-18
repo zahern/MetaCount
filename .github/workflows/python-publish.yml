@@ -22,23 +22,50 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Bump patch version
+      - name: Compute next version
         run: |
           python - <<'EOF'
-          with open("version.txt") as f:
-              v = f.read().strip()
-          major, minor, patch = v.split(".")
-          new_version = f"{major}.{minor}.{int(patch) + 1}"
-          with open("version.txt", "w") as f:
-              f.write(new_version + "\n")
-          print(f"Version bumped: {v} -> {new_version}")
+          import json
+          import re
+          import urllib.request
+          from pathlib import Path
+
+          # The wheel version comes from metacountregressor/_version.py
+          # (pyproject dynamic version), NOT from version.txt.  Bump both,
+          # and never reuse a version that PyPI already has.
+          version_file = Path("metacountregressor/_version.py")
+          text = version_file.read_text(encoding="utf-8-sig")
+          match = re.search(r'__version__\s*=\s*"(\d+)\.(\d+)\.(\d+)"', text)
+          if not match:
+              raise SystemExit(f"Could not parse a version from {version_file}")
+          repo_version = tuple(int(part) for part in match.groups())
+
+          try:
+              with urllib.request.urlopen(
+                  "https://pypi.org/pypi/metacountregressor/json", timeout=20
+              ) as response:
+                  pypi_version = tuple(
+                      int(part)
+                      for part in json.load(response)["info"]["version"].split(".")
+                  )
+          except Exception as exc:
+              print(f"PyPI lookup failed ({exc}); using the repo version")
+              pypi_version = repo_version
+
+          base = max(repo_version, pypi_version)
+          new_version = f"{base[0]}.{base[1]}.{base[2] + 1}"
+          version_file.write_text(
+              f'__version__ = "{new_version}"\n', encoding="utf-8"
+          )
+          Path("version.txt").write_text(new_version + "\n", encoding="utf-8")
+          print(f"Version bumped: {'.'.join(map(str, base))} -> {new_version}")
           EOF
 
       - name: Commit version bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add version.txt
+          git add version.txt metacountregressor/_version.py
           git commit -m "chore: bump version [skip ci]"
           git push
 
