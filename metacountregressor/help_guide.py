@@ -703,10 +703,12 @@ def get_templates(dest_dir: str = ".") -> None:
 
     Templates included
     ------------------
+    00_quickstart.ipynb
     01_crash_frequency_search.ipynb
     02_latent_class_fc_validation.ipynb
     03_cmf_aadt_search.ipynb
     04_linear_speed_prediction.ipynb
+    05_batch_script_tutorial.ipynb
 
     Parameters
     ----------

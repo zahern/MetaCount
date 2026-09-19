@@ -1,22 +1,101 @@
-# metacountregressor Cookbook
+# metacountregressor
 
-`metacountregressor` is a JAX-first package for hierarchical model fitting and metaheuristic structure search across:
+JAX-first hierarchical search and fitting for count, CMF, duration, linear, and pavement CLR models.
 
-- count models
-- CMF models
-- duration models
-- linear models
+## Start here: first model in about 10 minutes
 
-This cookbook uses the bundled Example 16-3 data and preserves the original source column names.
+You do not need the reference dataset, a source checkout, an HPC account, or PBS to start.
+
+1. Install the released package:
+
+```bash
+python -m pip install metacountregressor
+```
+
+This also installs the package’s declared JAX dependencies. For a special JAX CPU/GPU build, follow the upstream JAX installation instructions after this step.
+
+2. Verify the installation:
+
+```python
+import metacountregressor
+from metacountregressor import load_example16_3_raw_data
+
+print(metacountregressor.__version__)
+print(load_example16_3_raw_data().shape)
+```
+
+3. Copy all runnable tutorials into a local folder:
+
+```python
+from metacountregressor import get_templates
+
+get_templates("metacount-tutorials")
+```
+
+4. Open `metacount-tutorials/00_quickstart.ipynb` and run it top to bottom.
+
+### Choose the tutorial for your problem
+
+| Your outcome/problem | Start with | GitHub link |
+| --- | --- | --- |
+| First end-to-end crash-count fit | `00_quickstart.ipynb` | [00_quickstart.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/00_quickstart.ipynb) |
+| Crash counts with variable/role constraints | `01_crash_frequency_search.ipynb` | [01_crash_frequency_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/01_crash_frequency_search.ipynb) |
+| Hidden risk groups and class validation | `02_latent_class_fc_validation.ipynb` | [02_latent_class_fc_validation.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/02_latent_class_fc_validation.ipynb) |
+| CMF with traffic-volume interaction | `03_cmf_aadt_search.ipynb` | [03_cmf_aadt_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/03_cmf_aadt_search.ipynb) |
+| Continuous outcome such as speed | `04_linear_speed_prediction.ipynb` | [04_linear_speed_prediction.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/04_linear_speed_prediction.ipynb) |
+| Batch jobs, PBS/SLURM, and wall-time limits | `05_batch_script_tutorial.ipynb` | [05_batch_script_tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) |
+| One runnable local CMF script, no search | `examples/manual_hierarchical_cmf_tutorial.py` | [manual_hierarchical_cmf_tutorial.py](https://github.com/zahern/MetaCount/blob/master/metacountregressor/examples/manual_hierarchical_cmf_tutorial.py) |
+
+### Adapt a tutorial to your own CSV in five edits
+
+1. Replace the bundled loader with your CSV.
+2. Rename the constructor fields to your ID, outcome, exposure, and grouping columns.
+3. List your candidate predictor columns in `variables`.
+4. Keep a small `R`, short `max_iter`, and simple roles for the first run.
+5. Refit the selected specification with a larger `R` for final standard errors.
+
+```python
+import pandas as pd
+from metacountregressor import ExperimentBuilder
+
+df = pd.read_csv("my_segments.csv")
+
+builder = ExperimentBuilder(
+    df=df,
+    id_col="site_id",
+    y_col="crashes",
+    offset_col="log_exposure",
+    group_id_col="road_class",
+)
+builder.describe()
+
+evaluator = builder.build_evaluator(
+    variables=["traffic", "lanes", "curvature", "speed_limit"],
+    default_roles=[0, 1, 2],
+    max_latent_classes=1,
+    R=50,
+)
+
+result = builder.run(evaluator, algo="sa", max_iter=20, seed=7)
+print(result["best_score"])
+```
+
+For an interactive topic guide after installation, run:
+
+```python
+from metacountregressor import get_help
+
+get_help()
+```
 
 ## General-Audience CMF vs Traditional Walkthrough
 
 For presentations and stakeholder communication, use the simplified comparison assets:
 
 - Canonical notebook (no latent class, no zero-inflation):
-    [cmf_vs_count_comparison.ipynb](cmf_vs_count_comparison.ipynb)
+    [cmf_vs_count_general_audience.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/cmf_vs_count_general_audience.ipynb)
 - Canonical markdown slides:
-    [cmf_vs_count_comparison_slides.md](cmf_vs_count_comparison_slides.md)
+    [cmf_vs_count_comparison_slides.md](https://github.com/zahern/MetaCount/blob/master/metacountregressor/cmf_vs_count_comparison_slides.md)
 
 One-command PDF export from markdown slides:
 
@@ -27,22 +106,19 @@ One-command PDF export from markdown slides:
 
 This version is intentionally scoped to baseline and random-parameter models so non-technical audiences can follow the modeling process end-to-end.
 
-## 1. Install
+## Cookbook using the bundled Example 16-3 data
+
+The sections below use the bundled Example 16-3 data and preserve the original source column names.
+
+## 1. Install from source
+
+For package development only, install the checkout in editable mode:
 
 ```bash
 python -m pip install -e .
-python -m pip install jax jaxlib jaxopt
 ```
 
-Quick import check:
-
-```python
-import metacountregressor
-from metacountregressor import load_example16_3_raw_data
-
-print(metacountregressor.__version__)
-print(load_example16_3_raw_data().shape)
-```
+The released PyPI install above is the normal user path.
 
 ## 2. Example Data In The Package
 
