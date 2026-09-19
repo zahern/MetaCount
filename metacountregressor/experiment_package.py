@@ -196,9 +196,17 @@ except ImportError:
         _tobit_ols_init,
     )
 try:
-    from .output_config import SearchOutputConfig, save_search_result
+    from .output_config import (
+        SearchOutputConfig,
+        save_search_checkpoint,
+        save_search_result,
+    )
 except ImportError:
-    from output_config import SearchOutputConfig, save_search_result
+    from output_config import (
+        SearchOutputConfig,
+        save_search_checkpoint,
+        save_search_result,
+    )
 
 __all__ = ["StructureEvaluatorLC", "ExperimentBuilder"]
 
@@ -3437,6 +3445,49 @@ class ExperimentBuilder:
 
     # ── run ─────────────────────────────────────────────────────────
 
+    def _make_checkpoint_callback(
+        self,
+        output_config: SearchOutputConfig,
+        evaluator,
+        algo: str,
+        seed: int,
+        max_iter: int,
+    ):
+        """Build the SA per-generation hook that writes the incumbent.
+
+        The hook throttles to ``output_config.checkpoint_every`` generations
+        and writes atomically, so a walltime kill / OOM always leaves a
+        resumable best-so-far decision vector on disk (release valve).
+        """
+        every = max(1, int(output_config.checkpoint_every))
+        state = {"last": -10 ** 9}
+
+        def _cb(gen, decision, score, elapsed, temperature):
+            if gen - state["last"] < every:
+                return
+            state["last"] = int(gen)
+            try:
+                save_search_checkpoint(output_config, {
+                    "algorithm": algo,
+                    "seed": int(seed),
+                    "max_iter": int(max_iter),
+                    "gen": int(gen),
+                    "elapsed_seconds": float(elapsed),
+                    "best_score": float(score),
+                    "best_decision": np.asarray(decision, dtype=float).tolist(),
+                    "variables": [str(v) for v in evaluator.vars],
+                    "temperature": (None if temperature is None
+                                    else float(temperature)),
+                    "description": output_config.search_description,
+                })
+                print(f"  [checkpoint] gen {int(gen)} | "
+                      f"best_score={float(score):.4f} -> "
+                      f"{output_config.checkpoint_name or 'checkpoint'}")
+            except Exception as exc:  # noqa: BLE001 - never kill a search
+                print(f"  [checkpoint] write failed ({exc}); continuing")
+
+        return _cb
+
     def run(
         self,
         evaluator:  Optional[StructureEvaluatorLC] = None,
@@ -3446,6 +3497,8 @@ class ExperimentBuilder:
         seed:       int  = 0,
         config_id:  int  = 0,
         output_config: Optional[SearchOutputConfig] = None,
+        max_time:   Optional[float] = None,
+        refit:      bool = True,
         **algo_kwargs,
     ) -> dict:
         """
@@ -3454,6 +3507,13 @@ class ExperimentBuilder:
         algo : "sa"  Simulated Annealing (recommended for single mode)
                "de"  Differential Evolution NSGA2 (multi mode)
                "hs"  Harmony Search NSGA2 (multi mode)
+        max_time : wall-time stop in seconds (per SA restart; None = no limit).
+        refit : run the end-of-search summary refit; pass False for
+                intermediate chunks of a chunked search to skip a full MLE
+                fit the caller is going to redo anyway.
+        output_config : SearchOutputConfig; set checkpoint_every > 0 to write
+                the best-so-far decision vector + score during the search
+                (resume with init_solutions=[checkpoint["best_decision"]]).
         """
         import time as _time
         _t0 = _time.time()
@@ -3482,6 +3542,15 @@ class ExperimentBuilder:
                 alpha=0.995,
             )
             defaults.update(algo_kwargs)
+            if max_time is not None:
+                # Wall-time stop, forwarded to AdvancedSimulatedAnnealing
+                # (applies per restart; a 3-start run can take 3x max_time).
+                defaults["max_time"] = float(max_time)
+            if (output_config is not None
+                    and int(getattr(output_config, "checkpoint_every", 0) or 0) > 0):
+                defaults["on_iteration"] = self._make_checkpoint_callback(
+                    output_config, evaluator, algo, seed, max_iter,
+                )
             # Warm-start resume: harvest the best decision vector already in
             # the evaluator cache (e.g. restored by a PersistentEvalCache
             # after a walltime kill) and seed the SA with it, so resubmitted
@@ -3517,8 +3586,11 @@ class ExperimentBuilder:
                 "algorithm": algo,
                 "max_iter": max_iter,
                 "seed": seed,
-                "hyperparameters": dict(defaults),
+                "hyperparameters": {k: v for k, v in defaults.items()
+                                    if k != "on_iteration"},
                 "objective": "bic",   # ExperimentBuilder.run() always optimises BIC internally
+                "max_time": None if max_time is None else float(max_time),
+                "refit": bool(refit),
             }
 
             solver = MultiStartSA(
@@ -3563,9 +3635,12 @@ class ExperimentBuilder:
             print(f"  Membership-only vars  : {n_mem_7}  (role 7)")
             print(f"  Membership+fixed vars : {n_mem_8}  (role 8)")
 
-            refit_and_print(evaluator, best_solution)
-            save_run_summary_to_txt(evaluator, best_solution,
-                                    algo, seed, config_id)
+            if refit:
+                refit_and_print(evaluator, best_solution)
+                save_run_summary_to_txt(evaluator, best_solution,
+                                        algo, seed, config_id)
+            else:
+                print("  [refit] skipped (refit=False)")
 
             metadata["elapsed_seconds"] = _time.time() - _t0
             result = {
@@ -3661,9 +3736,12 @@ class ExperimentBuilder:
                 decode_best_solution(best_solution, evaluator)
                 print(f"  Best BIC              : {best_score:.4f}")
 
-                refit_and_print(evaluator, best_solution)
-                save_run_summary_to_txt(evaluator, best_solution,
-                                        algo, seed, config_id)
+                if refit:
+                    refit_and_print(evaluator, best_solution)
+                    save_run_summary_to_txt(evaluator, best_solution,
+                                            algo, seed, config_id)
+                else:
+                    print("  [refit] skipped (refit=False)")
             else:
                 print("  [warn] Harmony/DE search returned no solutions; "
                       "best_solution/best_score left unset.")

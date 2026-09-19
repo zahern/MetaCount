@@ -117,13 +117,15 @@ class AdvancedSimulatedAnnealing:
                  step_size=1,
                  archive_limit=100,
                  restart_threshold=500, patience=400, tol=1e-6,
-                 init_solution=None):
+                 init_solution=None,
+                 on_iteration=None,
+                 cache_clear_every=10):
 
         self.init_solution = None
         if init_solution is not None:
             cand = np.asarray(init_solution, dtype=float).reshape(-1)
             if cand.size == dimension and np.all(np.isfinite(cand)):
-                self.init_solution = cand.astype(int)
+                self.init_solution = np.rint(cand).astype(int)
         self.tol = tol
         self.patience = patience
         self.mutation_rate = mutation_rate
@@ -140,6 +142,15 @@ class AdvancedSimulatedAnnealing:
         self.adaptive = adaptive
         self.step_size = step_size
         self.max_time = max_time
+        # Optional per-generation hook: on_iteration(gen, best_decision,
+        # best_score, elapsed, temperature).  Used by ExperimentBuilder to
+        # checkpoint the best-so-far structure during long searches so a
+        # walltime kill / OOM leaves a resumable incumbent behind.
+        self.on_iteration = on_iteration if callable(on_iteration) else None
+        # Generations between force_gc()+jax.clear_caches() calls. Every new
+        # structure JIT-compiles fresh XLA executables; without periodic
+        # clearing, RSS grows for the whole search (OOM on 15-min panels).
+        self.cache_clear_every = int(cache_clear_every) if cache_clear_every else 0
 
         self.archive_limit = archive_limit
         self.restart_threshold = restart_threshold
@@ -995,7 +1006,7 @@ class AdvancedSimulatedAnnealing:
                     f"Elapsed: {elapsed:.1f}s | "
                     f"ETA: {remaining:.1f}s"
                 )
-            if gen % 50 == 0:
+            if self.cache_clear_every and gen % self.cache_clear_every == 0:
                 force_gc()
                 jax.clear_caches()
             T = self.temperature(gen)
@@ -1158,7 +1169,25 @@ class AdvancedSimulatedAnnealing:
                     "best": float(best),
                     "archive_size": len(self.archive)
                 })
-            
+
+            # Best-so-far hook (checkpointing / external monitors). Reports
+            # the global incumbent (archive best), not the proposed neighbour.
+            if self.on_iteration is not None and len(self.archive):
+                try:
+                    if self.is_multiobjective(self.archive_scores[0]):
+                        _front = np.asarray(self.archive_scores, dtype=float)
+                        _bi = int(np.argmin(_front[:, 0]))
+                        _dec = self.archive[_bi]
+                        _best = float(_front[_bi, 0])
+                    else:
+                        _dec = self.archive[0]
+                        _best = float(self.archive_scores[0])
+                    self.on_iteration(gen, np.asarray(_dec, dtype=float),
+                                      _best, elapsed, T)
+                except Exception as _exc:  # noqa: BLE001 - never kill a search
+                    print(f"  [checkpoint] on_iteration failed ({_exc});"
+                          " continuing")
+
         self.runtime = time.time() - start_time
         self.total_iterations = gen + 1
         return np.array(self.archive), np.array(self.archive_scores)
@@ -1175,6 +1204,7 @@ class MultiStartSA:
                  n_starts=5,          # more restarts for better coverage
                  n_jobs=1,
                  init_solutions=None,
+                 on_iteration=None,
                  **sa_kwargs):
 
         self.evaluator = evaluator
@@ -1186,6 +1216,12 @@ class MultiStartSA:
         self.init_solutions = (
             list(init_solutions) if init_solutions is not None else None
         )
+        # Global best across starts, forwarded to on_iteration only on
+        # improvement so callbacks (e.g. checkpoint writers) see a monotone
+        # incumbent even when a later start begins from a worse point.
+        self.on_iteration = on_iteration if callable(on_iteration) else None
+        self._best_score = np.inf
+        self._best_decision = None
         self.sa_kwargs = sa_kwargs
 
     def run_single(self, seed, start_index=0):
@@ -1198,9 +1234,23 @@ class MultiStartSA:
             **self.sa_kwargs
         )
         if self.init_solutions:
-            sa.init_solution = np.asarray(
-                self.init_solutions[start_index % len(self.init_solutions)]
-            )
+            # Decision genes are integer codes (roles/dists/dispersion/masks);
+            # a warm start restored from JSON/cache arrives as float and would
+            # otherwise leak into list indexing downstream.
+            sa.init_solution = np.rint(np.asarray(
+                self.init_solutions[start_index % len(self.init_solutions)],
+                dtype=float,
+            )).astype(int)
+
+        if self.on_iteration is not None:
+            def _forward(gen, decision, score, elapsed, temperature):
+                if score < self._best_score:
+                    self._best_score = float(score)
+                    self._best_decision = np.asarray(decision, dtype=float).copy()
+                    self.on_iteration(gen, self._best_decision,
+                                      self._best_score, elapsed, temperature)
+
+            sa.on_iteration = _forward
 
         archive, scores = sa.optimize()
         sa.save_search_stats_txt(

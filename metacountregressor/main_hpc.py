@@ -364,7 +364,10 @@ def decode_distribution(dist_code, allowed_list):
     if len(allowed_list) == 1:
         return allowed_list[0]
 
-    idx = dist_code % len(allowed_list)
+    # Decision vectors may arrive as floats (e.g. warm starts / cache keys
+    # round-tripped through JSON); index with an int so list lookups never
+    # raise "list indices must be integers..., not numpy.float64".
+    idx = int(dist_code) % len(allowed_list)
     return allowed_list[idx]
 
 

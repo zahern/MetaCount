@@ -12,7 +12,14 @@ from family_search import (
     LinearSearchProblem,
     UnifiedCMFSearchProblem,
 )
-from output_config import SearchOutputConfig, save_search_result
+import json
+
+from output_config import (
+    SearchOutputConfig,
+    checkpoint_path,
+    save_search_checkpoint,
+    save_search_result,
+)
 from sample_data import (
     load_example16_3_raw_data,
     load_example_crash_data,
@@ -472,3 +479,72 @@ def test_output_config_saves_search_result():
     config = SearchOutputConfig(output_dir=str(output_dir), experiment_name="unit_test", search_description="count search")
     target = save_search_result({"best_score": 12.34, "family": "count"}, config, family="count", algorithm="sa")
     assert target.exists()
+
+
+def test_decode_distribution_accepts_float_codes():
+    from main_hpc import decode_distribution
+
+    assert decode_distribution(1.0, ["normal", "lognormal"]) == "lognormal"
+    assert decode_distribution(np.float64(3.0), ["a", "b", "c"]) == "a"
+
+
+def test_search_checkpoint_round_trip():
+    output_dir = Path("test_results_output")
+    output_dir.mkdir(exist_ok=True)
+    config = SearchOutputConfig(
+        output_dir=str(output_dir),
+        experiment_name="unit_test_ckpt",
+        checkpoint_every=5,
+    )
+    payload = {
+        "best_score": 1.5,
+        "best_decision": [1.0, 0.0, 2.0],
+        "gen": 10,
+        "variables": ["logexp", "in_event", "rel_hour"],
+    }
+    target = save_search_checkpoint(config, payload)
+
+    assert target.exists()
+    assert target == checkpoint_path(config)
+    body = json.loads(target.read_text(encoding="utf-8"))
+    assert body["checkpoint"]["best_score"] == 1.5
+    assert body["checkpoint"]["best_decision"] == [1.0, 0.0, 2.0]
+    assert not target.with_suffix(target.suffix + ".tmp").exists()
+
+
+def test_run_sa_checkpoint_callback_and_refit_flag(tmp_path):
+    df = make_panel_df()
+    builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
+    variables = ["x_fixed", "x_rnd_ind"]
+    evaluator = builder.build_evaluator(
+        variables=variables,
+        mode="single",
+        max_latent_classes=1,
+        R=8,
+        default_roles=[0, 1, 2],
+    )
+    config = SearchOutputConfig(
+        output_dir=str(tmp_path),
+        experiment_name="ckpt_run",
+        checkpoint_every=1,
+    )
+    result = builder.run(
+        evaluator,
+        algo="sa",
+        max_iter=2,
+        n_starts=1,
+        seed=3,
+        max_time=300.0,
+        refit=False,
+        warm_start_cache=False,
+        output_config=config,
+    )
+
+    assert "best_solution" in result
+    assert result["best_score"] == float(np.min(result["scores"]))
+    ckpt = checkpoint_path(config)
+    assert ckpt.exists()
+    body = json.loads(ckpt.read_text(encoding="utf-8"))
+    assert len(body["checkpoint"]["best_decision"]) == 2 * len(variables) + 1
+    assert body["checkpoint"]["variables"] == variables
+    assert body["checkpoint"]["max_iter"] == 2

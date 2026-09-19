@@ -622,12 +622,19 @@ Create a file, e.g.  run_experiment.py:
 
   result = builder.run(
       evaluator, algo=ALGO, max_iter=ITER, seed=SEED,
+      max_time=3600,            # wall-time stop per SA restart (None = off)
+      refit=False,              # skip end-of-run refit for chunked runs
       output_config=SearchOutputConfig(
           output_dir='results',
           experiment_name=f'search_{ALGO}_seed{SEED}',
+          checkpoint_every=10,  # best-so-far JSON every 10 gens (resumable)
       ),
   )
-  print('Done. BIC:', result.best_score, '| saved to:', result.saved_to)
+  print('Done. BIC:', result['best_score'], '| saved to:', result.get('saved_to'))
+  # Resume an interrupted search from the checkpoint it left behind:
+  #   ckpt = json.load(open('results/search_sa_seed42_checkpoint.json'))
+  #   builder.run(evaluator, algo=ALGO, max_iter=ITER, seed=SEED,
+  #               init_solutions=[ckpt['checkpoint']['best_decision']])
 
 Run it:
   python run_experiment.py sa 42 200 2000
