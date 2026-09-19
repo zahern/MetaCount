@@ -193,13 +193,47 @@ result = builder.run(
     seed=42,
     output_config=SearchOutputConfig(output_dir='results', experiment_name='demo'),
 )
-print('Best BIC:', result.best_score)
-print('Saved to:', result.saved_to)
+print('Best BIC:', result['best_score'])
+print('Saved to:', result.get('saved_to'))
 
 # ── 6. Re-fit with more draws ─────────────────────────────────────────────────
-fit = builder.fit_manual_model(manual_spec=result.best_spec, model='nb', R=500)
+fit = builder.fit_manual_model(manual_spec=result['model_spec'], model='nb', R=500)
 print(fit)
 ```
+
+### Use your own data
+
+Keep the Quick Start structure and change only the data mapping:
+
+| Quick Start piece | Replace with your data |
+| --- | --- |
+| `load_example16_3_model_data()` | `pd.read_csv('my_segments.csv')` |
+| `id_col='ID'` | your row-identifier column |
+| `y_col='FREQ'` | your outcome column (counts, durations, speeds…) |
+| `offset_col='OFFSET'` | your log-exposure column, or `None` |
+| `group_id_col='FC'` | your grouping column, or `None` |
+| `variables=[...]` | your candidate predictor columns |
+
+```python
+import pandas as pd
+from metacountregressor import ExperimentBuilder
+
+df = pd.read_csv('my_segments.csv')
+builder = ExperimentBuilder(
+    df=df,
+    id_col='site_id',
+    y_col='crashes',
+    offset_col='log_exposure',   # or None
+    group_id_col='road_class',   # or None
+)
+builder.describe()   # check column types before searching
+```
+
+For a first run on your data, keep the search small — `default_roles=[0, 1, 2]`,
+`R=50`, `max_iter=20` — then refit the winning specification with a larger
+`R` for final standard errors. Pick the worked notebook matching your outcome
+from [Tutorials & resources](#tutorials--resources) and mirror its constraint
+block.
 
 ---
 
@@ -438,7 +472,7 @@ evaluator = builder.build_count_evaluator(
     R=200,
 )
 result = builder.run(evaluator, algo='sa', max_iter=2000, seed=42)
-fit = builder.fit_manual_model(manual_spec=result.best_spec, model='nb', R=500)
+fit = builder.fit_manual_model(manual_spec=result['model_spec'], model='nb', R=500)
 ```
 
 Manual spec:
@@ -501,7 +535,7 @@ evaluator = duration_builder.build_evaluator(
     max_latent_classes=1, R=200,
 )
 result = duration_builder.run(evaluator, algo='sa', max_iter=500, seed=42)
-fit = duration_builder.fit_manual_model(manual_spec=result.best_spec,
+fit = duration_builder.fit_manual_model(manual_spec=result['model_spec'],
                                         model='lognormal', R=500)
 ```
 
@@ -522,7 +556,7 @@ evaluator = speed_builder.build_evaluator(
     max_latent_classes=1, R=200,
 )
 result = speed_builder.run(evaluator, algo='sa', max_iter=500, seed=42)
-fit = speed_builder.fit_manual_model(manual_spec=result.best_spec,
+fit = speed_builder.fit_manual_model(manual_spec=result['model_spec'],
                                      model='gaussian', R=500)
 ```
 
@@ -606,7 +640,7 @@ output_config = SearchOutputConfig(
 
 result = builder.run(evaluator, algo='sa', max_iter=2000,
                      output_config=output_config)
-print('Saved to:', result.saved_to)
+print('Saved to:', result.get('saved_to'))
 ```
 
 Each saved JSON contains: experiment name, description, model family, algorithm, best BIC, and the best structural specification.
