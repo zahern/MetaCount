@@ -1,0 +1,25 @@
+{
+  "config": {
+    "output_dir": "test_results_output",
+    "experiment_name": "unit_test_ckpt",
+    "search_description": "",
+    "save_json": true,
+    "checkpoint_every": 5,
+    "checkpoint_name": ""
+  },
+  "timestamp_iso": "2026-09-19T10:01:00",
+  "checkpoint": {
+    "best_score": 1.5,
+    "best_decision": [
+      1.0,
+      0.0,
+      2.0
+    ],
+    "gen": 10,
+    "variables": [
+      "logexp",
+      "in_event",
+      "rel_hour"
+    ]
+  }
+}
