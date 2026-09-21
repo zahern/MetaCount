@@ -481,6 +481,35 @@ def test_output_config_saves_search_result():
     assert target.exists()
 
 
+def test_master_draws_default_to_float32_and_grouped_cache_reused():
+    df = make_panel_df()
+    builder = ExperimentBuilder(
+        df=df, id_col="ID", y_col="Y", offset_col="OFFSET", group_id_col="FC")
+    evaluator = builder.build_evaluator(
+        variables=["x_fixed", "x_rnd_ind"],
+        mode="single",
+        max_latent_classes=1,
+        R=8,
+        default_roles=[0, 1, 2],
+    )
+    assert str(evaluator.master_halton_train.dtype) == "float32"
+    first = evaluator._grouped_master_draws(3)
+    second = evaluator._grouped_master_draws(3)
+    assert first is second
+    assert str(first.dtype) == "float32"
+    assert len(evaluator._grouped_draw_cache) == 1
+
+    evaluator64 = builder.build_evaluator(
+        variables=["x_fixed", "x_rnd_ind"],
+        mode="single",
+        max_latent_classes=1,
+        R=8,
+        default_roles=[0, 1, 2],
+        draw_dtype="float64",
+    )
+    assert str(evaluator64.master_halton_train.dtype) == "float64"
+
+
 def test_decode_distribution_accepts_float_codes():
     from main_hpc import decode_distribution
 

@@ -3580,17 +3580,17 @@ def evaluate_metrics(params, data, spec, name="DATA"):
     }
 
 
-def generate_master_halton(N, K, R, seed=42,  burn=50):
+def generate_master_halton(N, K, R, seed=42,  burn=50, dtype=None):
     sampler = qmc.Halton(d=K, scramble=False, seed=seed)
     sampler.fast_forward(burn)
     u = sampler.random(N * R)
     u = np.clip(u, 1e-12, 1 - 1e-12)
     z = norm.ppf(u)
     z = z.reshape(N, R, K).swapaxes(1, 2)
-    return jnp.array(z)
+    return jnp.array(z) if dtype is None else jnp.array(z, dtype=dtype)
 
 
-def generate_master_sobol(N, K, R, seed=42):
+def generate_master_sobol(N, K, R, seed=42, dtype=None):
     import math
     sampler = qmc.Sobol(d=K, scramble=True, seed=seed)
     total = N * R
@@ -3602,15 +3602,25 @@ def generate_master_sobol(N, K, R, seed=42):
     u = np.clip(u, 1e-12, 1 - 1e-12)
     z = norm.ppf(u)
     z = z.reshape(N, R, K).swapaxes(1, 2)
-    return jnp.array(z)
+    return jnp.array(z) if dtype is None else jnp.array(z, dtype=dtype)
 
 
-def generate_master_draws(N, K, R, seed=42, draw_method='sobol', burn=50):
-    """Unified draw generator: 'halton' or 'sobol'. Returns jnp.array (N, K, R)."""
+def generate_master_draws(N, K, R, seed=42, draw_method='sobol', burn=50, dtype=None):
+    """Unified draw generator: 'halton' or 'sobol'. Returns jnp.array (N, K, R).
+
+    dtype (e.g. "float32") stores the master compactly; callers cast slices
+    back to float64 for estimation (see _to_f64) so the likelihood stays in
+    float64 while the long-lived master uses half the memory.
+    """
     if draw_method == 'sobol':
-        return generate_master_sobol(N, K, R, seed)
+        return generate_master_sobol(N, K, R, seed, dtype=dtype)
     else:
-        return generate_master_halton(N, K, R, seed, burn)
+        return generate_master_halton(N, K, R, seed, burn, dtype=dtype)
+
+
+def _to_f64(x):
+    """Cast a draws slice to float64 for estimation (no-op if already f64)."""
+    return jnp.asarray(x, dtype=jnp.float64)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -4326,6 +4336,7 @@ class StructureEvaluator:
         offset_col=None,
         R=200,
         draw_method='sobol',  # 'halton' or 'sobol' — Sobol is faster & more stable
+        draw_dtype="float32",  # storage dtype for the long-lived master draws
     ):
 
         self.id_col = id_col
@@ -4338,6 +4349,13 @@ class StructureEvaluator:
         self.group_id_col = group_id_col
         self.R = R
         self.draw_method = draw_method
+        _draw_dtype = str(draw_dtype).lower()
+        if _draw_dtype not in ("float32", "float64"):
+            raise ValueError("draw_dtype must be 'float32' or 'float64'.")
+        self._draw_dtype = _draw_dtype
+        # Group-level master draws, cached per (G, R, K, seed, method) so
+        # grouped structures don't regenerate QMC draws on every fitness().
+        self._grouped_draw_cache = {}
         self.structure_cache = set()
 
         if mode == "multi":
@@ -4347,6 +4365,9 @@ class StructureEvaluator:
             self.df_test = None
 
         # ✅ MASTER DRAWS (Halton or Sobol)
+        # Created once here and sliced (never rewritten) for the whole search.
+        # Stored compactly (default float32); slices are cast back to float64
+        # at use time so estimation precision is unchanged.
         self.N_train = self.df_train[id_col].nunique()
         self.master_halton_train = generate_master_draws(
             self.N_train,
@@ -4354,6 +4375,7 @@ class StructureEvaluator:
             R,
             seed=42,
             draw_method=draw_method,
+            dtype=self._draw_dtype,
         )
 
         if mode == "multi":
@@ -4364,6 +4386,7 @@ class StructureEvaluator:
                 R,
                 seed=123,
                 draw_method=draw_method,
+                dtype=self._draw_dtype,
             )
 
         # ✅ Pre-compute unidentifiable variables once so build_spec can
@@ -4479,6 +4502,32 @@ class StructureEvaluator:
         )
 
     # ----------------------------------------
+    # Grouped master draws (cached)
+    # ----------------------------------------
+
+    def _grouped_master_draws(self, G, seed=999, draw_method=None):
+        """Return cached group-level master draws for G groups.
+
+        Grouped structures previously regenerated a full QMC draw set on
+        every fitness() call; the draws only depend on (G, R, K, seed,
+        method), so one cached copy per key is exact and reused.
+        """
+        method = draw_method or getattr(self, "draw_method", "halton")
+        key = (int(G), int(self.R), len(self.vars), int(seed), str(method))
+        cache = getattr(self, "_grouped_draw_cache", None)
+        if cache is None:
+            cache = self._grouped_draw_cache = {}
+        cached = cache.get(key)
+        if cached is None:
+            cached = generate_master_draws(
+                int(G), len(self.vars), int(self.R),
+                seed=int(seed), draw_method=method,
+                dtype=getattr(self, "_draw_dtype", "float64"),
+            )
+            cache[key] = cached
+        return cached
+
+    # ----------------------------------------
     # Build Data Fast (Slicing Halton)
     # ----------------------------------------
 
@@ -4513,9 +4562,9 @@ class StructureEvaluator:
         if spec.Kg != len(g_idx):
             raise ValueError("Mismatch between spec.Kg and g_idx length")
 
-        # ✅ Slice master halton
-        draws_ind = master_halton[:, ind_idx, :] if spec.Kr_ind > 0 else None
-        draws_cor = master_halton[:, cor_idx, :] if spec.Kr_cor > 0 else None
+        # ✅ Slice master halton (cast back to float64 for estimation)
+        draws_ind = _to_f64(master_halton[:, ind_idx, :]) if spec.Kr_ind > 0 else None
+        draws_cor = _to_f64(master_halton[:, cor_idx, :]) if spec.Kr_cor > 0 else None
 
         # ✅ Grouped draws need their own N (groups, not individuals)
         if spec.Kg > 0:
@@ -4524,15 +4573,11 @@ class StructureEvaluator:
 
             G = df[self.group_id_col].nunique()
 
-            # Generate separate master halton for groups
-            master_halton_g = generate_master_halton(
-                G,
-                len(self.vars),
-                self.R,
-                seed=999
-            )
+            # Reuse the cached group-level master (was regenerated every eval)
+            master_halton_g = self._grouped_master_draws(
+                G, seed=999, draw_method="halton")
 
-            draws_g = master_halton_g[:, g_idx, :]
+            draws_g = _to_f64(master_halton_g[:, g_idx, :])
         else:
             draws_g = None
 

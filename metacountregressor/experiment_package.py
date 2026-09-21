@@ -143,6 +143,7 @@ try:
         check_identification,
         _is_oom_error,
         run_with_oom_recovery,
+        _to_f64,
     )
     from .main_hpc_lc_patch import (
         ModelSpec,
@@ -184,6 +185,7 @@ except ImportError:
         check_identification,
         _is_oom_error,
         run_with_oom_recovery,
+        _to_f64,
     )
     from main_hpc_lc_patch import (
         ModelSpec,
@@ -651,17 +653,18 @@ class StructureEvaluatorLC(StructureEvaluator):
         cor_idx = [var_index[v] for v in spec.random_cor_names]
         g_idx   = [var_index[v] for v in spec.grouped_names]
 
-        draws_ind = master_halton[:, ind_idx, :] if spec.Kr_ind > 0 else None
-        draws_cor = master_halton[:, cor_idx, :] if spec.Kr_cor > 0 else None
+        draws_ind = _to_f64(master_halton[:, ind_idx, :]) if spec.Kr_ind > 0 else None
+        draws_cor = _to_f64(master_halton[:, cor_idx, :]) if spec.Kr_cor > 0 else None
         draws_g   = None
 
         if spec.Kg > 0:
             if self.group_id_col is None:
                 raise ValueError("Grouped effects require group_id_col")
             G = df[self.group_id_col].nunique()
-            mh_g    = generate_master_draws(G, len(self.vars), self.R,
-                                             seed=999, draw_method=getattr(self, 'draw_method', 'halton'))
-            draws_g = mh_g[:, g_idx, :]
+            mh_g    = self._grouped_master_draws(
+                G, seed=999,
+                draw_method=getattr(self, 'draw_method', 'halton'))
+            draws_g = _to_f64(mh_g[:, g_idx, :])
 
         # Rebuild with correct draws (membership_cols flows through spec_dict)
         data, spec = build_model_from_manual_spec(
@@ -3026,6 +3029,7 @@ class ExperimentBuilder:
         model_family:        Optional[str]             = None,
         engine:              Optional[str]             = None,
         constraints=None,
+        draw_dtype:          str                       = "float32",
         **family_kwargs: Any,
     ):
         """
@@ -3051,6 +3055,11 @@ class ExperimentBuilder:
             Maximum number of latent classes.  Set to 1 to disable LC.
         R
             Number of Halton simulation draws.
+        draw_dtype
+            Storage dtype ("float32" or "float64") for the long-lived master
+            draws. float32 halves master-draw memory (e.g. ~3.3 GB to ~1.6 GB
+            at 200k rows x 26 vars x R=80); slices are cast back to float64
+            for estimation, so fit precision is unchanged.
         default_roles
             Roles available to most variables.
             Defaults to [0,1,2,3,5] when max_latent_classes = 1,
@@ -3138,6 +3147,7 @@ class ExperimentBuilder:
             mode                  = mode,
             R                     = R,
             max_latent_classes    = max_latent_classes,
+            draw_dtype            = draw_dtype,
         )
 
         D   = len(variables)
@@ -3148,7 +3158,7 @@ class ExperimentBuilder:
         print(f"    Decision dimension : {_dim}  ({_dim_note})")
         print(f"    Max latent classes : {max_latent_classes}")
         print(f"    Mode               : {mode}")
-        print(f"    Draws (R)          : {R}")
+        print(f"    Draws (R)          : {R}  [{draw_dtype} master]")
         if max_latent_classes > 1:
             print(f"\n  Membership roles 7 and 8 are active.")
             print(f"  Role 7 = membership-only  (no outcome effect)")
