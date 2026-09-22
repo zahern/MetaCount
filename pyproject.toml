@@ -73,6 +73,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+numba = [
+    "numba>=0.59,<1.0",
+]
 bayesian = [
     "pymc>=5.0,<7.0",
     "arviz>=0.17,<1.0",

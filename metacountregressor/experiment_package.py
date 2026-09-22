@@ -1431,8 +1431,8 @@ class ExperimentBuilder:
 
         if self.default_model_family != "count":
             raise ValueError("ExperimentBuilder defaults must remain count-first. Use build_search(model_family=...) for alternative families.")
-        if self.default_engine != "jax":
-            raise ValueError("The primary ExperimentBuilder engine is JAX. Use default_engine='jax'.")
+        if self.default_engine not in {"jax", "numba"}:
+            raise ValueError("default_engine must be 'jax' or 'numba'")
 
         self._ensure_columns_exist([id_col, y_col], "ExperimentBuilder")
         if offset_col is not None:
@@ -3067,13 +3067,16 @@ class ExperimentBuilder:
         model_family
             Search family to build. One of: "count", "cmf", "linear", "duration".
         engine
-            Execution engine. Defaults to the builder's primary engine, which is JAX.
+            Execution engine. Use ``jax`` for the full model or ``numba`` for
+            single-class fixed-effects Poisson/NB2 search.
         """
         model_family = (model_family or self.default_model_family).lower()
         engine = (engine or self.default_engine).lower()
 
-        if engine != "jax":
-            raise ValueError("Only the JAX-first engine is supported through ExperimentBuilder.")
+        if engine not in {"jax", "numba"}:
+            raise ValueError("engine must be 'jax' or 'numba' for count models")
+        if engine == "numba" and model_family != "count":
+            raise ValueError("engine='numba' is implemented for count models only")
 
         if model_family != "count":
             return self.build_search(
@@ -3134,6 +3137,29 @@ class ExperimentBuilder:
         )
         allowed_dists = populate_allowed_distributions(variables, None)
 
+        if engine == "numba":
+            from .numba_count import NumbaFixedCountEvaluator
+            self._evaluator = NumbaFixedCountEvaluator(
+                df                  = self.df,
+                id_col              = self.id_col,
+                y_col               = self.y_col,
+                all_variables       = variables,
+                allowed_roles       = allowed_roles,
+                allowed_distributions=allowed_dists,
+                mode                = mode,
+                group_id_col        = None,
+                offset_col          = self.offset_col,
+                R                   = R,
+                max_latent_classes  = max_latent_classes,
+            )
+            D = len(variables)
+            print("\n  Numba fixed-effects count evaluator ready:")
+            print(f"    Variables          : {D}")
+            print(f"    Decision dimension : {2 * D + 1}")
+            print("    Models             : single-class Poisson/NB2")
+            print("    Random/grouped/ZI  : disabled")
+            return self._evaluator
+
         self._evaluator = StructureEvaluatorLC(
             df                    = self.df,
             id_col                = self.id_col,
@@ -3179,8 +3205,10 @@ class ExperimentBuilder:
         engine = (engine or self.default_engine).lower()
         explicit_variables = variables
 
-        if engine != "jax":
-            raise ValueError("Only the JAX-first engine is supported through ExperimentBuilder.")
+        if engine not in {"jax", "numba"}:
+            raise ValueError("engine must be 'jax' or 'numba' for count models")
+        if engine == "numba" and model_family != "count":
+            raise ValueError("engine='numba' is implemented for count models only")
 
         variables = self._normalize_variables(variables, exclude)
 
@@ -3434,7 +3462,7 @@ class ExperimentBuilder:
 
     def build_count_evaluator(self, **kwargs):
         kwargs.setdefault("model_family", "count")
-        kwargs.setdefault("engine", "jax")
+        kwargs.setdefault("engine", self.default_engine)
         return self.build_evaluator(**kwargs)
 
     def build_bayesian_model(self, search_result, *, evaluator=None,

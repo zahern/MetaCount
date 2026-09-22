@@ -1363,7 +1363,7 @@ class NSGA2Engine:
         self.dim_core = len(evaluator.vars)  # D = number of variables
         self.pop_size = pop_size
         self.max_iter = max_iter
-        self.generations = int(max_iter/pop_size)
+        self.generations = max(1, int(np.ceil(max_iter / pop_size)))
         self.n_jobs = n_jobs
         self.mutation_prob = 0.2
         self.save_history = save_history
@@ -1596,6 +1596,10 @@ class NSGA2Engine:
 
         D = self.dim_core
         pop  = self._initialise_start_pop()
+        allowed_roles = [
+            self.evaluator.allowed_roles.get(var, [0])
+            for var in self.evaluator.vars
+        ]
 
       
         scores = self.evaluate_population(pop)
@@ -1622,7 +1626,9 @@ class NSGA2Engine:
             offspring = []
 
             for i in range(self.pop_size):
-                child = self.operator.generate(pop, i, gen, self.max_iter)
+                child = self.operator.generate(
+                    pop, i, gen, self.max_iter,
+                    allowed_roles=allowed_roles)
                 child = self.repair(child)   # 
                 offspring.append(child)
 
