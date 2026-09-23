@@ -1431,8 +1431,8 @@ class ExperimentBuilder:
 
         if self.default_model_family != "count":
             raise ValueError("ExperimentBuilder defaults must remain count-first. Use build_search(model_family=...) for alternative families.")
-        if self.default_engine not in {"jax", "numba"}:
-            raise ValueError("default_engine must be 'jax' or 'numba'")
+        if self.default_engine not in {"jax", "numba", "numba-rp"}:
+            raise ValueError("default_engine must be 'jax', 'numba' or 'numba-rp'")
 
         self._ensure_columns_exist([id_col, y_col], "ExperimentBuilder")
         if offset_col is not None:
@@ -3073,9 +3073,9 @@ class ExperimentBuilder:
         model_family = (model_family or self.default_model_family).lower()
         engine = (engine or self.default_engine).lower()
 
-        if engine not in {"jax", "numba"}:
-            raise ValueError("engine must be 'jax' or 'numba' for count models")
-        if engine == "numba" and model_family != "count":
+        if engine not in {"jax", "numba", "numba-rp"}:
+            raise ValueError("engine must be 'jax', 'numba' or 'numba-rp' for count models")
+        if engine in {"numba", "numba-rp"} and model_family != "count":
             raise ValueError("engine='numba' is implemented for count models only")
 
         if model_family != "count":
@@ -3160,6 +3160,32 @@ class ExperimentBuilder:
             print("    Random/grouped/ZI  : disabled")
             return self._evaluator
 
+        if engine == "numba-rp":
+            try:
+                from .numba_rp import NumbaRandomCountEvaluator
+            except ImportError:
+                from numba_rp import NumbaRandomCountEvaluator
+            self._evaluator = NumbaRandomCountEvaluator(
+                df                  = self.df,
+                id_col              = self.id_col,
+                y_col               = self.y_col,
+                all_variables       = variables,
+                allowed_roles       = allowed_roles,
+                allowed_distributions=allowed_dists,
+                mode                = mode,
+                group_id_col        = self.group_id_col,
+                offset_col          = self.offset_col,
+                R                   = R,
+                max_latent_classes  = max_latent_classes,
+            )
+            D = len(variables)
+            print("\n  Numba RP count evaluator ready (Phase-1 prototype):")
+            print(f"    Variables          : {D}")
+            print(f"    Decision dimension : {2 * D + 1}")
+            print("    Models             : single-class Poisson/NB2 + independent RP")
+            print("    Correlated/grouped/ZI/LC : disabled (return None -> search skips)")
+            return self._evaluator
+
         self._evaluator = StructureEvaluatorLC(
             df                    = self.df,
             id_col                = self.id_col,
@@ -3205,9 +3231,9 @@ class ExperimentBuilder:
         engine = (engine or self.default_engine).lower()
         explicit_variables = variables
 
-        if engine not in {"jax", "numba"}:
-            raise ValueError("engine must be 'jax' or 'numba' for count models")
-        if engine == "numba" and model_family != "count":
+        if engine not in {"jax", "numba", "numba-rp"}:
+            raise ValueError("engine must be 'jax', 'numba' or 'numba-rp' for count models")
+        if engine in {"numba", "numba-rp"} and model_family != "count":
             raise ValueError("engine='numba' is implemented for count models only")
 
         variables = self._normalize_variables(variables, exclude)
