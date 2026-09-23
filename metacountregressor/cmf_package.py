@@ -188,6 +188,7 @@ class CMFExperimentBuilder:
     def print_cmf_interpretation(
         self,
         fit_result: dict[str, Any],
+        model_label: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         Print CMF (Crash Modification Factor) interpretations for fitted CMF model.
@@ -226,6 +227,22 @@ class CMFExperimentBuilder:
 
         cmf_rows = []
 
+        # Manual Poisson/NB fits return a metrics dictionary rather than the
+        # legacy CMF summary table. Extract their fixed coefficients directly
+        # from the fitted parameter index so both estimation paths share the
+        # same interpretation output.
+        if not (summary_df is not None and hasattr(summary_df, "iterrows")):
+            spec = fit_result.get("spec")
+            result = fit_result.get("result")
+            param_index = fit_result.get("param_index", {})
+            params = np.asarray(getattr(result, "params", []), dtype=float)
+            if spec is not None and result is not None and spec.latent_classes == 1:
+                fixed_start, fixed_end = param_index.get("fixed", (0, 0))
+                summary_df = pd.DataFrame({
+                    "Parameter": list(spec.fixed_names),
+                    "Estimate": params[fixed_start:fixed_end],
+                })
+
         # summary_df is the DataFrame produced by build_summary_table(): columns
         # Parameter/Estimate/Std.Err/z/p-value, with parameter names of the form
         # alpha0, alpha[VAR], sigma_alpha[VAR], beta0, beta[VAR], sigma_beta[VAR]
@@ -242,6 +259,22 @@ class CMFExperimentBuilder:
 
                 baseline_match = re.fullmatch(r"alpha\[(.+)\]", param_name)
                 local_match = re.fullmatch(r"beta\[(.+)\]", param_name)
+
+                if baseline_match is None and local_match is None:
+                    if param_name in self.baseline_vars:
+                        baseline_match = re.fullmatch(r"(.+)", param_name)
+                    elif param_name.startswith("__cmf_local__"):
+                        local_match = re.fullmatch(
+                            r"__cmf_local__(.+)", param_name
+                        )
+                        if local_match:
+                            token = local_match.group(1)
+                            for local_var in self.local_vars:
+                                if self._safe_token(local_var) == token:
+                                    local_match = re.fullmatch(
+                                        r"(.+)", local_var
+                                    )
+                                    break
 
                 if baseline_match:
                     var_name = baseline_match.group(1)
@@ -293,7 +326,8 @@ class CMFExperimentBuilder:
         cmf_df = pd.DataFrame(cmf_rows)
         
         print("\n" + "=" * 110)
-        print(f"  CMF INTERPRETATION  —  HIERARCHICAL CMF MODEL")
+        model_suffix = f" ({model_label.upper()})" if model_label else ""
+        print(f"  CMF INTERPRETATION  —  HIERARCHICAL CMF MODEL{model_suffix}")
         print("=" * 110 + "\n")
         
         if len(cmf_df) > 0:

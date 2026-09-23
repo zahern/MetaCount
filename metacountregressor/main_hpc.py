@@ -1233,23 +1233,31 @@ def build_model_from_manual_spec(
 
 def balance_panel_dataframe(df, id_col, y_col, feature_cols):
 
-    df = df.sort_values(id_col)
+    # O(N) single-pass build: the old per-id boolean scan
+    # (df[df[id_col] == pid] inside a 100k-iteration loop) is O(N^2) and
+    # dominates walltime/memory when id_col is unique (e.g. row_id).
+    # factorize + one linear fill gives identical X/y/mask.
+    df_sorted = df.sort_values(id_col, kind="mergesort").reset_index(drop=True)
 
-    ids = df[id_col].unique()
-    N = len(ids)
-
-    counts = df.groupby(id_col).size().values
-    # Guard against an empty / degenerate panel (e.g. a per-cluster subset that
-    # filtered out every row). Without this, counts.max() raises an opaque
-    # "zero-size array to reduction operation maximum" error deep in NumPy.
-    if N == 0 or counts.size == 0:
+    codes, uniques = pd.factorize(df_sorted[id_col], sort=False)
+    N = len(uniques)
+    if N == 0:
         raise ValueError(
             f"balance_panel_dataframe received an empty panel: 0 observations "
             f"and {N} unique '{id_col}' values. This usually means an upstream "
             f"filter or cluster subset removed all rows. Check the caller's data "
             f"selection (e.g. skip clusters with too few segments before fitting)."
         )
-    P = counts.max()
+    codes = np.asarray(codes, dtype=np.int64)
+    counts = np.bincount(codes, minlength=N)
+    if counts.size == 0:
+        raise ValueError(
+            f"balance_panel_dataframe received an empty panel: 0 observations "
+            f"and {N} unique '{id_col}' values. This usually means an upstream "
+            f"filter or cluster subset removed all rows. Check the caller's data "
+            f"selection (e.g. skip clusters with too few segments before fitting)."
+        )
+    P = int(counts.max())
 
     K = len(feature_cols)
 
@@ -1257,34 +1265,53 @@ def balance_panel_dataframe(df, id_col, y_col, feature_cols):
     y = np.zeros((N, P, 1))
     mask = np.zeros((N, P))
 
-    for n, pid in enumerate(ids):
-        sub = df[df[id_col] == pid]
-        T = len(sub)
-
-        X[n, :T, :] = sub[feature_cols].values
-        y[n, :T, 0] = sub[y_col].values
-        mask[n, :T] = 1.0
+    if K > 0:
+        feat_vals = np.asarray(df_sorted[feature_cols].to_numpy(dtype=float))
+    else:
+        feat_vals = np.zeros((len(df_sorted), 0))
+    y_vals = np.asarray(pd.to_numeric(df_sorted[y_col], errors="coerce").fillna(0.0),
+                        dtype=float)
+    pos = np.zeros(N, dtype=np.int64)
+    for i in range(len(df_sorted)):
+        c = int(codes[i])
+        t = int(pos[c])
+        if K > 0:
+            X[c, t, :] = feat_vals[i]
+        y[c, t, 0] = y_vals[i]
+        mask[c, t] = 1.0
+        pos[c] = t + 1
 
     return X, y, mask
 
 def extract_offset(df, id_col, offset_col):
-    df = df.sort_values(id_col)
-    ids = df[id_col].unique()
-    N = len(ids)
-    counts = df.groupby(id_col).size().values
-    if N == 0 or counts.size == 0:
+    # O(N) single-pass (see balance_panel_dataframe): avoids the O(N^2)
+    # per-id boolean scan when id_col is unique.
+    df_sorted = df.sort_values(id_col, kind="mergesort").reset_index(drop=True)
+    codes, uniques = pd.factorize(df_sorted[id_col], sort=False)
+    N = len(uniques)
+    if N == 0:
         raise ValueError(
             f"extract_offset received an empty panel: 0 observations and {N} "
             f"unique '{id_col}' values (likely an empty cluster subset)."
         )
-    P = counts.max()
+    codes = np.asarray(codes, dtype=np.int64)
+    counts = np.bincount(codes, minlength=N)
+    if counts.size == 0:
+        raise ValueError(
+            f"extract_offset received an empty panel: 0 observations and {N} "
+            f"unique '{id_col}' values (likely an empty cluster subset)."
+        )
+    P = int(counts.max())
 
     offset = np.zeros((N, P, 1))
-
-    for n, pid in enumerate(ids):
-        sub = df[df[id_col] == pid]
-        T = len(sub)
-        offset[n, :T, 0] = sub[offset_col].values
+    off_vals = np.asarray(pd.to_numeric(df_sorted[offset_col], errors="coerce").fillna(0.0),
+                          dtype=float)
+    pos = np.zeros(N, dtype=np.int64)
+    for i in range(len(df_sorted)):
+        c = int(codes[i])
+        t = int(pos[c])
+        offset[c, t, 0] = off_vals[i]
+        pos[c] = t + 1
 
     return offset
 
@@ -3741,10 +3768,19 @@ class CountModel:
             return value
 
         def _eval_pop(pop):
+            # Micro-batched vmap: 16x (N x R) at once OOMs for N*R large
+            # (e.g. 100k x 200). Batches of 4 give identical values at ~4x
+            # lower peak; per-row fallback on any XLA failure.
             try:
-                vals = jax.vmap(self.objective)(pop)
-                vals = jnp.where(jnp.isfinite(vals), vals, large_val)
-                return np.asarray(vals, dtype=float)
+                arr = np.asarray(pop, dtype=float)
+                micro = 4
+                outs = []
+                for s in range(0, len(arr), micro):
+                    chunk = jnp.asarray(arr[s:s + micro])
+                    vals = jax.vmap(self.objective)(chunk)
+                    vals = jnp.where(jnp.isfinite(vals), vals, large_val)
+                    outs.append(np.asarray(vals, dtype=float))
+                return np.concatenate(outs) if outs else np.zeros(0)
             except Exception:
                 # Fallback if vectorized evaluation fails for any reason.
                 return np.array([_safe_obj(row) for row in np.asarray(pop)], dtype=float)
