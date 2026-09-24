@@ -7,7 +7,7 @@ pavement deterioration modelling.
 Models the power (log-log) deterioration equation:
     ln(PSI) = β₀ + Σᵢ βᵢ ln(xᵢ) + Σⱼ γⱼ Dⱼ + εₜ
 
-where ε can follow i.i.d. (OLS), AR(1), random walk, or near-unit-root structure.
+where ε can follow i.i.d. (OLS), AR(1), AR(2), random walk, or near-unit-root structure.
 
 Key classes
 -----------
@@ -19,7 +19,7 @@ PavementTemporalComparison
 
 Helper functions
 ----------------
-fit_cluster_ols / fit_cluster_ar1 / fit_cluster_random_walk / fit_cluster_nur
+fit_cluster_ols / fit_cluster_ar1 / fit_cluster_ar2 / fit_cluster_random_walk / fit_cluster_nur
     Per-cluster model fitters (log-transformed data assumed as input).
 """
 
@@ -49,6 +49,7 @@ __all__ = [
     "PavementTemporalComparison",
     "fit_cluster_ols",
     "fit_cluster_ar1",
+    "fit_cluster_ar2",
     "fit_cluster_random_walk",
     "fit_cluster_nur",
     "log_transform_pavement",
@@ -501,6 +502,8 @@ def fit_cluster_ar1(
     variable_names: list[str],
     categorical_vars: set[str],
     segment_col: str = "sample_id",
+    regularization_strength: float = 1e-4,
+    coefficient_bound: float = 20.0,
 ) -> Optional[dict]:
     """
     Fit an AR(1) error model per cluster via maximum likelihood.
@@ -530,6 +533,8 @@ def fit_cluster_ar1(
     n, p = X.shape
     if n <= p + 2:
         return None
+    if regularization_strength < 0 or coefficient_bound <= 0:
+        raise ValueError("regularization_strength must be non-negative and coefficient_bound positive")
 
     ols = _fit_lm(X, y, col_names)
     if ols is None:
@@ -551,9 +556,10 @@ def fit_cluster_ar1(
         X_j = jnp.asarray(X); y_j = jnp.asarray(y)
 
         def neg_ll_jax(params):
-            return _jax_ar1_neg_ll(
+            likelihood = _jax_ar1_neg_ll(
                 params[:p], params[p], params[p + 1], X_j, y_j,
                 prev_j, next_j, start_j)
+            return likelihood + regularization_strength * jnp.sum(params[1:p] ** 2)
 
         jax_ok = False
         try:
@@ -561,7 +567,8 @@ def fit_cluster_ar1(
             def obj(par):
                 return float(neg_ll_jax(jnp.asarray(par))), np.asarray(g(jnp.asarray(par)))
             res = _scipy_minimize(obj, x0, jac=True, method="L-BFGS-B",
-                                   bounds=[(None, None)] * p + [(-0.999, 0.999), (-10, 10)],
+                                   bounds=[(-coefficient_bound, coefficient_bound)] * p
+                                   + [(-0.999, 0.999), (-10, 10)],
                                    options={"maxiter": 300, "ftol": 1e-7})
             params = res.x
             beta, rho_raw, log_sig = params[:p], params[p], params[p + 1]
@@ -592,11 +599,12 @@ def fit_cluster_ar1(
                 total += 0.5 * np.sum(innovations ** 2) / sigma2
                 var_init = sigma2 / max(1.0 - rho_p ** 2, 1e-10)
                 total += 0.5 * log(2 * pi * var_init) + 0.5 * r[0] ** 2 / var_init
-            return total
+            return total + regularization_strength * np.sum(beta_p[1:p] ** 2)
 
         try:
             res = _scipy_minimize(neg_ll, x0, method="L-BFGS-B",
-                                   bounds=[(None, None)] * p + [(-0.999, 0.999), (-10, 10)],
+                                   bounds=[(-coefficient_bound, coefficient_bound)] * p
+                                   + [(-0.999, 0.999), (-10, 10)],
                                    options={"maxiter": 300, "ftol": 1e-7})
             params = res.x
         except Exception:
@@ -629,7 +637,162 @@ def fit_cluster_ar1(
         "sigma_ar1": sigma,
         "bic": bic_val,
         "n_params_total": n_params,
+        "regularization": "ridge",
+        "regularization_strength": regularization_strength,
+        "coefficient_bound": coefficient_bound,
         "model_type": "AR(1)",
+    }
+
+
+def _ar2_phi_from_raw(raw_phi1: float, raw_phi2: float) -> tuple[float, float]:
+    """Map unconstrained partial autocorrelations to stationary AR(2) terms."""
+    kappa1 = float(np.tanh(raw_phi1))
+    kappa2 = float(np.tanh(raw_phi2))
+    return kappa1 * (1.0 - kappa2), kappa2
+
+
+def _ar2_initial_covariance(phi1: float, phi2: float, sigma2: float) -> Optional[np.ndarray]:
+    """Return the stationary covariance of the first two AR(2) errors."""
+    system = np.array([
+        [1.0 - phi2 * phi2, -phi1 * (1.0 + phi2)],
+        [-phi1, 1.0 - phi2],
+    ])
+    try:
+        gamma0, gamma1 = np.linalg.solve(system, np.array([sigma2, 0.0]))
+    except np.linalg.LinAlgError:
+        return None
+    covariance = np.array([[gamma0, gamma1], [gamma1, gamma0]], dtype=float)
+    if not np.all(np.isfinite(covariance)):
+        return None
+    if np.min(np.linalg.eigvalsh(covariance)) <= 1e-12:
+        return None
+    return covariance
+
+
+def fit_cluster_ar2(
+    df_log: pd.DataFrame,
+    psi_col: str,
+    variable_names: list[str],
+    categorical_vars: set[str],
+    segment_col: str = "sample_id",
+    regularization_strength: float = 1e-4,
+    coefficient_bound: float = 20.0,
+) -> Optional[dict]:
+    """
+    Fit a stationary AR(2) error model per cluster via maximum likelihood.
+
+    Model: ``epsilon_t = phi1 * epsilon_(t-1) + phi2 * epsilon_(t-2) + nu_t``.
+    The optimizer works with two unconstrained partial autocorrelations, which
+    guarantees a stationary AR(2) process for every trial point.
+    """
+    X, y, col_names = _build_design_matrix(
+        df_log, psi_col, variable_names, variable_names, categorical_vars)
+    n, p = X.shape
+    if n <= p + 3:
+        return None
+    if regularization_strength < 0 or coefficient_bound <= 0:
+        raise ValueError("regularization_strength must be non-negative and coefficient_bound positive")
+
+    ols = _fit_lm(X, y, col_names)
+    if ols is None:
+        return None
+    beta0 = ols["coefficients"][:p].copy()
+    sigma0 = sqrt(max(ols["rss"] / max(n - p, 1), 1e-8))
+
+    seg_ids = df_log[segment_col].values.astype(int)
+    segment_indices = [np.where(seg_ids == sid)[0] for sid in np.unique(seg_ids)]
+    x0 = np.zeros(p + 3)
+    x0[:p] = beta0
+    x0[p] = np.arctanh(0.5)
+    x0[p + 1] = np.arctanh(0.2)
+    x0[p + 2] = log(max(sigma0, 1e-4))
+
+    def neg_ll(params: np.ndarray) -> float:
+        beta = params[:p]
+        phi1, phi2 = _ar2_phi_from_raw(params[p], params[p + 1])
+        sigma2 = float(np.exp(2.0 * params[p + 2]))
+        initial_cov = _ar2_initial_covariance(phi1, phi2, sigma2)
+        if initial_cov is None:
+            return 1e100
+        sign, logdet = np.linalg.slogdet(initial_cov)
+        if sign <= 0 or not np.isfinite(logdet):
+            return 1e100
+        total = 0.0
+        resid = y - X @ beta
+        for idx in segment_indices:
+            length = len(idx)
+            if length == 0:
+                continue
+            r = resid[idx]
+            if length == 1:
+                total += 0.5 * (log(2.0 * pi * initial_cov[0, 0]) + r[0] ** 2 / initial_cov[0, 0])
+                continue
+            first = r[:2]
+            total += 0.5 * (2.0 * log(2.0 * pi) + logdet + first @ np.linalg.solve(initial_cov, first))
+            if length > 2:
+                innovations = r[2:] - phi1 * r[1:-1] - phi2 * r[:-2]
+                total += 0.5 * ((length - 2) * log(2.0 * pi * sigma2)
+                                + np.sum(innovations ** 2) / sigma2)
+            return float(total + regularization_strength * np.sum(beta[1:p] ** 2))
+
+    try:
+        res = _scipy_minimize(
+            neg_ll,
+            x0,
+            method="L-BFGS-B",
+            bounds=[(-coefficient_bound, coefficient_bound)] * p
+            + [(-5.0, 5.0), (-5.0, 5.0), (-10.0, 10.0)],
+            options={"maxiter": 400, "ftol": 1e-8},
+        )
+    except Exception:
+        return None
+    if not np.all(np.isfinite(res.x)):
+        return None
+
+    params = res.x
+    beta = params[:p]
+    phi1, phi2 = _ar2_phi_from_raw(params[p], params[p + 1])
+    sigma = float(np.exp(params[p + 2]))
+    resid = y - X @ beta
+    y_hat = np.full(n, np.nan)
+    for idx in segment_indices:
+        r = resid[idx]
+        for pos, row_idx in enumerate(idx):
+            if pos == 0:
+                ar_part = 0.0
+            elif pos == 1:
+                ar_part = phi1 * r[0]
+            else:
+                ar_part = phi1 * r[pos - 1] + phi2 * r[pos - 2]
+            y_hat[row_idx] = X[row_idx] @ beta + ar_part
+
+    tss = float(np.sum((y - y.mean()) ** 2))
+    rss = float(np.sum((y - y_hat) ** 2))
+    r2 = 1.0 - rss / max(tss, 1e-15)
+    n_params = p + 3
+    return {
+        "coefficients": beta,
+        "coeff_dict": {col_names[i]: float(beta[i]) for i in range(len(col_names))},
+        "residuals": resid,
+        "rss": rss,
+        "tss": tss,
+        "r2": r2,
+        "adj_r2": 1.0 - (1.0 - r2) * (n - 1) / max(n - n_params, 1),
+        "se": np.full(p, np.nan),
+        "p_values": np.full(p, np.nan),
+        "n": n,
+        "col_names": col_names,
+        "variables_used": list(variable_names),
+        "phi_ar2": (phi1, phi2),
+        "rho_ar2_1": phi1,
+        "rho_ar2_2": phi2,
+        "sigma_ar2": sigma,
+        "bic": _bic(n, n_params, rss),
+        "n_params_total": n_params,
+        "regularization": "ridge",
+        "regularization_strength": regularization_strength,
+        "coefficient_bound": coefficient_bound,
+        "model_type": "AR(2)",
     }
 
 
@@ -639,6 +802,8 @@ def fit_cluster_random_walk(
     variable_names: list[str],
     categorical_vars: set[str],
     segment_col: str = "sample_id",
+    regularization_strength: float = 1e-4,
+    coefficient_bound: float = 20.0,
 ) -> Optional[dict]:
     """
     Fit a random walk with drift model per cluster (first-difference form).
@@ -673,6 +838,8 @@ def fit_cluster_random_walk(
     Dy = np.concatenate(dy_list)
     DX = np.concatenate(dX_list, axis=0)
     n_diff = len(Dy)
+    if regularization_strength < 0 or coefficient_bound <= 0:
+        raise ValueError("regularization_strength must be non-negative and coefficient_bound positive")
 
     # Differenced intercept column is all-zero → becomes the drift
     DX_noint = DX[:, 1:]  # drop original intercept (all zeros after differencing)
@@ -680,7 +847,13 @@ def fit_cluster_random_walk(
     p_diff = X_diff.shape[1]
 
     try:
-        beta_diff = np.linalg.lstsq(X_diff, Dy, rcond=None)[0]
+        penalty = np.eye(p_diff)
+        penalty[0, 0] = 0.0
+        beta_diff = np.linalg.solve(
+            X_diff.T @ X_diff + regularization_strength * penalty,
+            X_diff.T @ Dy,
+        )
+        beta_diff = np.clip(beta_diff, -coefficient_bound, coefficient_bound)
     except np.linalg.LinAlgError:
         return None
 
@@ -735,6 +908,9 @@ def fit_cluster_random_walk(
         "sigma_rw": float(sqrt(max(rss_diff / max(n_diff - p_diff, 1), 1e-8))),
         "bic": bic_val,
         "n_params_total": n_params,
+        "regularization": "ridge",
+        "regularization_strength": regularization_strength,
+        "coefficient_bound": coefficient_bound,
         "model_type": "Random_Walk",
     }
 
@@ -746,6 +922,8 @@ def fit_cluster_nur(
     categorical_vars: set[str],
     segment_col: str = "sample_id",
     rho_bounds: tuple[float, float] = (0.85, 1.0),
+    regularization_strength: float = 1e-4,
+    coefficient_bound: float = 20.0,
 ) -> Optional[dict]:
     """
     Fit a near-unit-root (NUR) model per cluster via constrained MLE.
@@ -765,6 +943,8 @@ def fit_cluster_nur(
     n, p = X.shape
     if n <= p + 3:
         return None
+    if regularization_strength < 0 or coefficient_bound <= 0:
+        raise ValueError("regularization_strength must be non-negative and coefficient_bound positive")
 
     ols = _fit_lm(X, y, col_names)
     if ols is None:
@@ -782,9 +962,10 @@ def fit_cluster_nur(
 
     if NUMBA_AVAILABLE:
         def neg_ll(params):
-            return float(_nur_neg_ll_kernel(
+            likelihood = float(_nur_neg_ll_kernel(
                 np.asarray(params, dtype=float), X, y,
                 seg_starts_arr, seg_ends_arr, lo, hi))
+            return likelihood + regularization_strength * np.sum(params[1:p] ** 2)
     else:
         def neg_ll(params):
             beta = params[:p]
@@ -809,16 +990,21 @@ def fit_cluster_nur(
                     var_init = sigma2 / max(1.0 - rho ** 2, 1e-10)
                     r0 = y[i0] - mu - X[i0] @ beta
                     total += 0.5 * log(2 * pi * var_init) + 0.5 * r0 ** 2 / var_init
-            return total
+            return total + regularization_strength * np.sum(beta[1:p] ** 2)
 
     x0 = np.zeros(p + 3)
-    x0[:p] = beta0
+    x0[:p] = np.clip(beta0, -coefficient_bound, coefficient_bound)
     x0[p] = 0.0
     x0[p + 1] = log(max(sigma0, 1e-4))
     x0[p + 2] = float(np.mean(y))
 
     try:
-        res = _scipy_minimize(neg_ll, x0, method="L-BFGS-B",
+        res = _scipy_minimize(
+            neg_ll,
+            x0,
+            method="L-BFGS-B",
+            bounds=[(-coefficient_bound, coefficient_bound)] * p
+            + [(None, None), (None, None), (-coefficient_bound, coefficient_bound)],
                               options={"maxiter": 400, "ftol": 1e-7})
         params = res.x
     except Exception:
@@ -873,6 +1059,9 @@ def fit_cluster_nur(
         "sigma_nur": sigma,
         "bic": bic_val,
         "n_params_total": n_params,
+        "regularization": "ridge",
+        "regularization_strength": regularization_strength,
+        "coefficient_bound": coefficient_bound,
         "model_type": "Near_Unit_Root",
     }
 
@@ -890,8 +1079,9 @@ def forecast_deterioration(
     """
     Project single-segment PSI forward from a fitted temporal model.
 
-    Uses the most compatible forward-projection rule for the fitted model type:
-    - OLS / AR(1): deterministic prediction from covariates.
+        Uses the most compatible forward-projection rule for the fitted model type:
+        - OLS / AR(1) / AR(2): deterministic prediction from covariates and
+            recursively expected residuals.
     - Random Walk: drift-based drift-forward projection.
     - Near-Unit-Root: recursive NUR projection using fitted rho.
 
@@ -899,7 +1089,7 @@ def forecast_deterioration(
     ----------
     fit : dict
         Fitted model dict from fit_cluster_ols / fit_cluster_ar1 /
-        fit_cluster_random_walk / fit_cluster_nur.
+        fit_cluster_ar2 / fit_cluster_random_walk / fit_cluster_nur.
     df_segment : DataFrame
         Single-segment data (one row per year), sorted by time.
     n_years : int
@@ -929,8 +1119,14 @@ def forecast_deterioration(
             rows.append({"year": int(t), "PSI_pred": exp(psi_val) if psi_col else psi_val})
         return pd.DataFrame(rows)
 
-    # OLS / AR(1): deterministic
+    # OLS / AR(1) / AR(2): deterministic conditional-mean forecast.
     coeffs = fit.get("coeff_dict", {})
+    residuals = np.asarray(fit.get("residuals", []), dtype=float)
+    ar1_resid = float(residuals[-1]) if residuals.size else 0.0
+    ar2_resid = float(residuals[-2]) if residuals.size > 1 else 0.0
+    phi1 = float(fit.get("rho_ar2_1", 0.0))
+    phi2 = float(fit.get("rho_ar2_2", 0.0))
+    rho_ar1 = float(fit.get("rho_ar1", 0.0))
     rows = []
     for t in range(1, n_years + 1):
         row = last_row.copy()
@@ -949,6 +1145,15 @@ def forecast_deterioration(
                 val += coeffs[vname] * log(raw)
             else:
                 val += coeffs[vname] * raw
+        if mt == "AR(1)":
+            ar_part = rho_ar1 * ar1_resid
+            ar1_resid = ar_part
+        elif mt == "AR(2)":
+            ar_part = phi1 * ar1_resid + phi2 * ar2_resid
+            ar2_resid, ar1_resid = ar1_resid, ar_part
+        else:
+            ar_part = 0.0
+        val += ar_part
         rows.append({"year": int(t), "PSI_pred": exp(val)})
     return pd.DataFrame(rows)
 
@@ -1044,7 +1249,7 @@ class PavementCLROptimizer:
     >>> print(result["bic"], result["fits"][0]["r2"])
     """
 
-    _TEMPORAL_MODELS = ("ols", "ar1", "random_walk", "nur")
+    _TEMPORAL_MODELS = ("ols", "ar1", "ar2", "random_walk", "nur")
 
     def __init__(
         self,
@@ -1413,6 +1618,9 @@ class PavementCLROptimizer:
         if self.temporal_model == "ar1":
             return fit_cluster_ar1(dfc, self.psi_col, self.variable_names,
                                    self.categorical_vars, self.segment_col)
+        if self.temporal_model == "ar2":
+            return fit_cluster_ar2(dfc, self.psi_col, self.variable_names,
+                                   self.categorical_vars, self.segment_col)
         if self.temporal_model == "random_walk":
             return fit_cluster_random_walk(dfc, self.psi_col, self.variable_names,
                                            self.categorical_vars, self.segment_col)
@@ -1450,9 +1658,10 @@ class PavementCLROptimizer:
 
 class PavementTemporalComparison:
     """
-    Compare four temporal error models within a fixed CLR cluster structure.
+    Compare temporal error models within a fixed CLR cluster structure.
 
-    Models: OLS (i.i.d.), AR(1), Random Walk with drift, Near-Unit-Root.
+    Models: OLS (i.i.d.), AR(1), AR(2), Random Walk with drift,
+    Near-Unit-Root.
 
     Usage
     -----
@@ -1481,7 +1690,7 @@ class PavementTemporalComparison:
         ci: int,
         clusters: np.ndarray,
     ) -> list:
-        """Fit all four temporal models for one cluster (thread-safe)."""
+        """Fit all temporal models for one cluster (thread-safe)."""
         segs = set(np.where(clusters == ci)[0])
         dfc = df_log[df_log[self.segment_col].isin(segs)]
         n_obs = len(dfc)
@@ -1491,6 +1700,9 @@ class PavementTemporalComparison:
                 dfc, self.psi_col, self.variable_names,
                 self.categorical_vars),
             "AR(1)": fit_cluster_ar1(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars, self.segment_col),
+            "AR(2)": fit_cluster_ar2(
                 dfc, self.psi_col, self.variable_names,
                 self.categorical_vars, self.segment_col),
             "Random_Walk": fit_cluster_random_walk(
@@ -1505,14 +1717,16 @@ class PavementTemporalComparison:
         for mname, mf in models.items():
             row = {"cluster": ci, "n_obs": n_obs, "model": mname}
             if mf is None:
-                for k in ["r2", "adj_r2", "bic", "rho_ar1",
-                          "drift_rw", "rho_nur", "sigma"]:
+                for k in ["r2", "adj_r2", "bic", "rho_ar1", "rho_ar2_1",
+                          "rho_ar2_2", "drift_rw", "rho_nur", "sigma"]:
                     row[k] = np.nan
             else:
                 row["r2"] = mf["r2"]
                 row["adj_r2"] = mf["adj_r2"]
                 row["bic"] = mf.get("bic", np.nan)
                 row["rho_ar1"] = mf.get("rho_ar1", np.nan)
+                row["rho_ar2_1"] = mf.get("rho_ar2_1", np.nan)
+                row["rho_ar2_2"] = mf.get("rho_ar2_2", np.nan)
                 row["drift_rw"] = mf.get("drift_rw", np.nan)
                 row["rho_nur"] = mf.get("rho_nur", np.nan)
                 row["sigma"] = mf.get("sigma_ar1",
@@ -1528,7 +1742,7 @@ class PavementTemporalComparison:
         n_clusters: int,
     ) -> pd.DataFrame:
         """
-        Fit all four temporal models for each cluster and return a comparison DataFrame.
+        Fit all temporal models for each cluster and return a comparison DataFrame.
 
         Parameters
         ----------
@@ -1542,7 +1756,7 @@ class PavementTemporalComparison:
         Returns
         -------
         DataFrame with columns: cluster, n_obs, model, r2, adj_r2, bic,
-        rho_ar1, drift_rw, rho_nur, sigma.
+        rho_ar1, rho_ar2_1, rho_ar2_2, drift_rw, rho_nur, sigma.
         """
         cluster_ids = list(range(1, n_clusters + 1))
         if self.n_jobs == 1 or n_clusters < 2:
@@ -1567,5 +1781,6 @@ class PavementTemporalComparison:
 
     def summary(self, df_results: pd.DataFrame) -> pd.DataFrame:
         """Aggregate comparison results by model (mean across clusters)."""
-        numeric_cols = ["r2", "adj_r2", "bic", "rho_ar1", "drift_rw", "rho_nur", "sigma"]
+        numeric_cols = ["r2", "adj_r2", "bic", "rho_ar1", "rho_ar2_1",
+                "rho_ar2_2", "drift_rw", "rho_nur", "sigma"]
         return df_results.groupby("model")[numeric_cols].mean().reset_index()
