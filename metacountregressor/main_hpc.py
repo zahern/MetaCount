@@ -574,13 +574,19 @@ class ModelSpec:
     random_cor_dists: tuple = ()
     grouped_dists: tuple = ()
     # ── VARIANCE REGULARISATION ────────────────────────────────────────
-    # Log-barrier that keeps random-SD / dispersion scale parameters
-    # strictly away from zero, so random-parameters and NB2 models cannot
-    # degenerate into fixed-effect / Poisson specifications.  Set
-    # variance_reg = 0.0 to disable.  variance_floor is the minimum allowed
-    # scale for any random-SD or dispersion parameter.
+    # Two-sided log-barrier that keeps random-SD / dispersion scale
+    # parameters strictly away from zero AND from runaway (+inf), so
+    # random-parameters and NB2 models cannot degenerate into fixed-effect
+    # / Poisson specifications or drift up a flat likelihood valley (raw
+    # dispersion → +inf while fixed effects compensate to absurd values).
+    # The barrier is exactly zero while every scale sits inside
+    # [variance_floor, variance_cap], so sane fits are bit-identical.
+    # Set variance_reg = 0.0 to disable.  variance_floor is the minimum
+    # allowed scale; variance_cap the maximum allowed scale for any
+    # random-SD or dispersion parameter.
     variance_reg:   float = 10.0
     variance_floor: float = 1e-3
+    variance_cap:   float = 50.0
     latent_classes: int =1
     @property
     def K_random_total(self):
@@ -1104,6 +1110,23 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
     else:
         ll_ind = ll_panel.squeeze(-1)
 
+    # ── Two-sided variance-scale barrier ──────────────────────────
+    # Applies ModelSpec.variance_reg / variance_floor / variance_cap here:
+    # previously declared but never used on the single-class path, leaving
+    # raw dispersion/SD params unbounded so sparse-data fits could drift
+    # alpha → +inf while fixed effects compensated to absurd values.
+    # The barrier is exactly 0 inside [floor, cap], so sane fits are
+    # bit-identical; only degenerate drift is pushed back.
+    vr = float(getattr(spec, "variance_reg", 0.0) or 0.0)
+    if vr > 0.0:
+        floor = float(getattr(spec, "variance_floor", 1e-3) or 1e-3)
+        cap = float(getattr(spec, "variance_cap", 50.0) or 50.0)
+        vpen = vr * _variance_barrier(blocks, spec, floor, cap)
+        if indivi:
+            n_obs = int(data["y"].shape[0])
+            return ll_ind - vpen / max(n_obs, 1)
+        return -jnp.sum(ll_ind) + vpen
+
     if indivi:
         return ll_ind
     return -jnp.sum(ll_ind)
@@ -1156,6 +1179,62 @@ def nb2_loglik(y, eta, alpha):
     term5 = y * (log_mu - log_denom)
 
     return term1 + term2 + term3 + term4 + term5
+
+
+def _variance_barrier(blocks, spec, floor=1e-3, cap=50.0):
+    """Two-sided log-barrier on variance scales (random-SDs + NB dispersion).
+
+    Each scale ``s`` used by the likelihood contributes
+    ``relu(log(floor) - log(s)) + relu(log(s) - log(cap))`` — exactly zero
+    while ``s`` stays inside ``[floor, cap]`` and growing without bound as
+    ``s`` escapes in either direction.  This wires the ``ModelSpec``
+    ``variance_reg`` / ``variance_floor`` / ``variance_cap`` fields into the
+    single-class objective (previously they were declared but never applied
+    there), so the optimiser can no longer drift ``alpha → +inf`` up a flat
+    sparse-data valley while fixed effects compensate.
+
+    Scales used by the likelihood (mirrors the LC-patch barrier):
+      * independent SD : |sd_ind|
+      * correlated SD  : exp(diag of Cholesky)
+      * grouped SD     : softplus(sd_g)
+      * NB2 dispersion : softplus(alpha)
+    """
+    def _get(key):
+        try:
+            get = getattr(blocks, "get", None)
+            return get(key) if callable(get) else None
+        except Exception:
+            return None
+
+    floor_log = jnp.log(float(floor))
+    cap_log = jnp.log(float(cap))
+    eps = 1e-12
+    p = 0.0
+
+    def _hit(s):
+        s = s + eps
+        return (jnp.sum(jnp.maximum(floor_log - jnp.log(s), 0.0))
+                + jnp.sum(jnp.maximum(jnp.log(s) - cap_log, 0.0)))
+
+    sd_ind = _get("sd_ind")
+    if sd_ind is not None:
+        p = p + _hit(jnp.abs(sd_ind))
+
+    chol = _get("chol")
+    kr_cor = int(getattr(spec, "Kr_cor", 0) or 0)
+    if chol is not None and kr_cor > 0:
+        diag_idx = jnp.array([i * (i + 3) // 2 for i in range(kr_cor)])
+        p = p + _hit(jnp.exp(chol[diag_idx]))
+
+    sd_g = _get("sd_g")
+    if sd_g is not None:
+        p = p + _hit(jax.nn.softplus(sd_g))
+
+    alpha = _get("alpha")
+    if alpha is not None:
+        p = p + _hit(jax.nn.softplus(alpha))
+
+    return p
 
 
 
