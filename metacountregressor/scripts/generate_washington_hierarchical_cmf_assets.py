@@ -3825,11 +3825,8 @@ def _jax_random_params_refit(
         se_ind_s   = _se_slice("ind_sd")
         se_alpha   = _se_slice("dispersion")
 
-        def _softplus(x):
-            return float(np.logaddexp(0.0, float(x)))
-
-        def _sigmoid(x):
-            return float(1.0 / (1.0 + np.exp(-float(x))))
+        def _positive_scale(x):
+            return float(np.exp(np.clip(float(x), -12.0, 6.0)))
 
         from main_hpc import unpack_params
         blocks = unpack_params(params_vec, spec_rp)
@@ -3871,9 +3868,9 @@ def _jax_random_params_refit(
                 })
 
                 sd_raw = float(sds_raw[j])
-                sd_trans = _softplus(sd_raw)
+                sd_trans = _positive_scale(sd_raw)
                 sse_raw = float(se_ind_s[j]) if se_ind_s is not None and j < len(se_ind_s) else np.nan
-                sse_trans = sse_raw * _sigmoid(sd_raw) if np.isfinite(sse_raw) else np.nan
+                sse_trans = sse_raw * sd_trans if np.isfinite(sse_raw) else np.nan
                 sz = sd_trans / sse_trans if (np.isfinite(sse_trans) and sse_trans > 1e-15) else 0.0
                 sp = float(2.0 * (1.0 - _norm_cdf(abs(sz))))
                 rows_param.append({
@@ -3887,9 +3884,9 @@ def _jax_random_params_refit(
 
         if blocks.get("alpha") is not None:
             a_raw = float(blocks["alpha"])
-            a_trans = _softplus(a_raw)
+            a_trans = float(np.exp(np.clip(a_raw, -12.0, 12.0)))
             ase_raw = float(se_alpha) if se_alpha is not None else np.nan
-            ase_trans = ase_raw * _sigmoid(a_raw) if np.isfinite(ase_raw) else np.nan
+            ase_trans = ase_raw * a_trans if np.isfinite(ase_raw) else np.nan
             az = a_trans / ase_trans if (np.isfinite(ase_trans) and ase_trans > 1e-15) else 0.0
             ap = float(2.0 * (1.0 - _norm_cdf(abs(az))))
             rows_param.append({
@@ -4068,11 +4065,8 @@ def _fit_literature_benchmark_with_metacount(
         se_ind_s  = _se_slice("ind_sd")
         se_alpha  = _se_slice("dispersion")
 
-        def _softplus(x):
-            return float(np.log1p(np.exp(float(x))))
-
-        def _sigmoid(x):
-            return float(1.0 / (1.0 + np.exp(-float(x))))
+        def _positive_scale(x):
+            return float(np.exp(np.clip(float(x), -12.0, 6.0)))
 
         blocks = _unpack(params_vec, fitted_spec)
         rows: list[dict[str, Any]] = []
@@ -4110,9 +4104,9 @@ def _fit_literature_benchmark_with_metacount(
                 })
 
                 sd_raw = float(sds_raw[j])
-                sd_trans = _softplus(sd_raw)
+                sd_trans = _positive_scale(sd_raw)
                 sse_raw = float(se_ind_s[j]) if se_ind_s is not None and j < len(se_ind_s) else np.nan
-                sse_trans = sse_raw * _sigmoid(sd_raw) if np.isfinite(sse_raw) else np.nan
+                sse_trans = sse_raw * sd_trans if np.isfinite(sse_raw) else np.nan
                 sz = sd_trans / sse_trans if (np.isfinite(sse_trans) and sse_trans > 1e-15) else 0.0
                 sp = float(2.0 * (1.0 - _norm_cdf(abs(sz))))
                 rows.append({
@@ -4126,9 +4120,9 @@ def _fit_literature_benchmark_with_metacount(
 
         if blocks.get("alpha") is not None:
             a_raw = float(blocks["alpha"])
-            a_trans = _softplus(a_raw)
+            a_trans = float(np.exp(np.clip(a_raw, -12.0, 12.0)))
             ase_raw = float(se_alpha) if se_alpha is not None else np.nan
-            ase_trans = ase_raw * _sigmoid(a_raw) if np.isfinite(ase_raw) else np.nan
+            ase_trans = ase_raw * a_trans if np.isfinite(ase_raw) else np.nan
             az = a_trans / ase_trans if (np.isfinite(ase_trans) and ase_trans > 1e-15) else 0.0
             ap = float(2.0 * (1.0 - _norm_cdf(abs(az))))
             rows.append({
@@ -4378,7 +4372,9 @@ def _fit_literature_benchmark_with_metacount(
                 if blocks.get("alpha") is not None:
                     rows.append({"Parameter": "NB2 Dispersion (alpha)",
                                  "Type": "Fixed",
-                                 "Mean": round(float(_jax.nn.softplus(blocks["alpha"])), 5),
+                                 "Mean": round(float(_jax.numpy.exp(
+                                     _jax.numpy.clip(blocks["alpha"], -12.0, 12.0)
+                                 )), 5),
                                  "SD": ""})
 
                 coef_df = pd.DataFrame(rows)

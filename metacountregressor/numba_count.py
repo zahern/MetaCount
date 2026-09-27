@@ -32,6 +32,15 @@ def _softplus(value):
 
 
 @njit(cache=True)
+def _nb2_alpha(log_alpha):
+    if log_alpha < -12.0:
+        log_alpha = -12.0
+    elif log_alpha > 12.0:
+        log_alpha = 12.0
+    return math.exp(log_alpha)
+
+
+@njit(cache=True)
 def _logaddexp(left, right):
     if left >= right:
         return left + math.log1p(math.exp(right - left))
@@ -57,7 +66,7 @@ def _poisson_nll(params, design, response):
 def _nb2_nll(params, design, response):
     total = 0.0
     n_rows, n_cols = design.shape
-    alpha = _softplus(params[n_cols])
+    alpha = _nb2_alpha(params[n_cols])
     inv_alpha = 1.0 / alpha
     log_inv_alpha = math.log(inv_alpha)
     for row in range(n_rows):
@@ -192,7 +201,7 @@ class NumbaFixedCountEvaluator:
         mean_response = max(float(np.mean(self._response)), 1e-6)
         initial[0] = math.log(mean_response)
         if spec["dispersion"]:
-            initial[-1] = 0.541324854612918
+            initial[-1] = 0.0
             objective = lambda params: float(_nb2_nll(params, design, self._response))
         else:
             objective = lambda params: float(_poisson_nll(params, design, self._response))

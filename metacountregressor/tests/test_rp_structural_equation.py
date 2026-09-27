@@ -56,7 +56,7 @@ def test_draws_normal_matches_closed_form():
     b = rp_draws_independent(mean, logsd, v, ["normal"])
     import math
 
-    s = math.log(2.0)  # softplus(0)
+    s = 1.0  # exp(logsd=0)
     np.testing.assert_allclose(b[:, 0, :], mean + s * v[:, 0, :])
 
 
@@ -80,6 +80,46 @@ def test_correlated_draws_match_engine_convention():
         )
     )
     np.testing.assert_allclose(mine, eng, rtol=1e-5, atol=1e-7)
+
+
+def test_random_parameter_diagnostics_check_mean_scale_coupling():
+    from metacountregressor import main_hpc as hpc
+
+    spec = hpc.ModelSpec(
+        Kf=0,
+        Kr_ind=1,
+        Kr_cor=0,
+        Kg=0,
+        Kh=0,
+        Kv=0,
+        Kzi=0,
+        model="poisson",
+        zero_inflated=False,
+        fixed_names=(),
+        zi_names=(),
+        random_cor_names=(),
+        random_ind_names=("X1",),
+        grouped_names=(),
+        hetro_names=(),
+        hetro_var_names=(),
+        random_ind_dists=("normal",),
+    )
+    index = hpc.build_base_index(spec)
+
+    def objective(params):
+        mean = params[index["ind_mean"][0]]
+        log_sd = params[index["ind_sd"][0]]
+        return 0.5 * (mean**2 + log_sd**2 + 1.98 * mean * log_sd)
+
+    report = hpc.random_parameter_convergence_diagnostics(
+        np.zeros(index["total_params"]),
+        objective,
+        spec,
+        index,
+    )
+    assert report["stationary"]
+    assert report["max_mean_scale_coupling"] > 0.95
+    assert any("strongly coupled" in warning for warning in report["warnings"])
 
 
 def _toy_df():

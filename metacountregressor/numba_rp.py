@@ -10,7 +10,7 @@ Single-class parameter layout (flat vector, mirrors
      mean_g (Kg), sd_raw_g (Kg, softplus),
      gamma (Kh*Ktot), gamma_var (Kv*Ktot),
      gamma_gse (Ktot, iff GSE scores supplied),
-     alpha_raw? (1 iff NB)]
+    log_alpha? (1 iff NB)]
 
 ``Ktot = Kc + Kr`` (correlated block first, as in JAX shift slicing).
 Hetero shifts are panel-means (mean over P, pads included); the
@@ -19,9 +19,8 @@ correlated Cholesky diagonals carry the global-mean variance shift, as in
 ``transform_draws(z_corr, mean, zeros)`` i.e. fixed scale ``ln 2``.
 
 Deviations from JAX (deliberate, documented):
-  * NB dispersion is ``softplus`` everywhere, including the ZI zero-mass
-    ``f0`` (JAX's ZI branch uses ``exp``, inconsistent with its own
-    ``nb2_loglik``).
+    * Random-effect scale transforms remain Numba-local, but NB dispersion
+        uses the same ``exp(log_alpha)`` coordinate as the JAX engines.
   * Grouped coefficients carry no hetero mean/var shifts (JAX's grouped
     var-shift block is dimensionally incoherent; means are unshifted there).
   * ``gse_scores`` rows must follow ``df`` sorted by ``id_col``.
@@ -61,6 +60,16 @@ def _softplus(value):
     if value < -30.0:
         return math.exp(value)
     return math.log1p(math.exp(value))
+
+
+@njit(cache=True)
+def _nb2_alpha(log_alpha):
+    """Stable exp(log-alpha) transform shared by the NB2 engines."""
+    if log_alpha < -12.0:
+        log_alpha = -12.0
+    elif log_alpha > 12.0:
+        log_alpha = 12.0
+    return math.exp(log_alpha)
 
 
 @njit(cache=True)
@@ -136,15 +145,15 @@ def _rp_ll_ind_core(params, Xf, Xi, Xc, Xg, Xh_m, Xhv_m, Gm, Xzi,
     idx += Kv * Ktot
     gse_off = idx
     idx += Ktot if Ks > 0 else 0
-    alpha_raw = 0.0
+    log_alpha = 0.0
     if is_nb:
-        alpha_raw = params[idx]
+        log_alpha = params[idx]
 
     alpha = 0.0
     inv_alpha = 0.0
     log_inv_alpha = 0.0
     if is_nb:
-        alpha = _softplus(alpha_raw)
+        alpha = _nb2_alpha(log_alpha)
         inv_alpha = 1.0 / alpha
         log_inv_alpha = math.log(inv_alpha)
 
@@ -613,7 +622,7 @@ class NumbaRandomCountEvaluator:
             for k, c in enumerate(rdm_all):
                 names[offs["gse"][0] + k] = f"gse_{c}"
         if spec.get("dispersion", 0) == 1:
-            names[offs["alpha"][0]] = "alpha_raw"
+            names[offs["alpha"][0]] = "log_alpha"
         return names
 
     # -- arrays --
@@ -764,7 +773,7 @@ class NumbaRandomCountEvaluator:
             init[offs["mean_ind"][0]:offs["mean_ind"][1]] = 0.0
             init[offs["sd"][0]:offs["sd"][1]] = -1.0
         if spec.get("dispersion", 0) == 1:
-            init[offs["alpha"][0]] = 0.541324854612918
+            init[offs["alpha"][0]] = 0.0
         return init
 
     def _objective_fn(self, arr, spec, weights=None):

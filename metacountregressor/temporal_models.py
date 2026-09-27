@@ -134,15 +134,17 @@ def _logmeanexp(values: np.ndarray) -> float:
 
 
 def _nb2_logpmf(y_values: np.ndarray, means: np.ndarray, dispersion: float) -> np.ndarray:
-    size = 1.0 / max(float(dispersion), 1e-10)
+    log_alpha = float(np.clip(np.log(max(float(dispersion), 1e-12)), -12.0, 12.0))
+    inv_alpha = np.exp(-log_alpha)
     means = np.clip(np.asarray(means, dtype=float), 1e-12, 1e100)
     y_values = np.asarray(y_values, dtype=float)
+    log_denom = np.logaddexp(-log_alpha, np.log(means))
     return (
-        gammaln(y_values + size)
-        - gammaln(size)
+        gammaln(y_values + inv_alpha)
+        - gammaln(inv_alpha)
         - gammaln(y_values + 1.0)
-        + size * np.log(size / (size + means))
-        + y_values * np.log(means / (size + means))
+        + inv_alpha * (-log_alpha - log_denom)
+        + y_values * (np.log(means) - log_denom)
     )
 
 

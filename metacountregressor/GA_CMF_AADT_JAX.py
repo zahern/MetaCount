@@ -61,6 +61,10 @@ try:
 except ImportError:  # flat import (script run from inside the package dir)
     from _jax_config import configure_jax
 configure_jax()
+try:
+    from .nb_parameterization import nb2_logpmf
+except ImportError:
+    from nb_parameterization import nb2_logpmf
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -159,12 +163,7 @@ def _fixed_ll(params, y, AADT, baseline_mat, locals_mat,
         ll = y * log_mu - mu - gammaln(y + 1.0)
     else:
         log_theta = params[idx]
-        theta = jnp.exp(log_theta)
-        ll = (  gammaln(y + 1.0/theta)
-              - gammaln(1.0/theta)
-              - gammaln(y + 1.0)
-              + y * (log_mu + jnp.log(theta))
-              - (y + 1.0/theta) * jnp.log(1.0 + theta * mu))
+        ll = nb2_logpmf(y, log_mu, log_theta)
 
     return -jnp.sum(ll)
 
@@ -207,9 +206,6 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
         else:
             sigma_beta.append(0.0)
 
-    if model == 'nb':
-        theta = jnp.exp(params[idx])
-
     log_AADT = jnp.log(AADT)   # (N,)
 
     # â”€â”€ Component A  â€”  shape (R, N) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -242,11 +238,7 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
     if model == 'poisson':
         sim_ll = y[None, :] * log_mu - mu - gammaln(y + 1.0)[None, :]
     else:
-        sim_ll = (  gammaln(y[None, :] + 1.0/theta)
-                  - gammaln(1.0/theta)
-                  - gammaln(y[None, :] + 1.0)
-                  + y[None, :] * (log_mu + jnp.log(theta))
-                  - (y[None, :] + 1.0/theta) * jnp.log(1.0 + theta * mu))
+        sim_ll = nb2_logpmf(y[None, :], log_mu, params[idx])
 
     loglik_i = logsumexp(sim_ll, axis=0) - jnp.log(R)
     return -jnp.sum(loglik_i)
@@ -321,12 +313,7 @@ def _fixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
         ll = y * log_mu - mu - gammaln(y + 1.0)
     else:
         log_theta = params[idx]
-        theta = jnp.exp(log_theta)
-        ll = (  gammaln(y + 1.0/theta)
-              - gammaln(1.0/theta)
-              - gammaln(y + 1.0)
-              + y * (log_mu + jnp.log(theta))
-              - (y + 1.0/theta) * jnp.log(1.0 + theta * mu))
+        ll = nb2_logpmf(y, log_mu, log_theta)
 
     return -jnp.sum(ll)
 
@@ -366,9 +353,6 @@ def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
         else:
             sigma_beta.append(0.0)
 
-    if model == 'nb':
-        theta = jnp.exp(params[idx])
-
     log_AADT = jnp.log(AADT)            # (N,)
 
     # â”€â”€ Component A  â€”  shape (R, N) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -402,11 +386,7 @@ def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
     if model == 'poisson':
         sim_ll = y[None, :] * log_mu - mu - gammaln(y + 1.0)[None, :]
     else:
-        sim_ll = (  gammaln(y[None, :] + 1.0/theta)
-                  - gammaln(1.0/theta)
-                  - gammaln(y[None, :] + 1.0)
-                  + y[None, :] * (log_mu + jnp.log(theta))
-                  - (y[None, :] + 1.0/theta) * jnp.log(1.0 + theta * mu))
+        sim_ll = nb2_logpmf(y[None, :], log_mu, params[idx])
 
     loglik_i = logsumexp(sim_ll, axis=0) - jnp.log(R)
     return -jnp.sum(loglik_i)

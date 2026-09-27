@@ -82,6 +82,12 @@ except ImportError:
 else:
     jax_present = True
 
+if jax_present:
+    try:
+        from .nb_parameterization import nb2_logpmf_from_mean
+    except ImportError:
+        from nb_parameterization import nb2_logpmf_from_mean
+
 try:
     from scipy import stats as _scipy_stats
     from scipy.optimize import minimize as _scipy_minimize
@@ -250,12 +256,8 @@ COPULA_LOGS = {
 # ---------------------------------------------------------------------------
 
 def nb_log_pmf(k, mu, alpha):
-    r = 1.0 / alpha
-    return (jsp_special.gammaln(k + r)
-            - jsp_special.gammaln(r)
-            - jsp_special.gammaln(k + 1.0)
-            + r * jnp.log(r / (r + mu))
-            + k * jnp.log(mu / (r + mu)))
+    """NB2 log-PMF for positive alpha on the model scale."""
+    return nb2_logpmf_from_mean(k, mu, jnp.log(alpha))
 
 
 def nb_log_cdf(k, mu, alpha):

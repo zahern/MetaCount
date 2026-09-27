@@ -98,11 +98,14 @@ try:
         compute_standard_errors,
         decode_distribution,
         poisson_loglik,
+        nb2_dispersion,
         nb2_loglik,
+        nb2_logpmf,
         gaussian_loglik,
         lognormal_loglik,
         tobit_loglik,
         build_eta,
+        _positive_scale,
         ensure_3d,
         unpack_params,
         DIST_MAP,
@@ -122,11 +125,14 @@ except ImportError:
         compute_standard_errors,
         decode_distribution,
         poisson_loglik,
+        nb2_dispersion,
         nb2_loglik,
+        nb2_logpmf,
         gaussian_loglik,
         lognormal_loglik,
         tobit_loglik,
         build_eta,
+        _positive_scale,
         ensure_3d,
         unpack_params,
         DIST_MAP,
@@ -736,10 +742,10 @@ def _variance_penalty(blocks, spec: ModelSpec, floor: float, vr: float):
     dispersion strictly positive instead of degenerating the model.
 
     Scales used by the likelihood:
-      * independent SD   : |sd_ind|                     (raw multiplier)
+    * independent SD   : exp(log_sd_ind)
       * correlated SD     : exp(diag of Cholesky)        (always positive)
-      * grouped SD        : softplus(sd_g)
-      * NB2 dispersion    : softplus(alpha)
+    * grouped SD        : exp(log_sd_g)
+    * NB2 dispersion    : exp(log_alpha)
     """
     floor_log = jnp.log(floor)
     eps = 1e-12
@@ -748,7 +754,7 @@ def _variance_penalty(blocks, spec: ModelSpec, floor: float, vr: float):
     # Independent random SDs
     sd_ind = blocks.get("sd_ind")
     if sd_ind is not None:
-        s = jnp.abs(sd_ind) + eps
+        s = _positive_scale(sd_ind) + eps
         p += jnp.sum(jax.nn.relu(floor_log - jnp.log(s)))
 
     # Correlated random SDs = exp() of the Cholesky diagonal
@@ -758,16 +764,16 @@ def _variance_penalty(blocks, spec: ModelSpec, floor: float, vr: float):
         s = jnp.exp(chol[diag_idx]) + eps
         p += jnp.sum(jax.nn.relu(floor_log - jnp.log(s)))
 
-    # Grouped random SDs (softplus scale in transform_draws)
+    # Grouped random SDs (exponential log-SD scale in transform_draws)
     sd_g = blocks.get("sd_g")
     if sd_g is not None:
-        s = jax.nn.softplus(sd_g) + eps
+        s = _positive_scale(sd_g) + eps
         p += jnp.sum(jax.nn.relu(floor_log - jnp.log(s)))
 
-    # NB2 dispersion (softplus scale in nb2_loglik)
+    # NB2 dispersion (exponential log-dispersion scale in nb2_loglik)
     alpha = blocks.get("alpha")
     if alpha is not None:
-        s = jax.nn.softplus(alpha) + eps
+        s = nb2_dispersion(alpha) + eps
         p += jax.nn.relu(floor_log - jnp.log(s))
 
     return vr * p
@@ -1043,9 +1049,9 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
         if spec.model == "poisson":
             f0 = jnp.exp(-mu)
         elif spec.model == "nb":
-            alpha_e  = jnp.exp(blocks["alpha"])
-            inv_a    = 1.0 / alpha_e
-            f0       = jnp.exp(inv_a * (jnp.log(inv_a) - jnp.log(inv_a + mu)))
+            f0 = jnp.exp(nb2_logpmf(
+                jnp.zeros_like(y), eta, blocks["alpha"]
+            ))
         elif spec.model == "lognormal":
             f0 = jnp.zeros_like(mu)
         elif spec.model == "gaussian":

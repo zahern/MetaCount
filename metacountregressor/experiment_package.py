@@ -144,6 +144,7 @@ try:
         _is_oom_error,
         run_with_oom_recovery,
         _to_f64,
+        random_parameter_convergence_diagnostics,
     )
     from .main_hpc_lc_patch import (
         ModelSpec,
@@ -186,6 +187,7 @@ except ImportError:
         _is_oom_error,
         run_with_oom_recovery,
         _to_f64,
+        random_parameter_convergence_diagnostics,
     )
     from main_hpc_lc_patch import (
         ModelSpec,
@@ -2146,6 +2148,12 @@ class ExperimentBuilder:
 
         objective = partial(mixed_model_loglik, data=data, spec=spec)
         param_index = build_param_index(spec)
+        random_parameter_diagnostics = random_parameter_convergence_diagnostics(
+            result.params,
+            objective,
+            spec,
+            param_index,
+        )
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -2169,6 +2177,7 @@ class ExperimentBuilder:
             "param_index": param_index,
             "predictions": np.asarray(fitted.predict()).squeeze(),
             "de_warm_start_report": de_report,
+            "random_parameter_diagnostics": random_parameter_diagnostics,
             "_summary_text": summary_text,
         })
 

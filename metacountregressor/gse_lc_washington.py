@@ -35,7 +35,7 @@ from main_hpc_lc_patch import (  # noqa: E402
     print_summary, CountModel, mixed_model_loglik, compute_lc_posteriors,
     fit_em, _de_warmup_lc, _seed_classes_from_clusters,
 )
-from main_hpc import experiment_washington  # noqa: E402
+from main_hpc import experiment_washington, nb2_logpmf  # noqa: E402
 from experiment_package import ExperimentBuilder  # noqa: E402
 from jaxopt import LBFGS  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
@@ -93,11 +93,7 @@ def compute_individual_gradients(
         if spec.dispersion > 0:
             eta = eta + p[len(fixed_terms)] * 0  # extra param not in dot
         mu = jnp.clip(jnp.exp(eta + oi), 1e-10, 1e10)
-        alpha = jnp.exp(p[-1])
-        from jax.scipy.special import gammaln
-        return (gammaln(yi + alpha) - gammaln(yi + 1) - gammaln(alpha)
-                + alpha * jnp.log(alpha / (alpha + mu))
-                + yi * jnp.log(mu / (alpha + mu)))
+        return nb2_logpmf(yi, eta + oi, p[-1])
 
     grad_fn = jax.jit(jax.grad(lambda p: -_row_loglik(p, X[0], y[0], offset[0]).sum()))
     for i in range(n_segs):

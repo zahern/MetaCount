@@ -3,6 +3,11 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import lax
 
+try:
+    from .nb_parameterization import nb2_logpmf
+except ImportError:
+    from nb_parameterization import nb2_logpmf
+
 
 def loglik_gradient_clean(
     betas,
@@ -33,16 +38,7 @@ def loglik_gradient_clean(
 
     # ---------- Negative Binomial case ----------
     def nb_case(_):
-        alpha = jnp.exp(betas[-1])  # enforce positivity
-        r = 1.0 / alpha
-
-        loglik = (
-            jsp.special.gammaln(y + r)
-            - jsp.special.gammaln(r)
-            - jsp.special.gammaln(y + 1)
-            + r * jnp.log(r / (r + mu))
-            + y * jnp.log(mu / (r + mu))
-        )
+        loglik = nb2_logpmf(y, eta, betas[-1])
 
         return -jnp.sum(loglik)
 

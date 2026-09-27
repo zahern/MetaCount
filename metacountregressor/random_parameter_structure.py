@@ -133,12 +133,14 @@ def rp_draws_independent(
     logsd: np.ndarray,
     draws: np.ndarray,
     dists: Sequence[str],
-    softplus: bool = True,
+    softplus: bool = False,
 ) -> np.ndarray:
     """Simulated draws ``b[n,k,r]`` for independent random parameters.
 
-    Mirrors the effective ``transform_draws`` in main_hpc (softplus scale by
-    default).  ``mean``/``logsd`` are (K,) or (N,K); ``draws`` is (N,K,R).
+    ``logsd`` is the unconstrained log standard deviation used by the JAX
+    engine.  ``mean``/``logsd`` are (K,) or (N,K); ``draws`` is (N,K,R).
+    The ``softplus`` argument is retained for compatibility with older
+    callers, but the canonical engine uses ``softplus=False``.
     """
     mean = np.asarray(mean, dtype=float)
     logsd = np.asarray(logsd, dtype=float)
@@ -198,12 +200,10 @@ def rp_draws_correlated(
 
 
 def _correlated_via_independent(mu, v, zcorr, dists):
-    # Correlated path embeds the Cholesky in zcorr; distribution transforms
-    # then apply with the engine's dummy scale, mirroring random_correlated
-    # exactly: transform_draws(z_corr, mean, zeros) with softplus(0) = ln 2.
+    # Correlated path embeds the Cholesky in zcorr; the distribution transform
+    # must not apply a second scale.  The engine passes a zero dummy scale,
+    # which is a unit scale under the canonical exponential convention.
     import numpy as _np
-
-    _LN2 = float(_np.log(2.0))
     N, K, R = zcorr.shape
     codes = [DIST_CODES[str(d).lower()] for d in dists]
     out = _np.empty_like(zcorr)
@@ -211,15 +211,15 @@ def _correlated_via_independent(mu, v, zcorr, dists):
         m = mu[:, k, :]
         z = zcorr[:, k, :]
         if code == 1:
-            out[:, k, :] = _np.exp(m + _LN2 * z)
+            out[:, k, :] = _np.exp(m + z)
         elif code == 2:
             u = _norm_cdf(z)
-            out[:, k, :] = m + _LN2 * (2.0 * u - 1.0)
+            out[:, k, :] = m + (2.0 * u - 1.0)
         elif code == 3:
             u = _norm_cdf(z) * 2.0 - 1.0
-            out[:, k, :] = m + _LN2 * u
+            out[:, k, :] = m + u
         else:
-            out[:, k, :] = m + _LN2 * z
+            out[:, k, :] = m + z
     return out
 
 

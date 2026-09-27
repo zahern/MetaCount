@@ -24,6 +24,18 @@ except ImportError:  # flat import (script run from inside the package dir)
     from _jax_config import configure_jax
 configure_jax()
 try:
+    from .nb_parameterization import (
+        nb2_dispersion,
+        nb2_logpmf,
+        nb2_logpmf_from_mean,
+    )
+except ImportError:
+    from nb_parameterization import (
+        nb2_dispersion,
+        nb2_logpmf,
+        nb2_logpmf_from_mean,
+    )
+try:
     from .Solvers_METAJAX import *  # type: ignore[attr-defined]
 except ImportError:
     from Solvers_METAJAX import *
@@ -617,7 +629,7 @@ def random_correlated(mean, chol_params, draws, K, dist_codes):
     L = L.at[tril].set(chol_params)
 
     diag = jnp.diag_indices(K)
-    L = L.at[diag].set(jnp.exp(L[diag]))
+    L = L.at[diag].set(_positive_scale(L[diag]))
 
     z_corr = jnp.einsum("ij,njr->nir", L, draws)
 
@@ -631,6 +643,11 @@ def random_correlated(mean, chol_params, draws, K, dist_codes):
     )
 
     return beta
+
+
+def _positive_scale(log_scale):
+    """Map an unconstrained log-SD to a finite positive standard deviation."""
+    return jnp.exp(jnp.clip(log_scale, -12.0, 6.0))
 
 
 ''' works with non hetrogeneity 
@@ -657,14 +674,7 @@ def poisson_loglik(y, mu):
 
 
 def nb_loglik(y, mu, alpha):
-    r = 1.0 / jnp.exp(alpha)
-    return (
-        jsp.special.gammaln(y + r)
-        - jsp.special.gammaln(r)
-        - jsp.special.gammaln(y + 1)
-        + r * jnp.log(r / (r + mu))
-        + y * jnp.log(mu / (r + mu))
-    )
+    return nb2_logpmf_from_mean(y, mu, alpha)
 
 def build_eta(params, data, spec: ModelSpec):
 
@@ -864,60 +874,7 @@ def transform_draws(draws, mean, scale, dist_codes):
         2 = triangular
     """
 
-    scale = jnp.exp(scale)
-
-    if mean.ndim == 1:
-        mean = mean[None, :, None]
-    else:
-        mean = mean[:, :, None]
-
-    # Handle scale: can be (K,) or (N,K)
-    if scale.ndim == 1:
-        scale = scale[None, :, None]
-    else:
-        scale = scale[:, :, None]
-
-    z = draws
-
-    # Normal
-    beta_normal = mean + scale * z
-
-    # Lognormal
-    beta_lognormal = jnp.exp(mean + scale * z)
-
-    # Triangular (using inverse CDF of symmetric triangular)
-    # Assume draws are uniform in (-1,1)
-    u = jsp.stats.norm.cdf(z)
-    beta_tri = mean + scale * (2*u - 1)
-    
-        # Uniform (mean + scale * u) where u in (-1,1)
-    u = jsp.stats.norm.cdf(z) * 2 - 1
-    beta_uniform = mean + scale * u
-
-    # Stack and select
-    betas = jnp.stack([beta_normal, beta_lognormal, beta_tri, beta_uniform], axis=-1)
-
-    # dist_codes shape (K,)
-    selector = jax.nn.one_hot(dist_codes, 4)  # (K,4)
-
-    selector = selector[None, :, None, :]  # (1,K,1,4)
-
-    beta = jnp.sum(betas * selector, axis=-1)
-
-    return beta  # (N,K,R)
-
-
-def transform_draws(draws, mean, scale, dist_codes):
-    """
-    draws: (N,K,R) standard normal or uniform
-    mean:  (K,) or (N,K)
-    scale: (K,) or (N,K)  # per-observation scale for heterogeneity in variances
-    dist_codes: integer array (K,)
-        0 = normal
-        1 = lognormal
-        2 = triangular
-    """
-    scale = jax.nn.softplus(scale)
+    scale = _positive_scale(scale)
 
     if mean.ndim == 1:
         mean = mean[None, :, None]
@@ -1083,13 +1040,10 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
             f0 = jnp.exp(-mu)
         else:
             # NB zero probability
-            alpha_exp = jnp.exp(blocks["alpha"])
-            inv_alpha = 1.0 / alpha_exp
-            log_f0 = inv_alpha * (
-                jnp.log(inv_alpha) - jnp.log(inv_alpha + mu)
+            log_f0 = nb2_logpmf(
+                jnp.zeros_like(y), eta, blocks["alpha"]
             )
             f0 = jnp.exp(log_f0)
-            #f0 = (inv_alpha / (inv_alpha + mu)) ** inv_alpha
 
         zero_mask = (y == 0)
 
@@ -1156,29 +1110,7 @@ def nb1_loglik(y, mu, alpha):
 
 def nb2_loglik(y, eta, alpha):
 
-    alpha = jax.nn.softplus(alpha)
-   # alpha = jnp.abs(alpha)
-    inv_alpha = 1.0 / alpha
-
-    log_mu = eta
-    log_inv_alpha = jnp.log(inv_alpha)
-
-    # ✅ broadcast scalar to (N,P,R)
-    log_inv_alpha = jnp.broadcast_to(log_inv_alpha, log_mu.shape)
-
-    log_denom = jsp.special.logsumexp(
-        jnp.stack([log_inv_alpha, log_mu], axis=0),
-        axis=0
-    )
-
-    term1 = jsp.special.gammaln(y + inv_alpha)
-    term2 = -jsp.special.gammaln(inv_alpha)
-    term3 = -jsp.special.gammaln(y + 1)
-
-    term4 = inv_alpha * (log_inv_alpha - log_denom)
-    term5 = y * (log_mu - log_denom)
-
-    return term1 + term2 + term3 + term4 + term5
+    return nb2_logpmf(y, eta, alpha)
 
 
 def _variance_barrier(blocks, spec, floor=1e-3, cap=50.0):
@@ -1194,10 +1126,10 @@ def _variance_barrier(blocks, spec, floor=1e-3, cap=50.0):
     sparse-data valley while fixed effects compensate.
 
     Scales used by the likelihood (mirrors the LC-patch barrier):
-      * independent SD : |sd_ind|
-      * correlated SD  : exp(diag of Cholesky)
-      * grouped SD     : softplus(sd_g)
-      * NB2 dispersion : softplus(alpha)
+    * independent SD : exp(log_sd_ind)
+    * correlated SD  : exp(diag of Cholesky)
+    * grouped SD     : exp(log_sd_g)
+    * NB2 dispersion : exp(log_alpha)
     """
     def _get(key):
         try:
@@ -1218,21 +1150,21 @@ def _variance_barrier(blocks, spec, floor=1e-3, cap=50.0):
 
     sd_ind = _get("sd_ind")
     if sd_ind is not None:
-        p = p + _hit(jnp.abs(sd_ind))
+        p = p + _hit(_positive_scale(sd_ind))
 
     chol = _get("chol")
     kr_cor = int(getattr(spec, "Kr_cor", 0) or 0)
     if chol is not None and kr_cor > 0:
         diag_idx = jnp.array([i * (i + 3) // 2 for i in range(kr_cor)])
-        p = p + _hit(jnp.exp(chol[diag_idx]))
+        p = p + _hit(_positive_scale(chol[diag_idx]))
 
     sd_g = _get("sd_g")
     if sd_g is not None:
-        p = p + _hit(jax.nn.softplus(sd_g))
+        p = p + _hit(_positive_scale(sd_g))
 
     alpha = _get("alpha")
     if alpha is not None:
-        p = p + _hit(jax.nn.softplus(alpha))
+        p = p + _hit(nb2_dispersion(alpha))
 
     return p
 
@@ -2550,38 +2482,62 @@ def generate_panel_data(N_ids=1000, T=4, seed=0):
 
 def multi_start_estimation(model, n_starts=10, seed=0):
 
-    import jax
     import jax.numpy as jnp
     from jaxopt import LBFGS
 
-    best_ll = jnp.inf
+    rng = np.random.default_rng(seed)
+    best_ll = np.inf
     best_result = None
+    start_reports = []
+    scale_levels = (-2.5, -1.0, 0.0, 0.7)
 
     for s in range(n_starts):
-
-        key = jax.random.PRNGKey(seed + s)
-
-        init = 0.1 * jax.random.normal(
-            key,
-            (model.param_index["total_params"],)
-        )
+        init = 0.05 * rng.standard_normal(model.param_index["total_params"])
+        scale_level = scale_levels[s % len(scale_levels)]
+        for pair in _random_mean_scale_pairs(model.spec, model.param_index):
+            init[pair["scale_index"]] = scale_level + 0.1 * rng.standard_normal()
 
         solver = LBFGS(
             fun=model.objective,
             maxiter=2000
         )
 
-        result = solver.run(init)
+        result = solver.run(jnp.asarray(init, dtype=float))
 
-        ll = result.state.value
+        ll = float(result.state.value)
+        diagnostic = random_parameter_convergence_diagnostics(
+            result.params,
+            model.objective,
+            model.spec,
+            model.param_index,
+            include_hessian=False,
+        )
+        finite = bool(np.isfinite(ll) and not diagnostic["warnings"]
+                      or np.isfinite(ll) and diagnostic["stationary"])
+        start_reports.append({
+            "start": s,
+            "log_sd_start": scale_level,
+            "objective": ll,
+            "finite": finite,
+            "stationary": diagnostic["stationary"],
+            "relative_gradient": diagnostic["relative_gradient"],
+        })
 
-        print(f"Start {s}: LL = {ll:.4f}")
+        print(
+            f"Start {s}: objective = {ll:.4f} "
+            f"(log-SD start={scale_level:.2f}, "
+            f"relative gradient={diagnostic['relative_gradient']:.2e})"
+        )
 
-        if ll < best_ll:
+        if finite and ll < best_ll:
             best_ll = ll
             best_result = result
 
-    print("\n✅ Best LL:", best_ll)
+    model.last_multistart_report = start_reports
+    if best_result is None:
+        raise RuntimeError("All random-parameter starts produced invalid fits")
+
+    print("\nBest objective:", best_ll)
 
     return best_result
 
@@ -3044,8 +3000,8 @@ def print_summary(result, objective, data, spec, param_index):
     import pandas as pd
     from scipy import stats
 
-    def softplus(x):
-        return np.log1p(np.exp(x))
+    def positive_scale(x):
+        return np.exp(np.clip(x, -12.0, 6.0))
 
     params = np.array(result.params)
     se = np.array(compute_standard_errors(result.params, objective))
@@ -3140,21 +3096,21 @@ def print_summary(result, objective, data, spec, param_index):
 
     # Independent SDs
     sd_mask = summary_df["Parameter"].str.contains(r"^sd\(")
-    summary_df.loc[sd_mask, "Estimate"] = softplus(
+    summary_df.loc[sd_mask, "Estimate"] = positive_scale(
         summary_df.loc[sd_mask, "Estimate"]
     )
 
     # Grouped SDs
     gsd_mask = summary_df["Parameter"].str.contains("group_sd")
-    summary_df.loc[gsd_mask, "Estimate"] = softplus(
+    summary_df.loc[gsd_mask, "Estimate"] = positive_scale(
         summary_df.loc[gsd_mask, "Estimate"]
     )
 
     # NB dispersion
     if spec.model == "nb":
         disp_mask = summary_df["Parameter"] == "dispersion"
-        summary_df.loc[disp_mask, "Estimate"] = softplus(
-            summary_df.loc[disp_mask, "Estimate"]
+        summary_df.loc[disp_mask, "Estimate"] = np.exp(
+            np.clip(summary_df.loc[disp_mask, "Estimate"], -12.0, 12.0)
         )
 
     # ==========================================================
@@ -3343,8 +3299,8 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
         return
     
 
-    def softplus(x):
-        return np.log1p(np.exp(x))
+    def positive_scale(x):
+        return np.exp(np.clip(x, -12.0, 6.0))
 
     def sigmoid(x):
         return 1 / (1 + np.exp(-x))
@@ -3463,18 +3419,18 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
 
         # Independent SD
         if name.startswith("sd("):
-            phi = softplus(theta)
-            deriv = sigmoid(theta)
+            phi = positive_scale(theta)
+            deriv = phi
 
         # Grouped SD
         elif name.startswith("group_sd"):
-            phi = softplus(theta)
-            deriv = sigmoid(theta)
+            phi = positive_scale(theta)
+            deriv = phi
 
         # NB dispersion
         elif name == "dispersion":
-            phi = softplus(theta)
-            deriv = sigmoid(theta)
+            phi = np.exp(np.clip(theta, -12.0, 12.0))
+            deriv = phi
 
         # Cholesky diagonal
         elif name.startswith("chol("):
@@ -3482,8 +3438,8 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
             inside = name[5:-1]
             var1, var2 = inside.split(",")
             if var1 == var2:
-                phi = np.exp(theta)
-                deriv = np.exp(theta)
+                phi = positive_scale(theta)
+                deriv = phi
             else:
                 phi = theta
                 deriv = 1.0
@@ -3796,6 +3752,186 @@ def run_with_oom_recovery(fn, *args, label="operation", **kwargs):
 _build_eta_jit = jax.jit(build_eta, static_argnames=("spec",))
 
 
+def _random_mean_scale_pairs(spec, param_index):
+    """Return matching mean/log-SD parameter indices for RP diagnostics."""
+    if getattr(spec, "latent_classes", 1) > 1 and "class_params" in param_index:
+        base_spec = replace(spec, latent_classes=1)
+        base_index = build_base_index(base_spec)
+        pairs = []
+        start, _ = param_index["class_params"]
+        for class_number in range(spec.latent_classes):
+            class_offset = start + class_number * base_index["total_params"]
+            class_pairs = _random_mean_scale_pairs(base_spec, base_index)
+            pairs.extend(
+                {
+                    **pair,
+                    "mean_index": pair["mean_index"] + class_offset,
+                    "scale_index": pair["scale_index"] + class_offset,
+                    "label": f"class {class_number + 1}: {pair['label']}",
+                }
+                for pair in class_pairs
+            )
+        return pairs
+
+    pairs = []
+    if spec.Kr_cor > 0:
+        mean_start, _ = param_index["cor_mean"]
+        chol_start, _ = param_index["chol"]
+        for k, name in enumerate(spec.random_cor_names):
+            pairs.append({
+                "label": f"cor_sd({name})",
+                "mean_index": mean_start + k,
+                "scale_index": chol_start + k * (k + 3) // 2,
+            })
+    if spec.Kr_ind > 0:
+        mean_start, _ = param_index["ind_mean"]
+        scale_start, _ = param_index["ind_sd"]
+        for k, name in enumerate(spec.random_ind_names):
+            pairs.append({
+                "label": f"sd({name})",
+                "mean_index": mean_start + k,
+                "scale_index": scale_start + k,
+            })
+    if spec.Kg > 0:
+        mean_start, _ = param_index["group_mean"]
+        scale_start, _ = param_index["group_sd"]
+        for k, name in enumerate(spec.grouped_names):
+            pairs.append({
+                "label": f"group_sd({name})",
+                "mean_index": mean_start + k,
+                "scale_index": scale_start + k,
+            })
+    return pairs
+
+
+def random_parameter_convergence_diagnostics(
+    params,
+    objective,
+    spec,
+    param_index,
+    *,
+    result=None,
+    include_hessian=True,
+):
+    """Check stationarity, scale boundaries, and mean/scale coupling.
+
+    A random effect is not considered trustworthy merely because an optimizer
+    returned.  This reports whether the objective and gradient are finite,
+    whether the log-SD is at a barrier, and whether the local Hessian couples
+    the random mean and its log-SD strongly enough to make the estimate
+    sensitive to joint initialization.
+    """
+    params_np = np.asarray(params, dtype=float).reshape(-1)
+    pairs = _random_mean_scale_pairs(spec, param_index)
+    report = {
+        "has_random_parameters": bool(pairs),
+        "objective": np.nan,
+        "max_abs_gradient": np.nan,
+        "relative_gradient": np.nan,
+        "stationary": False,
+        "scales": {},
+        "boundary_parameters": [],
+        "mean_scale_coupling": {},
+        "max_mean_scale_coupling": np.nan,
+        "random_hessian_condition": np.nan,
+        "warnings": [],
+    }
+    if not pairs:
+        return report
+
+    try:
+        objective_value = float(objective(jnp.asarray(params_np)))
+        gradient = np.asarray(
+            jax.grad(objective)(jnp.asarray(params_np)), dtype=float
+        )
+    except Exception as exc:
+        report["warnings"].append(f"objective/gradient check failed: {exc}")
+        return report
+
+    report["objective"] = objective_value
+    report["max_abs_gradient"] = float(np.max(np.abs(gradient)))
+    report["relative_gradient"] = report["max_abs_gradient"] / max(
+        1.0, abs(objective_value)
+    )
+    report["stationary"] = bool(
+        np.isfinite(objective_value)
+        and np.isfinite(gradient).all()
+        and report["relative_gradient"] <= 1e-5
+    )
+    if not np.isfinite(objective_value) or not np.isfinite(gradient).all():
+        report["warnings"].append("non-finite objective or gradient")
+    elif not report["stationary"]:
+        report["warnings"].append(
+            f"gradient is not stationary (relative max={report['relative_gradient']:.2e})"
+        )
+
+    floor = max(float(getattr(spec, "variance_floor", 1e-3)), 1e-12)
+    cap = max(float(getattr(spec, "variance_cap", 50.0)), floor)
+    for pair in pairs:
+        raw_scale = float(params_np[pair["scale_index"]])
+        scale = float(np.exp(np.clip(raw_scale, -12.0, 6.0)))
+        report["scales"][pair["label"]] = scale
+        if scale <= floor * 1.05 or scale >= cap * 0.95:
+            report["boundary_parameters"].append(pair["label"])
+    if report["boundary_parameters"]:
+        report["warnings"].append(
+            "random SD at variance boundary: "
+            + ", ".join(report["boundary_parameters"])
+        )
+
+    if not include_hessian:
+        return report
+
+    try:
+        hessian = np.asarray(
+            jax.jit(jax.hessian(objective))(jnp.asarray(params_np)),
+            dtype=float,
+        )
+        random_indices = sorted({
+            index
+            for pair in pairs
+            for index in (pair["mean_index"], pair["scale_index"])
+        })
+        random_hessian = hessian[np.ix_(random_indices, random_indices)]
+        if not np.isfinite(random_hessian).all():
+            raise ValueError("non-finite random-parameter Hessian")
+        singular_values = np.linalg.svd(random_hessian, compute_uv=False)
+        if singular_values.size:
+            report["random_hessian_condition"] = float(
+                singular_values[0] / max(singular_values[-1], 1e-12)
+            )
+        couplings = []
+        for pair in pairs:
+            mean_index = pair["mean_index"]
+            scale_index = pair["scale_index"]
+            denominator = np.sqrt(
+                abs(hessian[mean_index, mean_index]
+                    * hessian[scale_index, scale_index])
+            )
+            coupling = float(
+                abs(hessian[mean_index, scale_index])
+                / max(denominator, 1e-12)
+            )
+            report["mean_scale_coupling"][pair["label"]] = coupling
+            couplings.append(coupling)
+        if couplings:
+            report["max_mean_scale_coupling"] = float(max(couplings))
+        if report["random_hessian_condition"] > 1e8:
+            report["warnings"].append(
+                "random-parameter Hessian is ill-conditioned "
+                f"(condition={report['random_hessian_condition']:.2e})"
+            )
+        if report["max_mean_scale_coupling"] > 0.95:
+            report["warnings"].append(
+                "random mean and log-SD are strongly coupled "
+                f"(max curvature ratio={report['max_mean_scale_coupling']:.3f})"
+            )
+    except Exception as exc:
+        report["warnings"].append(f"Hessian check failed: {exc}")
+
+    return report
+
+
 class CountModel:
 
     def __init__(self, spec, data):
@@ -3804,6 +3940,8 @@ class CountModel:
         self.param_index = build_param_index(spec)
         self.params = None
         self.last_de_report = None
+        self.last_rp_diagnostics = None
+        self.last_multistart_report = None
 
     def objective(self, params):
         return mixed_model_loglik(params, self.data, self.spec)
@@ -3943,6 +4081,15 @@ class CountModel:
         history_size=20)
         result = solver.run(init)
         self.params = result.params
+        self.last_rp_diagnostics = random_parameter_convergence_diagnostics(
+            result.params,
+            self.objective,
+            self.spec,
+            self.param_index,
+            result=result,
+        )
+        for message in self.last_rp_diagnostics["warnings"]:
+            print(f"[RP CHECK] WARNING: {message}")
         return result
     '''
     def fit(
