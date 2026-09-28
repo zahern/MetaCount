@@ -1646,54 +1646,111 @@ def compute_predictions(params, data, spec):
         return mu
 
     
-def compute_standard_errors(params, objective):
+def compute_standard_errors(params, objective, return_diagnostics=False):
+    """Compute Hessian SEs without hiding invalid curvature.
+
+    The Hessian is normalised by its diagonal before eigendecomposition so
+    fixed effects, random means, and log-SDs are compared on a common scale.
+    Only positive, resolved eigen-directions contribute to the covariance.
+    Parameters loading materially on negative or near-zero directions receive
+    ``NaN`` SEs and are listed in the optional diagnostics result.
+
+    The default return value remains the historical SE array.  Set
+    ``return_diagnostics=True`` to receive ``(se, diagnostics)``.
     """
-    Compute standard errors from the Hessian of the negative log-likelihood
-    using JAX reverse-mode autodiff.
+    params_np = np.asarray(params, dtype=float).reshape(-1)
+    diagnostics = {
+        "method": "scaled_positive_eigenspace",
+        "hessian_finite_fraction": 0.0,
+        "n_negative_eigenvalues": 0,
+        "n_near_zero_eigenvalues": 0,
+        "condition_number": np.inf,
+        "unreliable_indices": [],
+        "status": "failed",
+    }
 
-    Uses ridge-regularised inversion of the Hessian so that every parameter
-    gets a finite standard error.  Parameters in flat likelihood directions
-    will receive numerically large SEs rather than NaN, which is more
-    informative for diagnosing identification problems.
+    def _return(se):
+        se_jax = jnp.asarray(se, dtype=float)
+        return (se_jax, diagnostics) if return_diagnostics else se_jax
 
-    Ridge strength: λ = max_ev * 1e-6,  clamped to [1e-12, 1e-4].
-
-    See also: compute_regularized_estimates() which applies the PARTE
-    post-MLE shrinkage (Alghamdi et al. 2026) before computing SEs,
-    giving lower-MSE coefficient estimates when predictors are correlated.
-    """
-    params_np = np.asarray(params, dtype=float)
-    # Compile the Hessian as a single executable: differentiating the
-    # (already-jitted) objective otherwise emits a swarm of tiny helper
-    # executables on every call.
-    hess_fn   = jax.jit(jax.hessian(objective))
-    hess_np   = np.asarray(hess_fn(jnp.asarray(params_np)), dtype=float)
-
-    H = np.where(np.isfinite(hess_np), hess_np, 0.0)
-
-    # Symmetrise and ensure positive-semidefinite via eigendecomposition
     try:
-        eigvals, eigvecs = np.linalg.eigh(H)
-    except np.linalg.LinAlgError:
-        return jnp.full(len(params_np), jnp.nan)
+        hess_fn = jax.jit(jax.hessian(objective))
+        hess_raw = np.asarray(hess_fn(jnp.asarray(params_np)), dtype=float)
+    except Exception as exc:
+        diagnostics["status"] = f"hessian_failed: {exc}"
+        return _return(np.full(len(params_np), np.nan))
 
-    max_ev = float(np.max(np.abs(eigvals)))
-    if max_ev <= 0 or not np.isfinite(max_ev):
-        return jnp.full(len(params_np), jnp.nan)
+    expected_shape = (len(params_np), len(params_np))
+    if hess_raw.shape != expected_shape:
+        diagnostics["status"] = "invalid_hessian_shape"
+        return _return(np.full(len(params_np), np.nan))
 
-    # Ridge penalty: small diagonal added before inversion
-    ridge = float(np.clip(max_ev * 1e-6, 1e-12, 1e-4))
+    finite_mask = np.isfinite(hess_raw)
+    diagnostics["hessian_finite_fraction"] = float(finite_mask.mean())
+    if not finite_mask.all():
+        diagnostics["status"] = "nonfinite_hessian"
+        return _return(np.full(len(params_np), np.nan))
 
-    # Invert via eigen-decomposition with ridge:  (H + λI)^(-1) = V @ diag(1/(e+λ)) @ V^T
-    inv_eigvals = 1.0 / (eigvals + ridge)
-    cov_np      = (eigvecs * inv_eigvals) @ eigvecs.T
+    hess = 0.5 * (hess_raw + hess_raw.T)
+    diagonal = np.diag(hess)
+    curvature_scale = np.sqrt(np.maximum(np.abs(diagonal), 1e-12))
+    normalised = hess / np.outer(curvature_scale, curvature_scale)
 
-    diag_cov = np.diag(cov_np)
-    # Negative variance entries → set to ridge-scale SE as fallback
-    diag_cov = np.where(diag_cov > 0, diag_cov, 1.0 / ridge)
+    try:
+        eigvals, eigvecs = np.linalg.eigh(normalised)
+    except np.linalg.LinAlgError as exc:
+        diagnostics["status"] = f"eigendecomposition_failed: {exc}"
+        return _return(np.full(len(params_np), np.nan))
 
-    se = np.sqrt(diag_cov)
-    return jnp.asarray(se, dtype=float)
+    max_abs_eigenvalue = float(np.max(np.abs(eigvals)))
+    if not np.isfinite(max_abs_eigenvalue) or max_abs_eigenvalue <= 0:
+        diagnostics["status"] = "zero_hessian"
+        return _return(np.full(len(params_np), np.nan))
+
+    eigen_tolerance = max(1e-10, max_abs_eigenvalue * 1e-8)
+    positive = eigvals > eigen_tolerance
+    negative = eigvals < -eigen_tolerance
+    near_zero = ~positive & ~negative
+    diagnostics["n_negative_eigenvalues"] = int(negative.sum())
+    diagnostics["n_near_zero_eigenvalues"] = int(near_zero.sum())
+
+    if positive.any():
+        positive_vectors = eigvecs[:, positive]
+        covariance_normalised = (
+            positive_vectors * (1.0 / eigvals[positive])
+        ) @ positive_vectors.T
+        covariance = covariance_normalised / np.outer(
+            curvature_scale, curvature_scale
+        )
+        diagonal_covariance = np.diag(covariance)
+        se = np.sqrt(np.maximum(diagonal_covariance, 0.0))
+    else:
+        diagonal_covariance = np.full(len(params_np), np.nan)
+        se = np.full(len(params_np), np.nan)
+
+    bad_vectors = eigvecs[:, ~positive]
+    bad_leverage = (
+        np.sum(bad_vectors ** 2, axis=1)
+        if bad_vectors.size
+        else np.zeros(len(params_np))
+    )
+    unreliable = (
+        ~np.isfinite(se)
+        | (diagonal_covariance <= 0)
+        | (bad_leverage > 0.25)
+    )
+    se[unreliable] = np.nan
+    diagnostics["unreliable_indices"] = np.flatnonzero(unreliable).tolist()
+
+    positive_eigenvalues = eigvals[positive]
+    if positive_eigenvalues.size:
+        diagnostics["condition_number"] = float(
+            positive_eigenvalues.max() / positive_eigenvalues.min()
+        )
+    diagnostics["status"] = (
+        "ok" if not diagnostics["unreliable_indices"] else "curvature_issues"
+    )
+    return _return(se)
 
 
 def compute_regularized_estimates(

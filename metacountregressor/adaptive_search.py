@@ -25,9 +25,8 @@ Adaptive model-search infrastructure for MetaCount:
      every accepted or rejected fitness evaluation.
 
   5. PostFitPruner
-     After any search, prunes the best solution by greedily removing variables
-     that contribute < 1 standard error of effect (backward elimination guided
-     by individual t-statistics).
+      Optional, explicit post-search utility for users who request backward
+      elimination. It is not part of the meta-search objective.
 
 Why contextual bandit (not full RL / DQN)?
 ------------------------------------------
@@ -51,7 +50,8 @@ evaluator = builder.build_evaluator(max_latent_classes=2, R=200)
 bandit_sa = BanditGuidedSA(builder=builder, evaluator=evaluator)
 result    = bandit_sa.run(max_iter=3000, seed=0)
 
-pruned = PostFitPruner(builder, evaluator).prune(result["best_solution"], model="nb")
+# Backward elimination is deliberately opt-in and is not used by the search.
+# pruned = PostFitPruner(builder, evaluator).prune(result["best_solution"], model="nb")
 """
 
 from __future__ import annotations
@@ -142,6 +142,18 @@ class ParamDiagnostic:
     reason: str            # human-readable diagnosis
 
 
+def _base_variable_name(parameter_name: str) -> str:
+    """Return the model variable represented by a packed parameter label."""
+    name = parameter_name
+    if name.startswith("class") and ":" in name:
+        name = name.split(":", 1)[1]
+    if name.startswith("zi:"):
+        name = name[3:]
+    return name.split(":", 1)[0].replace(
+        "__INTERCEPT__", "__intercept__"
+    )
+
+
 class IdentifiabilityChecker:
     """
     Post-fit diagnostics that extract per-variable t-statistics and flag
@@ -199,9 +211,10 @@ class IdentifiabilityChecker:
           'globally_ok'  — bool: True if no critical issues found
         """
         try:
-            import jax
-            import jax.numpy as jnp
-            from main_hpc import compute_standard_errors
+            try:
+                from .main_hpc import build_base_index, compute_standard_errors
+            except ImportError:
+                from main_hpc import build_base_index, compute_standard_errors
         except ImportError:
             return {"globally_ok": True, "diagnostics": [], "weak_names": set(),
                     "extreme_names": set(), "nonfinite_names": set(), "hess_cond": 1.0}
@@ -210,9 +223,18 @@ class IdentifiabilityChecker:
 
         # ── Standard errors via Hessian ───────────────────────────────
         try:
-            se_np = np.asarray(compute_standard_errors(params_np, objective))
+            se_result = compute_standard_errors(
+                params_np, objective, return_diagnostics=True
+            )
+            se_np = np.asarray(se_result[0])
+            se_diagnostics = se_result[1]
         except Exception:
             se_np = np.full_like(params_np, np.nan)
+            se_diagnostics = {
+                "status": "standard_errors_failed",
+                "condition_number": np.inf,
+                "unreliable_indices": list(range(len(params_np))),
+            }
 
         t_stats = np.where(
             np.isfinite(se_np) & (se_np > 0),
@@ -220,31 +242,78 @@ class IdentifiabilityChecker:
             np.nan,
         )
 
-        # ── Hessian condition number ──────────────────────────────────
-        hess_cond = 1.0
-        try:
-            hess_np = np.asarray(jax.hessian(objective)(jnp.asarray(params_np)))
-            hess_np = np.where(np.isfinite(hess_np), hess_np, 0.0)
-            eigvals = np.linalg.eigvalsh(hess_np)
-            pos = eigvals[eigvals > 0]
-            if len(pos) > 0:
-                hess_cond = float(pos.max() / pos.min())
-        except Exception:
-            pass
+        # The SE routine owns curvature classification; do not replace its
+        # result with a second Hessian calculation that masks bad directions.
+        hess_cond = float(se_diagnostics.get("condition_number", np.inf))
 
         # ── Build per-parameter diagnostics ──────────────────────────
-        # Collect parameter names from spec
+        # Generate names from the actual packed block layout.  In particular,
+        # independent random means and log-SDs are separate contiguous blocks,
+        # not alternating mean/SD pairs.
         param_names: List[str] = []
-        if hasattr(spec, "fixed_names"):
-            param_names.extend(list(spec.fixed_names))
-        if hasattr(spec, "random_ind_names"):
-            for nm in spec.random_ind_names:
-                param_names.append(f"{nm}:mean")
-                param_names.append(f"{nm}:sd")
-        if hasattr(spec, "random_cor_names"):
-            for nm in spec.random_cor_names:
-                param_names.append(f"{nm}:mean_cor")
-        # Pad or trim to match param vector length
+        base_index = build_base_index(spec)
+        param_names.extend(list(getattr(spec, "fixed_names", ())))
+        if getattr(spec, "Kzi", 0) > 0:
+            param_names.extend(
+                f"zi:{nm}" for nm in getattr(spec, "zi_names", ())
+            )
+        param_names.extend(
+            f"{nm}:mean_cor" for nm in getattr(spec, "random_cor_names", ())
+        )
+        if getattr(spec, "Kr_cor", 0) > 0:
+            cor_names = list(getattr(spec, "random_cor_names", ()))
+            for row in range(spec.Kr_cor):
+                for col in range(row + 1):
+                    if row == col and row < len(cor_names):
+                        param_names.append(f"{cor_names[row]}:sd_cor")
+                    else:
+                        param_names.append(f"chol[{row},{col}]")
+        param_names.extend(
+            f"{nm}:mean" for nm in getattr(spec, "random_ind_names", ())
+        )
+        param_names.extend(
+            f"{nm}:sd" for nm in getattr(spec, "random_ind_names", ())
+        )
+        param_names.extend(
+            f"{nm}:group_mean" for nm in getattr(spec, "grouped_names", ())
+        )
+        param_names.extend(
+            f"{nm}:group_sd" for nm in getattr(spec, "grouped_names", ())
+        )
+        random_names = list(getattr(spec, "random_cor_names", ()))
+        random_names.extend(getattr(spec, "random_ind_names", ()))
+        for prefix, names in (
+            ("heterogeneity_mean", getattr(spec, "hetro_names", ())),
+            ("heterogeneity_variance", getattr(spec, "hetro_var_names", ())),
+        ):
+            for covariate in names:
+                param_names.extend(
+                    f"{random}:{prefix}({covariate})"
+                    for random in random_names
+                )
+        param_names.extend(
+            f"{random}:gse"
+            for random in random_names
+            for _ in ([0] if getattr(spec, "Kgse", 0) > 0 else [])
+        )
+        if getattr(spec, "model", "poisson") == "nb":
+            param_names.append("dispersion")
+        elif getattr(spec, "model", "poisson") in {
+            "lognormal", "gaussian", "tobit", "weibull", "loglogistic"
+        }:
+            param_names.append("sigma")
+
+        # Latent-class fits repeat the base parameter vector per class, then
+        # append C-1 membership logits.
+        if getattr(spec, "latent_classes", 1) > 1:
+            base_names = param_names[:base_index["total_params"]]
+            param_names = (
+                [f"class{c}:{name}"
+                 for c in range(spec.latent_classes)
+                 for name in base_names]
+                + [f"class_logit[{c}]" for c in range(spec.latent_classes - 1)]
+            )
+
         while len(param_names) < len(params_np):
             param_names.append(f"param_{len(param_names)}")
         param_names = param_names[:len(params_np)]
@@ -279,8 +348,7 @@ class IdentifiabilityChecker:
             )
             diagnostics.append(diag)
 
-            # Strip distribution suffix to get base variable name
-            base_nm = nm.split(":")[0].replace("__INTERCEPT__", "__intercept__")
+            base_nm = _base_variable_name(nm)
             if is_nonfinite:
                 nonfinite_names.add(base_nm)
             if is_weak:
@@ -301,6 +369,7 @@ class IdentifiabilityChecker:
             "extreme_names":   extreme_names,
             "nonfinite_names": nonfinite_names,
             "hess_cond":       hess_cond,
+            "se_diagnostics":  se_diagnostics,
             "globally_ok":     globally_ok,
         }
 
@@ -720,7 +789,7 @@ class BanditGuidedSA:
       1. Select (var_idx, role) from the SpecificationBandit (UCB or epsilon-greedy)
       2. Apply the change to the current solution
       3. Evaluate fitness
-      4. Run IdentifiabilityChecker on the fitted params (lightweight: uses cached SEs)
+    4. Run IdentifiabilityChecker on the fitted params (lightweight: uses cached SEs)
       5. Update AdaptiveRoleMemory and SpecificationBandit with the outcome
       6. Accept/reject via Metropolis criterion
 
@@ -728,9 +797,9 @@ class BanditGuidedSA:
     learned proposal distribution that progressively favours changes
     that have historically improved BIC.
 
-    The identifiability guard removes variables with |t| < 1.0 from the
-    proposed solution and records the (var, role) pair as a failure — so
-    the bandit learns to avoid proposing those combinations in future.
+    The identifiability guard penalizes variables with |t| < 1.0 and records
+    the (var, role) pair as a failure, so the bandit learns to avoid proposing
+    those combinations. It never mutates a candidate after evaluation.
     """
 
     def __init__(
@@ -852,27 +921,15 @@ class BanditGuidedSA:
             except ImportError:
                 from main_hpc_lc_patch import mixed_model_loglik
 
-            import jax.numpy as jnp
-
             params    = cache["params"]
             spec      = cache["spec"]
             data      = cache["data"]
             n_obs     = int(data["y"].shape[0])
-            t_min     = self.checker.t_threshold
 
             # Build the NLL objective for this cached (spec, data)
             obj       = partial(mixed_model_loglik, data=data, spec=spec)
-            params_j  = jnp.asarray(params, dtype=float)
-
-            # O(p) diagonal Hessian t-stats
-            t_stats, se = _fast_tstats(params_j, obj)
-
-            # ── Per-variable t-stat lookup ───────────────────────────
-            fixed_names  = list(getattr(spec, "fixed_names", []))
-            name_to_pidx = {
-                nm: i for i, nm in enumerate(fixed_names)
-                if nm != "__INTERCEPT__"
-            }
+            fit_diag = self.checker.check(params, obj, spec, silent=True)
+            parameter_diagnostics = fit_diag.get("diagnostics", [])
 
             var_names = list(self.evaluator.vars)
             n_vars    = min(len(var_names), len(decision))
@@ -885,15 +942,17 @@ class BanditGuidedSA:
                 if role == 0:
                     continue
                 nm   = var_names[vi]
-                pidx = name_to_pidx.get(nm)
-                if pidx is None or pidx >= len(t_stats):
+                matching = [
+                    item for item in parameter_diagnostics
+                    if _base_variable_name(item.name) == nm
+                ]
+                if not matching:
                     continue
 
-                ts      = float(t_stats[pidx])
-                is_nan  = not np.isfinite(ts)
-                is_weak = (not is_nan) and abs(ts) < t_min
+                is_bad = any(item.is_nonfinite for item in matching)
+                is_weak = any(item.is_weak for item in matching)
 
-                if is_nan:
+                if is_bad:
                     n_bad += 1
                     weak_names.add(nm)
                 elif is_weak:
@@ -901,7 +960,7 @@ class BanditGuidedSA:
                     weak_names.add(nm)
 
                 # Update per-(var, role) Thompson prior
-                success = (not is_nan) and (not is_weak)
+                success = not (is_bad or is_weak)
                 self.role_memory.update(vi, role, success)
 
             # ── Penalty: n_weak * log(N) + n_bad * 2*log(N) ─────────
@@ -912,9 +971,14 @@ class BanditGuidedSA:
                 "weak_names":  weak_names,
                 "n_weak":      n_weak,
                 "n_bad":       n_bad,
-                "t_stats":     t_stats,
-                "se":          se,
-                "fixed_names": fixed_names,
+                "t_stats":     np.asarray([
+                    item.t_stat for item in parameter_diagnostics
+                ]),
+                "se":          np.asarray([
+                    item.se for item in parameter_diagnostics
+                ]),
+                "fixed_names": list(getattr(spec, "fixed_names", [])),
+                "se_diagnostics": fit_diag.get("se_diagnostics", {}),
             }
             return float(penalty), diag
 
@@ -1062,8 +1126,14 @@ class BanditGuidedSA:
 
 class PostFitPruner:
     """
-    Post-search backward elimination that greedily removes variables whose
-    t-statistic falls below a threshold.
+    Explicit post-search backward elimination that greedily removes variables
+    whose t-statistic falls below a threshold.
+
+    This class is intentionally not called by ``BanditGuidedSA``. Removing a
+    variable after a candidate has been scored changes the search objective and
+    can bias the meta-search toward specifications that only look good after
+    an unscored repair pass. Use it only as a separately requested reporting
+    or sensitivity analysis step.
 
     Algorithm
     ---------
