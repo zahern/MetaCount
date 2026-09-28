@@ -2043,18 +2043,38 @@ def print_summary(result, objective, data, spec: ModelSpec,
             "bic":      k * np.log(n) - 2 * final_ll,
         }
     else:
-        _orig_print(result, objective, data, spec, param_index, se=se)
+        # `return_df` is the single-class printer's only way of handing back
+        # the NAMED parameter table (Parameter/Estimate/Std.Err/z-value/
+        # p-value, already un-standardised to raw data units).  It used to be
+        # dropped here, so fit_manual_model() had no machine-readable
+        # coefficient names at all and downstream callers resorted to
+        # re-parsing the printed summary text.  Forward it.
+        _named_df = None
+        try:
+            _named_df = _orig_print(
+                result, objective, data, spec, param_index, se=se, return_df=True
+            )
+        except TypeError:
+            _orig_print(result, objective, data, spec, param_index, se=se)
         params_np = np.asarray(result.params if hasattr(result, "params")
                                else result.x)
         final_ll = float(-objective(params_np))
         k, n = len(params_np), data["y"].shape[0]
-        return {
+        stats_out = {
             "loglik":   final_ll,
             "num_parm": k,
             "n_obs":    n,
             "aic":      2 * k - 2 * final_ll,
             "bic":      k * np.log(n) - 2 * final_ll,
         }
+        if return_df is not None and return_df and _named_df is not None:
+            # Carry the fit-stats dict along on the DataFrame so callers can
+            # get BOTH from one (expensive) summary call -- the Hessian-based
+            # SEs make a second call far from free on large fits.
+            _named_df = _named_df.copy()
+            _named_df.attrs["fit_stats"] = stats_out
+            return _named_df
+        return stats_out
 
 
 # Keep the original print_summary available under a private alias so the

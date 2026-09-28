@@ -68,11 +68,35 @@ class FitResult(dict):
     ``fit["summary"]``, etc.) but produces a formatted model-summary
     table when printed or displayed in a notebook.
 
+    ``fit["result"]`` only carries the RAW (unnamed) parameter vector, so
+    callers that needed named estimates used to re-parse the printed
+    summary text.  The fit now also publishes the named table directly:
+
+    ``fit["params"]`` / ``fit["bse"]`` / ``fit["tvalues"]`` / ``fit["pvalues"]``
+        ``{parameter_name: float}`` mappings, in original (un-standardised)
+        data units, covering every reported term (fixed, zi, cor_mean,
+        chol, mean/sd, group_mean/group_sd, hetro, dispersion/sigma).
+    ``fit["coef_table"]``
+        The full ``Parameter/Estimate/Std.Err/z-value/p-value`` DataFrame.
+    ``fit["coefficient_names"]``
+        Ordered list of the parameter names.
+    ``fit["variable_coefs"]``
+        The same coefficients grouped by the RAW variable they belong to,
+        so a caller can ask for "the coefficient of ``is_rsp``" without
+        knowing which role (fixed / random / grouped / zi) the search
+        happened to assign.  Each entry carries
+        ``coef / se / p / name / role``.
+
+    All of these are also reachable as attributes (``fit.params``).
+    ``fit["summary"]`` keeps its original meaning (the fit-stats dict).
+
     Example
     -------
     >>> fit = builder.fit_manual_model(manual_spec=..., model='nb')
     >>> print(fit)          # shows formatted parameter table + fit stats
     >>> fit["summary"]      # still works as a dict
+    >>> fit["params"]["is_rsp"]              # named estimate, no text parsing
+    >>> fit["variable_coefs"]["is_rsp"]      # role-agnostic lookup
     """
 
     def __repr__(self) -> str:
@@ -80,6 +104,148 @@ class FitResult(dict):
         if text:
             return text
         return dict.__repr__(self)
+
+    def __getattr__(self, name):
+        # Only reached when normal attribute lookup fails, so methods/properties
+        # keep priority.  Lets fit.params / fit.bse mirror fit["params"] etc.
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+def _fit_stats_from(objective, result, data) -> dict:
+    """Rebuild the fit-stats dict that print_summary() returns.
+
+    Used when print_summary could not hand back the named DataFrame (so the
+    stats were consumed by the summary call) -- keeps ``fit["summary"]``
+    meaning what it always meant.
+    """
+    try:
+        params = np.asarray(
+            result.params if hasattr(result, "params") else result.x, dtype=float
+        )
+        ll = float(-objective(params))
+        k = int(params.shape[0])
+        n = int(data["y"].shape[0])
+    except Exception:
+        return {}
+    return {
+        "loglik": ll,
+        "num_parm": k,
+        "n_obs": n,
+        "aic": 2 * k - 2 * ll,
+        "bic": k * np.log(n) - 2 * ll,
+    }
+
+
+def _var_of_param(param_name: str) -> str:
+    """Recover the raw variable name from a printed parameter name.
+
+    ``mean(is_rsp)`` -> ``is_rsp``;  ``group_sd(dist_log)`` -> ``dist_log``;
+    ``hetro(a|b)`` -> ``a``;  ``chol(a,b)`` -> ``a``;  ``speed_log`` -> ``speed_log``.
+    Scalars (dispersion, sigma, __INTERCEPT__) map to themselves.
+    """
+    name = str(param_name).strip()
+    if name.startswith("hetro(") and name.endswith(")"):
+        return name[6:-1].split("|")[0].strip()
+    if name.startswith("chol(") and name.endswith(")"):
+        return name[5:-1].split(",")[0].strip()
+    for prefix in ("cor_mean", "group_mean", "group_sd", "mean", "sd", "zi"):
+        if name.startswith(prefix + "(") and name.endswith(")"):
+            return name[len(prefix) + 1: -1].split(":")[0].strip()
+    return name
+
+
+def _variable_coefs(coefs: dict) -> dict:
+    """Group the named coefficients by the raw variable they belong to.
+
+    The search picks each variable's role, so a variable's reported name
+    changes with it (``is_rsp`` when Fixed, ``mean(is_rsp)`` when
+    Random-Independent, ``group_mean(x)`` when Grouped, ...).  Callers that
+    want "the coefficient for is_rsp" should not have to know which role the
+    search happened to choose.  Every entry carries its own
+    ``coef/se/p/name/role`` so nothing is lost.
+    """
+    out = {}
+    for pname in coefs.get("names", []):
+        var = _var_of_param(pname)
+        if pname == var:
+            role = "fixed"
+        elif pname.startswith("mean("):
+            role = "random_independent"
+        elif pname.startswith("sd("):
+            role = "random_independent_sd"
+        elif pname.startswith("cor_mean("):
+            role = "random_correlated"
+        elif pname.startswith("group_mean("):
+            role = "grouped"
+        elif pname.startswith("group_sd("):
+            role = "grouped_sd"
+        elif pname.startswith("zi("):
+            role = "zero_inflated"
+        elif pname.startswith("hetro("):
+            role = "heterogeneity"
+        else:
+            role = "scalar"
+        out.setdefault(var, {})[pname] = {
+            "name": pname,
+            "role": role,
+            "coef": coefs["params"].get(pname),
+            "se":   coefs["bse"].get(pname),
+            "p":    coefs["pvalues"].get(pname),
+        }
+    return out
+
+
+def _named_coefs_from_df(df) -> dict:
+    """Split a printed-summary DataFrame into four name->float mappings.
+
+    Tolerates the column spellings MCR has used over time (Parameter/index,
+    Estimate/Estimate (PARTE)/Estimate_raw, Std.Err/StdErr_raw, z-value,
+    p-value) and uses ``None`` for missing columns so callers can tell
+    "not reported" from "zero".
+    """
+    if df is None or not hasattr(df, "columns"):
+        return None
+
+    def _pick(*candidates):
+        for c in candidates:
+            if c in df.columns:
+                return c
+        return None
+
+    name_col = _pick("Parameter", "parameter", "name")
+    if name_col is None:
+        return None
+    est_col = _pick("Estimate (PARTE)", "Estimate", "Estimate_raw")
+    se_col  = _pick("Std.Err", "StdErr", "StdErr_raw", "Std. Error")
+    z_col   = _pick("z-value", "zvalue", "t-value", "z")
+    p_col   = _pick("p-value", "pvalue", "P>|z|")
+
+    names = [str(n) for n in df[name_col]]
+
+    def _series(col):
+        # Key by the *parameter name*, never by the DataFrame index -- the
+        # summary frame carries names in a "Parameter" column, so indexing by
+        # position would hand back {'0': ..., '1': ...}.
+        if col is None:
+            return {}
+        out = {}
+        for nm, val in zip(names, df[col].tolist()):
+            try:
+                out[nm] = float(val)
+            except (TypeError, ValueError):
+                out[nm] = None
+        return out
+
+    return {
+        "names":    names,
+        "params":   _series(est_col),
+        "bse":      _series(se_col),
+        "tvalues":  _series(z_col),
+        "pvalues":  _series(p_col),
+    }
 
 
 import numpy as np
@@ -2157,16 +2323,43 @@ class ExperimentBuilder:
 
         buf = io.StringIO()
         with redirect_stdout(buf):
-            summary = print_summary(
-                result=result,
-                objective=objective,
-                data=data,
-                spec=spec,
-                param_index=param_index,
-            )
+            named = None
+            try:
+                named = print_summary(
+                    result=result,
+                    objective=objective,
+                    data=data,
+                    spec=spec,
+                    param_index=param_index,
+                    return_df=True,
+                )
+                summary = named
+            except TypeError:
+                # print_summary variant without return_df support
+                summary = print_summary(
+                    result=result,
+                    objective=objective,
+                    data=data,
+                    spec=spec,
+                    param_index=param_index,
+                )
         summary_text = buf.getvalue()
         if print_report:
             print(summary_text, end="")
+
+        # Named estimates/SEs/p-values so callers never have to scrape
+        # summary_text.  print_summary returns the fit-stats dict unless
+        # return_df is honoured, so tolerate either shape here.  fit["summary"]
+        # keeps its original meaning (the fit-stats dict) either way.
+        named_df = named if hasattr(named, "columns") else None
+        if named_df is not None:
+            stashed = named_df.attrs.get("fit_stats")
+            summary = stashed if isinstance(stashed, dict) and stashed else \
+                _fit_stats_from(objective, result, data)
+        coefs = _named_coefs_from_df(named_df)
+        if coefs is None:
+            coefs = {"names": [], "params": {}, "bse": {},
+                     "tvalues": {}, "pvalues": {}}
 
         return FitResult({
             "result": result,
@@ -2177,6 +2370,13 @@ class ExperimentBuilder:
             "param_index": param_index,
             "predictions": np.asarray(fitted.predict()).squeeze(),
             "de_warm_start_report": de_report,
+            "coef_table": named_df,
+            "coefficient_names": coefs["names"],
+            "params": coefs["params"],
+            "bse": coefs["bse"],
+            "tvalues": coefs["tvalues"],
+            "pvalues": coefs["pvalues"],
+            "variable_coefs": _variable_coefs(coefs),
             "random_parameter_diagnostics": random_parameter_diagnostics,
             "_summary_text": summary_text,
         })
@@ -3594,6 +3794,32 @@ class ExperimentBuilder:
         evaluator = evaluator or self._evaluator
         if evaluator is None:
             raise RuntimeError("Call build_evaluator() first.")
+
+        # build_search() does not always hand back a bare evaluator: the
+        # linear / duration / tobit families return a *search problem*
+        # wrapper (LinearSearchProblem, DurationSearchProblem) that owns the
+        # evaluator.  Calling run() with one of those used to die on
+        # `len(evaluator.vars)` with
+        #   AttributeError: 'LinearSearchProblem' object has no attribute 'vars'
+        # (jobs o25908337/o25908338).  Route through run_search(), which
+        # already dispatches wrappers correctly and handles output_config,
+        # so both entry points accept whatever build_search() produced.
+        if (
+            not hasattr(evaluator, "vars")
+            and not isinstance(evaluator, StructureEvaluatorLC)
+            and hasattr(evaluator, "run")
+        ):
+            return self.run_search(
+                evaluator,
+                algo=algo,
+                max_iter=max_iter,
+                seed=seed,
+                config_id=config_id,
+                output_config=output_config,
+                max_time=max_time,
+                refit=refit,
+                **algo_kwargs,
+            )
 
         D   = len(evaluator.vars)
         # Decision vector: [roles(D) | dists(D) | dispersion_bit | lc_code?]
