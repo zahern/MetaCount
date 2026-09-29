@@ -1444,7 +1444,16 @@ def build_jax_data(
     if draws_cor is None and Xr_cor.shape[2] > 0:
         draws_cor = generate_halton_normal(_n_draw, Xr_cor.shape[2], R, seed=43)
     if draws_g is None and Xg.shape[2] > 0:
-        draws_g = generate_halton_normal(_n_draw, Xg.shape[2], R, seed=44)
+        # Group draws are indexed by GROUP (build_eta does
+        # beta_g = beta_g_all[data["group_ids"]]), so this tensor must have
+        # one row per group, not one row per panel. Using _n_draw (panels)
+        # allocated a (N_panels, Kg, R) tensor of which only the first G
+        # rows are addressable -- silent dead weight rather than a crash,
+        # because G <= N always holds. The refit path reaches here
+        # (fit_manual_model passes draws_g=None) while the search path
+        # supplies draws_g explicitly and was always correct.
+        _g_draws = int(G) if (group_codes is not None and G > 0) else int(_n_draw)
+        draws_g = generate_halton_normal(_g_draws, Xg.shape[2], R, seed=44)
 
     N, P = y.shape[0], y.shape[1]
 
