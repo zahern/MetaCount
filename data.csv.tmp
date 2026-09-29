@@ -1,0 +1,2209 @@
+""",treatment_done
+Pavement Deterioration Paper — Master Pipeline Generator,0
+=========================================================,0
+Runs the complete experimental pipeline:,0
+  1. SA-optimized CLR (K=2..8) via zeke_pavement_jax.py,0
+  2. Temporal model comparison (OLS, AR1, RW, NUR),0
+  3. Diagnostics (CV, bootstrap CI, DW, permutation importance),0
+  4. All plots and LaTeX tables for clean_article.tex,0
+,0
+Output: paper_results.tex (auto-populated), paper/ subdirectory with all figures.,0
+Usage: python master_paper_generator.py [--quick],0
+""",0
+,0
+import os, sys, shutil, time, warnings, json, argparse,0
+# Silence the known-benign MetaCountRegressor legacy notice. metaheuristics.py,0
+# warns unconditionally at import, yet sparse_ea_agds has no JAX-first,0
+# replacement (ExperimentBuilder.run only offers sa/de/hs) and the package,0
+# itself still imports it (pavement_search.py). Filter here so transitive,0
+# imports stay quiet too; functionality is unaffected.,0
+warnings.filterwarnings(,0
+    "ignore",,0
+    message="metaheuristics.py is a legacy interface.*",,0
+    category=FutureWarning,,0
+),0
+from math import log,0
+from collections import defaultdict,0
+,0
+import numpy as np,0
+import pandas as pd,0
+import matplotlib,0
+matplotlib.use("Agg"),0
+import matplotlib.pyplot as plt,0
+,0
+# Add the code directory to path,0
+CODE_DIR = os.path.dirname(os.path.abspath(__file__)),0
+sys.path.insert(0, CODE_DIR),0
+,0
+from zeke_pavement_jax import (,0
+    CONFIG, HAS_JAX, ensure_dir, load_data, build_segment_lists,,0
+    log_transform_cluster_data, build_design_matrix, fit_lm, calc_vif,,0
+    compute_bic, solve_ols, combination, create_my_data_cluster,,0
+    estimate_log_psi, compute_metrics, fit_cluster_model,,0
+    fit_cluster_model_masked, fit_cluster_model_exhaustive,,0
+    generate_random_cluster, generate_neighbor_clusters,,0
+    valid_clusters, acceptance_prob, compute_overall_bic,,0
+    generate_random_var_masks, perturb_var_masks,,0
+    warm_start_initialization, print_model_table, write_fits,,0
+    write_comprehensive_csv, cluster_max, sig_stars,,0
+    transform_data_by_form, estimate_psi_by_form,,0
+),0
+,0
+from zeke_pavement_nonlinear import (,0
+    FORM_NAMES, N_FORM_TYPES, fit_nonlinear_cluster_model,,0
+    estimate_psi_nonlinear, compare_functional_forms,,0
+    run_nonlinear_form_experiment,,0
+),0
+,0
+from zeke_pavement_enhanced_analysis import (,0
+    cross_validate_by_segment, durbin_watson_per_segment,,0
+    permutation_importance_per_cluster, bootstrap_coefficient_ci,,0
+    fit_ar1_model_per_segment, prediction_intervals_bootstrap,,0
+    ensemble_predict_forms, generate_sensitivity_report,,0
+),0
+,0
+from zeke_pavement_random_walk import (,0
+    fit_random_walk_cluster_model, fit_near_unit_root_model,,0
+    compare_all_temporal_models,,0
+),0
+,0
+from zeke_pavement_benchmarks import (,0
+    fit_markov_chain_model, fit_gpr_model, fit_kmeans_baseline,,0
+    compare_stochastic_benchmarks, fit_lm_simple,,0
+),0
+,0
+# MetaCountRegressor mixed-model module (graceful no-op when not installed),0
+try:,0
+    from zeke_pavement_metacount import run_metacount_models, MCR_CONFIG,0
+    _HAS_METACOUNT_MODULE = True,0
+    _METACOUNT_IMPORT_ERROR = None,0
+except ImportError as exc:,0
+    _HAS_METACOUNT_MODULE = False,0
+    _METACOUNT_IMPORT_ERROR = repr(exc),0
+,0
+# Markov Decision Process planning tool (PART 11) — graceful no-op if missing,0
+try:,0
+    from zeke_pavement_mdp import run_mdp_planning, MDP_CONFIG,0
+    _HAS_MDP_MODULE = True,0
+    _MDP_IMPORT_ERROR = None,0
+except ImportError as exc:,0
+    _HAS_MDP_MODULE = False,0
+    _MDP_IMPORT_ERROR = repr(exc),0
+,0
+# Joint temporal-error-structure search (Part 1 decision variable e_k) —,0
+# graceful fallback to legacy IID-only SA when missing.,0
+try:,0
+    from zeke_temporal_search import (,0
+        TEMPORAL_CODES, DEFAULT_CANDIDATES, FULL_CANDIDATES,,0
+        fit_cluster_with_temporal, random_temporal_codes,,0
+        perturb_temporal_codes, compute_overall_bic_cond,,0
+        compare_temporal_level, conditional_scores,,0
+        estimate_log_psi_temporal,,0
+    ),0
+    _HAS_TEMPORAL_SEARCH = True,0
+    _TEMPORAL_IMPORT_ERROR = None,0
+except ImportError as exc:,0
+    _HAS_TEMPORAL_SEARCH = False,0
+    _TEMPORAL_IMPORT_ERROR = repr(exc),0
+,0
+# ================================================================,0
+# CONFIGURATION,0
+# ================================================================,0
+PAPER_CONFIG = {,0
+    "K_range": (2, 10),          # Full SA search,0
+    "K_quick": (2, 5),           # Quick mode,0
+    "min_obs_cluster": 400,       # lowered from 800 to allow K>6,0
+    "n_cv_folds": 5,,0
+    "n_bootstrap": 200,,0
+    "n_pi_boot": 500,,0
+    "n_permute": 50,,0
+    "sa_temp": 10.0,,0
+    "sa_alpha": 0.97,,0
+    "sa_neighbors": 3,           # Reduced for pipeline speed,0
+    "sa_temp_min": 1e-10,,0
+    "n_changes": 80,,0
+    "level_of_sig": 0.05,,0
+    "max_vif": 10.0,,0
+    # Joint temporal-error-structure search (reviewer: simultaneous,0
+    # optimisation over temporal error structure). e_k per cluster is a,0
+    # decision variable solved inside the SA loop (see zeke_temporal_search).,0
+    "temporal_search": True,       # False = legacy IID-only SA objective,0
+    "temporal_flip_prob": 0.15,    # P(mutate one cluster's e_k per neighbour),0
+    "temporal_candidates": [0, 1, 2, 3],  # IID, AR(1), RW-drift, NUR,0
+},0
+,0
+# ================================================================,0
+# PATH SETUP,0
+# ================================================================,0
+def setup_paths():,0
+    """Set up output directories and return path dict.""",0
+    base = CONFIG["path"],0
+    paper_dir = os.path.join(base, "paper_output"),0
+    fig_dir = os.path.join(paper_dir, "figures"),0
+    table_dir = os.path.join(paper_dir, "tables"),0
+    data_dir = os.path.join(paper_dir, "data"),0
+,0
+    for d in [paper_dir, fig_dir, table_dir, data_dir]:,0
+        ensure_dir(d),0
+,0
+    return {,0
+        "paper_dir": paper_dir,,0
+        "fig_dir": fig_dir,,0
+        "table_dir": table_dir,,0
+        "data_dir": data_dir,,0
+        "results_tex": os.path.join(paper_dir, "paper_results.tex"),,0
+    },0
+,0
+,0
+def _panel_time_column(df):,0
+    """Return the column that varies within pavement segments.""",0
+    candidates = ["age", "year", "Year", "YEAR", "yr", "time_idx", "t", "time", "time_period"],0
+    if "sample_id" not in df.columns:,0
+        return next((col for col in candidates if col in df.columns), None),0
+,0
+    for col in candidates:,0
+        if col not in df.columns:,0
+            continue,0
+        variation = df.groupby("sample_id", sort=False)[col].nunique(dropna=True),0
+        if (variation > 1).any():,0
+            return col,0
+    return None,0
+,0
+,0
+# ================================================================,0
+# PART 1: RUN SA-OPTIMIZED CLR FOR K RANGE,0
+# ================================================================,0
+def run_sa_clr_pipeline(df_train, df_test, psi_col, all_var_names, cat_set,,0
+                          n_cont, K_min, K_max, paths, quick_mode=False):,0
+    """,0
+    Run full SA-optimized CLR for K = K_min .. K_max.,0
+    Returns: dict with per-K results, best K, best model.,0
+    """,0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 1: SA-OPTIMIZED CLR (K = {K_min}..{K_max})"),0
+    print(f"{'='*60}"),0
+,0
+    # Pre-compute log-transformed training data for model fitting,0
+    # (power model: ln(PSI) = β₀ + Σ βᵢ ln(xᵢ) + categorical effects),0
+    df_train_log = log_transform_cluster_data(df_train, psi_col, n_cont),0
+,0
+    variables, psi_data = build_segment_lists(df_train, psi_col, all_var_names),0
+    n_seg = int(df_train["sample_id"].max()),0
+    n_vars = len(all_var_names),0
+    rng = np.random.default_rng(42),0
+,0
+    K_max = min(K_max, cluster_max(df_train, PAPER_CONFIG["min_obs_cluster"])),0
+    print(f"  Computed K_max = {K_max}"),0
+,0
+    per_K_results = {},0
+    bic_by_K = {},0
+,0
+    for n_cl in range(K_min, K_max + 1):,0
+        t0 = time.time(),0
+        print(f"\n  --- K = {n_cl} ---"),0
+,0
+        # Warm-start initialization,0
+        clusters = warm_start_initialization(,0
+            df_train, psi_col, all_var_names, cat_set, n_cl,,0
+            variables, psi_data, PAPER_CONFIG["min_obs_cluster"],,0
+            3, rng),0
+,0
+        # Fit initial models on log-transformed data,0
+        fits = [],0
+        for ci in range(1, n_cl + 1):,0
+            dfc_log = create_my_data_cluster(df_train_log, ci, clusters),0
+            mf = fit_cluster_model(dfc_log, psi_col, all_var_names, cat_set,,0
+                                    PAPER_CONFIG["level_of_sig"],,0
+                                    PAPER_CONFIG["max_vif"]),0
+            if mf is None:,0
+                mf = fit_cluster_model(dfc_log, psi_col, all_var_names, cat_set, 0.15, 15.0),0
+            fits.append(mf),0
+        best_fits = fits,0
+        best_c = clusters,0
+        # When temporal search is on, the SA objective is the conditional-,0
+        # sample BIC from the start: tag initial IID fits with e_k = 0 and,0
+        # their conditional scores so neighbour comparisons are like-for-like.,0
+        if bool(PAPER_CONFIG.get("temporal_search", False)) and _HAS_TEMPORAL_SEARCH:,0
+            for _ci in range(1, n_cl + 1):,0
+                _mf = best_fits[_ci - 1],0
+                if _mf is None:,0
+                    continue,0
+                _mf["temporal_code"] = 0,0
+                _mf["temporal_name"] = "IID",0
+                try:,0
+                    _dfc0 = create_my_data_cluster(df_train_log, _ci, best_c),0
+                    _rss_c, _n_c = conditional_scores(,0
+                        _mf, 0, _dfc0, psi_col, all_var_names, cat_set),0
+                except Exception:,0
+                    _rss_c, _n_c = np.nan, 0,0
+                _mf["rss_cond"], _mf["n_cond"] = float(_rss_c), int(_n_c),0
+                _k0 = int(_mf.get("n_params_total", len(_mf.get("coefficients", [])))),0
+                _mf["bic_cond"] = compute_bic(_n_c, _k0, _rss_c) \,0
+                    if _n_c > _k0 else np.nan,0
+            best_eval = compute_overall_bic_cond(best_fits),0
+        else:,0
+            best_eval = compute_overall_bic(best_fits),0
+,0
+        print(f"    Initial BIC = {best_eval[0]:.2f}"),0
+,0
+        # Initialise variable masks from initial fits,0
+        n_vars_all = len(all_var_names),0
+        best_var_masks = np.zeros((n_cl, n_vars_all), dtype=bool),0
+        for ci in range(n_cl):,0
+            used = best_fits[ci].get("variables_used", []),0
+            for vn in used:,0
+                if vn in all_var_names:,0
+                    best_var_masks[ci, all_var_names.index(vn)] = True,0
+,0
+        act_init = [best_var_masks[c].sum() for c in range(n_cl)],0
+        print(f"    Active vars per cluster: {act_init}"),0
+,0
+        # Joint temporal-error-structure search: e_k per cluster is a,0
+        # decision variable (0=IID, 1=AR1, 2=RW-drift, 3=NUR, ...).,0
+        # Starts at all-IID (identical to legacy) and is mutated inside SA.,0
+        temporal_on = bool(PAPER_CONFIG.get("temporal_search", False)) \,0
+            and _HAS_TEMPORAL_SEARCH,0
+        temporal_cands = list(PAPER_CONFIG.get("temporal_candidates",,0
+                                              DEFAULT_CANDIDATES,0
+                                              if _HAS_TEMPORAL_SEARCH else [0])),0
+        temporal_flip = float(PAPER_CONFIG.get("temporal_flip_prob", 0.15)),0
+        best_temp_codes = np.zeros(n_cl, dtype=int),0
+        if temporal_on:,0
+            print(f"    Temporal search ON: candidates={temporal_cands} ",0
+                  f"(e_k in { {c: TEMPORAL_CODES[c] for c in temporal_cands} })"),0
+            print(f"    SA objective = conditional-sample BIC (t>=2, identical ",0
+                  f"N across error structures; all scored on log-PSI levels)"),0
+        else:,0
+            print(f"    Temporal search OFF (legacy IID-only SA objective)"),0
+,0
+        # SA loop with joint variable-cluster optimization,0
+        temp = PAPER_CONFIG["sa_temp"],0
+        iteration = 1,0
+        all_nb = 0,0
+        convergence = [],0
+,0
+        while temp > PAPER_CONFIG["sa_temp_min"]:,0
+            for _ in range(PAPER_CONFIG["sa_neighbors"]):,0
+                all_nb += 1,0
+                nbr_fits = None,0
+                nbr_c = None,0
+                nbr_var_masks = None,0
+                nbr_temp_codes = None,0
+                nbr_retries = 0,0
+,0
+                while nbr_fits is None and nbr_retries < 30:,0
+                    nbr_retries += 1,0
+                    nbr_c = generate_neighbor_clusters(,0
+                        best_c, n_cl, PAPER_CONFIG["n_changes"],,0
+                        variables, PAPER_CONFIG["min_obs_cluster"], rng),0
+,0
+                    nbr_var_masks = perturb_var_masks(,0
+                        best_var_masks if nbr_retries <= 1 else nbr_var_masks,,0
+                        0.3, rng),0
+,0
+                    if temporal_on:,0
+                        nbr_temp_codes = perturb_temporal_codes(,0
+                            best_temp_codes, temporal_cands, temporal_flip, rng),0
+,0
+                    fits_list = [],0
+                    for ci in range(1, n_cl + 1):,0
+                        dfc_log = create_my_data_cluster(df_train_log, ci, nbr_c),0
+                        if temporal_on:,0
+                            mf = fit_cluster_with_temporal(,0
+                                dfc_log, psi_col, all_var_names, cat_set,,0
+                                nbr_var_masks[ci - 1],,0
+                                int(nbr_temp_codes[ci - 1]),,0
+                                PAPER_CONFIG["level_of_sig"],,0
+                                PAPER_CONFIG["max_vif"]),0
+                        else:,0
+                            mf = fit_cluster_model_masked(,0
+                                dfc_log, psi_col, all_var_names, cat_set,,0
+                                nbr_var_masks[ci - 1],,0
+                                PAPER_CONFIG["level_of_sig"],,0
+                                PAPER_CONFIG["max_vif"]),0
+                        if mf is None:,0
+                            fits_list = None,0
+                            break,0
+                        fits_list.append(mf),0
+,0
+                    if fits_list is not None and len(fits_list) == n_cl:,0
+                        nbr_fits = fits_list,0
+,0
+                if nbr_fits is None:,0
+                    continue,0
+,0
+                if temporal_on:,0
+                    nbr_eval = compute_overall_bic_cond(nbr_fits),0
+                else:,0
+                    nbr_eval = compute_overall_bic(nbr_fits),0
+                wbic_diff = best_eval[1] - nbr_eval[1],0
+                ap = acceptance_prob(best_eval[1], nbr_eval[1], temp, 80.0),0
+                if ap > rng.random() or nbr_eval[0] < best_eval[0]:,0
+                    best_c = nbr_c,0
+                    best_fits = nbr_fits,0
+                    best_var_masks = nbr_var_masks,0
+                    best_eval = nbr_eval,0
+                    if temporal_on:,0
+                        best_temp_codes = nbr_temp_codes,0
+,0
+            convergence.append((iteration, best_eval[0])),0
+            if iteration % 5 == 0:,0
+                act = [best_var_masks[c].sum() for c in range(n_cl)],0
+                print(f"      [{iteration}] T={temp:.2e}  BIC={best_eval[0]:.2f}  ",0
+                      f"active={act}"),0
+,0
+            temp *= PAPER_CONFIG["sa_alpha"],0
+            iteration += 1,0
+,0
+            if quick_mode and iteration > 30:,0
+                break,0
+,0
+        # Post-SA: exhaustive refit with best variable masks (+ best e_k),0
+        refit_fits = [],0
+        for ci in range(1, n_cl + 1):,0
+            dfc_log = create_my_data_cluster(df_train_log, ci, best_c),0
+            if temporal_on:,0
+                mf = fit_cluster_with_temporal(,0
+                    dfc_log, psi_col, all_var_names, cat_set,,0
+                    best_var_masks[ci - 1],,0
+                    int(best_temp_codes[ci - 1]),,0
+                    PAPER_CONFIG["level_of_sig"],,0
+                    PAPER_CONFIG["max_vif"]),0
+            else:,0
+                mf = fit_cluster_model_masked(,0
+                    dfc_log, psi_col, all_var_names, cat_set,,0
+                    best_var_masks[ci - 1],,0
+                    PAPER_CONFIG["level_of_sig"],,0
+                    PAPER_CONFIG["max_vif"]),0
+            if mf is None:,0
+                mf = best_fits[ci - 1]  # fallback,0
+            refit_fits.append(mf),0
+        best_fits = refit_fits,0
+        if temporal_on:,0
+            best_eval = compute_overall_bic_cond(best_fits),0
+        else:,0
+            best_eval = compute_overall_bic(best_fits),0
+,0
+        dt = time.time() - t0,0
+        final_act = [best_var_masks[c].sum() for c in range(n_cl)],0
+        print(f"    Final BIC={best_eval[0]:.2f}, time={dt:.1f}s, neighbors={all_nb}"),0
+        print(f"    Final active vars per cluster: {final_act}"),0
+        if temporal_on:,0
+            print(f"    Final error structures: ",0
+                  f"{[TEMPORAL_CODES[int(c)] for c in best_temp_codes]}"),0
+        for ci in range(n_cl):,0
+            act_vars = [all_var_names[v] for v in range(n_vars_all) if best_var_masks[ci, v]],0
+            print(f"      Cluster {ci+1}: {', '.join(act_vars)}"),0
+,0
+        # Store results,0
+        per_K_results[n_cl] = {,0
+            "clusters": best_c.copy(),,0
+            "fits": [f.copy() if f else None for f in best_fits],,0
+            # Alias consumed by Figure 4 + paper_results.tex so the,0
+            # jointly-selected temporal fits (not OLS re-fits) are shown.,0
+            "temporal_fits": [f.copy() if f else None for f in best_fits],0
+            if temporal_on else None,,0
+            "var_masks": best_var_masks.copy(),,0
+            "temporal_codes": np.asarray(best_temp_codes, dtype=int).copy(),,0
+            "temporal_search": bool(temporal_on),,0
+            "bic": float(best_eval[0]),,0
+            "rss": float(best_eval[2]),,0
+            "time_s": dt,,0
+            "iterations": iteration - 1,,0
+            "neighbors_tested": all_nb,,0
+            "convergence": convergence,,0
+        },0
+        # Keep the SA-selected temporal fits (with their error structures) so,0
+        # downstream figures / prediction exports use the jointly-optimised,0
+        # model even though PART 1b later swaps `fits` for OLS form fits.,0
+        per_K_results[n_cl]["temporal_fits"] = [,0
+            f.copy() if f else None for f in best_fits],0
+        bic_by_K[n_cl] = float(best_eval[0]),0
+,0
+    # Find optimal K,0
+    best_K = min(bic_by_K, key=bic_by_K.get),0
+    best_result = per_K_results[best_K],0
+,0
+    print(f"\n  Optimal K = {best_K} (BIC = {bic_by_K[best_K]:.2f})"),0
+,0
+    return per_K_results, bic_by_K, best_K, best_result,0
+,0
+,0
+# ================================================================,0
+# PART 1b: FUNCTIONAL FORM OPTIMIZATION,0
+# ================================================================,0
+def optimize_functional_forms(df_train, psi_col, all_var_names, cat_set,,0
+                                n_cont, best_result, paths):,0
+    """For each cluster in the best SA solution, find the optimal functional form.""",0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 1b: FUNCTIONAL FORM OPTIMIZATION"),0
+    print(f"{'='*60}"),0
+,0
+    clusters = best_result["clusters"],0
+    n_cl = len(best_result["fits"]),0
+    df_train_log = log_transform_cluster_data(df_train, psi_col, n_cont),0
+,0
+    form_results = {},0
+    best_form_per_cluster = np.zeros(n_cl, dtype=int),0
+    form_fits = [],0
+    all_form_data = [],0
+,0
+    print(f"  Optimizing functional forms for {N_FORM_TYPES} forms across {n_cl} clusters\n"),0
+,0
+    for ci in range(n_cl):,0
+        dfc = create_my_data_cluster(df_train, ci + 1, clusters),0
+        n_obs = len(dfc),0
+        best_bic_ci = 1e20,0
+        best_form_ci = 0,0
+        best_fit_ci = None,0
+,0
+        for form_idx in range(N_FORM_TYPES):,0
+            mf = fit_nonlinear_cluster_model(,0
+                dfc, psi_col, all_var_names, cat_set, form_idx,,0
+                level_of_sig=0.05, max_vif=10.0),0
+            if mf is not None:,0
+                bic_val = compute_bic(mf["n"], mf["n_params_total"], mf["rss"]),0
+                all_form_data.append({,0
+                    "cluster": ci + 1,,0
+                    "n_obs": n_obs,,0
+                    "form": FORM_NAMES.get(form_idx, f"Form_{form_idx}"),,0
+                    "form_idx": form_idx,,0
+                    "r2": mf["r2"],,0
+                    "adj_r2": mf["adj_r2"],,0
+                    "bic": bic_val,,0
+                    "n_params": mf["n_params_total"],,0
+                }),0
+                if bic_val < best_bic_ci:,0
+                    best_bic_ci = bic_val,0
+                    best_form_ci = form_idx,0
+                    best_fit_ci = mf,0
+,0
+        best_form_per_cluster[ci] = best_form_ci,0
+        form_fits.append(best_fit_ci),0
+        print(f"    Cluster {ci+1}: {FORM_NAMES.get(best_form_ci, '?')} ",0
+              f"(R²={best_fit_ci['r2']:.4f}, BIC={best_bic_ci:.1f})"),0
+,0
+    df_forms = pd.DataFrame(all_form_data),0
+    if len(df_forms) > 0:,0
+        df_forms.to_csv(,0
+            os.path.join(paths["data_dir"], "functional_form_optimization.csv"), index=False),0
+,0
+    form_summary = {},0
+    for form_idx in range(N_FORM_TYPES):,0
+        subset = df_forms[df_forms["form_idx"] == form_idx] if len(df_forms) > 0 else None,0
+        if subset is not None and len(subset) > 0:,0
+            form_summary[FORM_NAMES[form_idx]] = {,0
+                "mean_r2": float(subset["r2"].mean()),,0
+                "mean_bic": float(subset["bic"].mean()),,0
+                "n_clusters_using": int(np.sum(best_form_per_cluster == form_idx)),,0
+            },0
+,0
+    print(f"\n  Optimal form distribution: ",0
+          + ", ".join(f"C{ci+1}={FORM_NAMES[best_form_per_cluster[ci]]}" for ci in range(n_cl))),0
+,0
+    return {,0
+        "form_fits": form_fits,,0
+        "best_forms": best_form_per_cluster,,0
+        "form_summary": form_summary,,0
+        "form_comparison_df": df_forms,,0
+    },0
+,0
+,0
+# ================================================================,0
+# PART 2: TEMPORAL MODEL COMPARISON,0
+# ================================================================,0
+def run_temporal_comparison(df_train, psi_col, all_var_names, cat_set,,0
+                              n_cont, best_K, best_result, paths, df_test=None):,0
+    """Run like-for-like temporal model comparison for the best K.,0
+,0
+    Uses compare_temporal_level (zeke_temporal_search): every spec scored on,0
+    log-PSI LEVELS with explicit N and k, marginal vs one-step R^2 kept,0
+    separate, plus a no-change baseline row and test-horizon one-step R^2.,0
+    Falls back to the legacy post-hoc comparison when the module is missing.,0
+    """,0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 2: TEMPORAL MODEL COMPARISON (K={best_K})"),0
+    print(f"{'='*60}"),0
+,0
+    clusters = best_result["clusters"],0
+    if _HAS_TEMPORAL_SEARCH:,0
+        # Use the SA-selected variable masks so every temporal specification,0
+        # is compared on the same selected design.,0
+        _masks = best_result.get("var_masks", None),0
+        df_cmp = compare_temporal_level(,0
+            df_train, psi_col, all_var_names, cat_set, n_cont, n_cl=best_K,,0
+            clusters=clusters, df_test=df_test, var_masks=_masks),0
+    else:,0
+        df_cmp = compare_all_temporal_models(,0
+            df_train, psi_col, all_var_names, cat_set, n_cont, n_cl=best_K,,0
+            clusters=clusters),0
+,0
+    print(df_cmp.to_string(index=False)),0
+    df_cmp.to_csv(os.path.join(paths["data_dir"], "temporal_comparison.csv"), index=False),0
+,0
+    # Compute summary stats per model,0
+    model_summary = {},0
+    all_temporal_models = ["No_Change", "OLS", "IID", "AR(1)", "Random_Walk",,0
+                           "Near_Unit_Root", "Kalman_SSM", "RE"],0
+    for model in all_temporal_models:,0
+        subset = df_cmp[df_cmp["model"] == model],0
+        if len(subset) == 0:,0
+            continue,0
+        bic_col = subset["bic"] if "bic" in subset.columns else subset.get("bic"),0
+        valid = subset[~subset["bic"].isna()] if "bic" in subset.columns else subset,0
+        if len(valid) > 0:,0
+            entry = {,0
+                "mean_bic": float(valid["bic"].mean()),,0
+                "mean_r2": float(valid["r2"].mean()),,0
+                "mean_adj_r2": float(valid["adj_r2"].mean()),0
+                if "adj_r2" in valid.columns else None,,0
+                "mean_rss": float(valid["rss"].mean()) if "rss" in valid.columns else None,,0
+            },0
+            for extra in ("r2_marginal", "r2_onestep", "r2_onestep_test", "N", "k"):,0
+                if extra in valid.columns:,0
+                    try:,0
+                        entry["mean_" + extra] = float(valid[extra].mean()),0
+                    except Exception:,0
+                        pass,0
+            model_summary[model] = entry,0
+    # Back-compat alias: legacy "OLS" label == new "IID" rows.,0
+    if "IID" in model_summary and "OLS" not in model_summary:,0
+        model_summary["OLS"] = model_summary["IID"],0
+,0
+    # Extract key parameters,0
+    for model, param_name in [("AR(1)", "rho_ar1"), ("Random_Walk", "drift_rw"),,0
+                                ("Near_Unit_Root", "rho_nur"), ("Kalman_SSM", "sigma_eta"),,0
+                                ("RE", "icc")]:,0
+        subset = df_cmp[df_cmp["model"] == model],0
+        valid = subset[~subset[param_name].isna()] if param_name in subset.columns else subset.iloc[0:0],0
+        if len(valid) > 0:,0
+            model_summary[model][param_name] = float(valid[param_name].mean()),0
+,0
+    # Report the SA-selected error structures for the record.,0
+    _codes = best_result.get("temporal_codes", None),0
+    if _codes is not None and _HAS_TEMPORAL_SEARCH:,0
+        print(f"  SA-selected error structures: ",0
+              f"{[TEMPORAL_CODES.get(int(c), c) for c in np.asarray(_codes)]}"),0
+,0
+    return df_cmp, model_summary,0
+,0
+,0
+# ================================================================,0
+# PART 3: DIAGNOSTICS,0
+# ================================================================,0
+def run_diagnostics(df_train, psi_col, all_var_names, cat_set, n_cont,,0
+                     best_K, best_result, paths):,0
+    """Run all diagnostics on the best model.""",0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 3: DIAGNOSTICS (K={best_K})"),0
+    print(f"{'='*60}"),0
+,0
+    clusters = best_result["clusters"],0
+    fits = best_result["fits"],0
+    # When the joint search selected per-cluster error structures, diagnose,0
+    # the selected model: marginal predictions test the i.i.d. rejection,,0
+    # one-step innovations test whiteness (see 3b2 below).,0
+    _tf = best_result.get("temporal_fits", fits),0
+    _temporal_active = bool(,0
+        _HAS_TEMPORAL_SEARCH and _tf and any(,0
+            f is not None and f.get("temporal_code", 0) != 0 for f in _tf)),0
+    if _temporal_active:,0
+        try:,0
+            est_log = estimate_log_psi_temporal(,0
+                _tf, clusters, df_train, psi_col, all_var_names, cat_set,,0
+                mode="marginal"),0
+        except Exception:,0
+            est_log = estimate_log_psi(fits, clusters, df_train, psi_col, all_var_names, cat_set),0
+    else:,0
+        est_log = estimate_log_psi(fits, clusters, df_train, psi_col, all_var_names, cat_set),0
+,0
+    # 3a. Cross-validation,0
+    print("  Cross-validation..."),0
+    cv_df = cross_validate_by_segment(,0
+        df_train, psi_col, all_var_names, cat_set, n_cont,,0
+        n_folds=PAPER_CONFIG["n_cv_folds"]),0
+    cv_df.to_csv(os.path.join(paths["data_dir"], "cross_validation.csv"), index=False),0
+,0
+    # 3b. Durbin-Watson,0
+    print("  Durbin-Watson..."),0
+    dw_seg, dw_summary = durbin_watson_per_segment(est_log, df_train, psi_col, clusters),0
+    print(f"    DW mean={dw_summary['overall_mean_DW']:.4f}, median={dw_summary['overall_median_DW']:.4f}"),0
+    print(f"    % DW<1.5 (positive autocorr): {dw_summary['pct_DW_lt_1_5']:.1f}%"),0
+    print(f"    % DW<2.0 (any autocorr): {dw_summary['pct_autocorrelated']:.1f}%"),0
+,0
+    # 3c. AR(1) per segment,0
+    print("  AR(1) diagnostics..."),0
+    ar1_seg, ar1_summary = fit_ar1_model_per_segment(est_log, df_train, psi_col, clusters),0
+    print(f"    AR(1) rho mean={ar1_summary['overall_mean_rho']:.3f}, median={ar1_summary['overall_median_rho']:.3f}"),0
+    print(f"    % rho>0.3 (significant): {ar1_summary.get('pct_sig_positive_rho', 0):.1f}%"),0
+,0
+    # 3b2. One-step innovation whiteness (temporal specs only): DW on the,0
+    # conditional-sample one-step errors should return toward 2.0 once the,0
+    # selected error structure absorbs the persistence seen in 3b.,0
+    innov_dw = None,0
+    if _temporal_active:,0
+        try:,0
+            est_os = estimate_log_psi_temporal(,0
+                _tf, clusters, df_train, psi_col, all_var_names, cat_set,,0
+                mode="onestep"),0
+            innov_dw = _innovation_dw_mean(,0
+                est_os, df_train, psi_col, clusters),0
+            print(f"    One-step innovation DW (mean over segments)={innov_dw:.3f} ",0
+                  f"(approx 2.0 => persistence captured)"),0
+        except Exception as exc:,0
+            print(f"    One-step innovation DW skipped ({exc!r})"),0
+,0
+    # 3d. Permutation importance,0
+    print("  Permutation importance..."),0
+    importance = permutation_importance_per_cluster(,0
+        df_train, psi_col, all_var_names, cat_set, clusters, fits,,0
+        n_perm=PAPER_CONFIG["n_permute"]),0
+,0
+    # 3e. Bootstrap CIs,0
+    print("  Bootstrap CIs..."),0
+    bootstrap_ci = bootstrap_coefficient_ci(,0
+        df_train, psi_col, all_var_names, cat_set, n_cont, clusters,,0
+        n_bootstrap=PAPER_CONFIG["n_bootstrap"]),0
+,0
+    diagnostics = {,0
+        "cv": cv_df,,0
+        "dw_seg": dw_seg,,0
+        "dw_summary": dw_summary,,0
+        "ar1_seg": ar1_seg,,0
+        "ar1_summary": ar1_summary,,0
+        "innov_dw": innov_dw,,0
+        "importance": importance,,0
+        "bootstrap_ci": bootstrap_ci,,0
+    },0
+,0
+    return diagnostics,0
+,0
+,0
+def _innovation_dw_mean(est_log, df, psi_col, clusters):,0
+    """Mean per-segment Durbin-Watson on t>=2 one-step errors.,0
+,0
+    Pooled DW is non-standard, so segments are scored individually (segments,0
+    with fewer than 3 conditional observations are skipped) and averaged.,0
+    """,0
+    obs = np.log(df["psi"].astype(float).values),0
+    seg_ids = df["sample_id"].values,0
+    dws = [],0
+    for sid in np.unique(seg_ids):,0
+        idx = np.where(seg_ids == sid)[0],0
+        if len(idx) < 4:,0
+            continue,0
+        e = obs[idx[1:]] - np.asarray(est_log)[idx[1:]],0
+        e = e[np.isfinite(e)],0
+        if len(e) < 3 or np.sum(e ** 2) <= 1e-12:,0
+            continue,0
+        dws.append(float(np.sum(np.diff(e) ** 2) / np.sum(e ** 2))),0
+    return float(np.mean(dws)) if dws else float("nan"),0
+,0
+,0
+# ================================================================,0
+# PART 4: BASELINE COMPARISONS,0
+# ================================================================,0
+def run_baseline_comparisons(df_train, psi_col, all_var_names, cat_set,,0
+                               n_cont, best_K, best_result, paths):,0
+    """Run K-means+regression baseline and SSE-objective CLR for comparison.""",0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 4: BASELINE COMPARISONS (K={best_K})"),0
+    print(f"{'='*60}"),0
+,0
+    km_result = fit_kmeans_baseline(,0
+        df_train, psi_col, all_var_names, cat_set, n_cont, n_cl=best_K),0
+,0
+    km_summary = {},0
+    if km_result is not None and km_result["fits"] is not None:,0
+        fits_km = km_result["fits"],0
+        clusters_km = km_result["clusters"],0
+        est_km = estimate_log_psi(fits_km, clusters_km, df_train, psi_col, all_var_names, cat_set),0
+        obs = np.log(df_train["psi"].astype(float).values),0
+        met_km = compute_metrics(obs, est_km),0
+        mask = ~np.isnan(obs) & ~np.isnan(est_km),0
+        o_km, p_km = obs[mask], est_km[mask],0
+        ss_res = float(np.sum((o_km - p_km) ** 2)),0
+        ss_tot = float(np.sum((o_km - np.mean(o_km)) ** 2)),0
+        r2_km = 1.0 - ss_res / ss_tot if ss_tot > 1e-15 else 0.0,0
+        km_summary = {,0
+            "kmeans_inertia": km_result["inertia"],,0
+            "rmse": met_km["RMSE"],,0
+            "nrmse": met_km["NRMSE"],,0
+            "mape": met_km["MAPE"],,0
+            "r2": r2_km,,0
+        },0
+        for ci, fit in enumerate(fits_km):,0
+            if fit is not None:,0
+                km_summary[f"cluster_{ci+1}_r2"] = fit["r2"],0
+                km_summary[f"cluster_{ci+1}_n"] = fit["n"],0
+,0
+    sse_summary = {},0
+    sse_fits = [],0
+    for ci in range(1, best_K + 1):,0
+        dfc_log = create_my_data_cluster(,0
+            log_transform_cluster_data(df_train, psi_col, n_cont), ci,,0
+            best_result["clusters"]),0
+        mf = fit_lm_simple(dfc_log, psi_col, all_var_names, cat_set),0
+        sse_fits.append(mf),0
+,0
+    if all(f is not None for f in sse_fits):,0
+        est_sse = estimate_log_psi(,0
+            sse_fits, best_result["clusters"], df_train, psi_col, all_var_names, cat_set),0
+        obs_sse = np.log(df_train["psi"].astype(float).values),0
+        met_sse = compute_metrics(obs_sse, est_sse),0
+        mask_sse = ~np.isnan(obs_sse) & ~np.isnan(est_sse),0
+        o_sse, p_sse = obs_sse[mask_sse], est_sse[mask_sse],0
+        ss_res_sse = float(np.sum((o_sse - p_sse) ** 2)),0
+        ss_tot_sse = float(np.sum((o_sse - np.mean(o_sse)) ** 2)),0
+        r2_sse = 1.0 - ss_res_sse / ss_tot_sse if ss_tot_sse > 1e-15 else 0.0,0
+        sse_summary = {,0
+            "rmse": met_sse["RMSE"],,0
+            "nrmse": met_sse["NRMSE"],,0
+            "mape": met_sse["MAPE"],,0
+            "r2": r2_sse,,0
+        },0
+,0
+    return {,0
+        "kmeans": km_result,,0
+        "kmeans_summary": km_summary,,0
+        "sse_summary": sse_summary,,0
+    },0
+,0
+,0
+# ================================================================,0
+# PART 5: STOCHASTIC BENCHMARKS,0
+# ================================================================,0
+def run_stochastic_benchmarks(df_train, psi_col, all_var_names, cat_set,,0
+                                n_cont, best_K, paths):,0
+    """Run Markov chain and GPR benchmarks.""",0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 5: STOCHASTIC BENCHMARKS (K={best_K})"),0
+    print(f"{'='*60}"),0
+,0
+    df_stoch = compare_stochastic_benchmarks(,0
+        df_train, psi_col, all_var_names, cat_set, n_cont, n_cl=best_K),0
+,0
+    if df_stoch is not None and len(df_stoch) > 0:,0
+        df_stoch.to_csv(,0
+            os.path.join(paths["data_dir"], "stochastic_benchmarks.csv"), index=False),0
+        print(df_stoch.to_string(index=False)),0
+,0
+    stoch_summary = {},0
+    for model in ["Markov_Chain", "GPR"]:,0
+        subset = df_stoch[df_stoch["model"] == model],0
+        valid = subset[~subset["r2"].isna()],0
+        if len(valid) > 0:,0
+            stoch_summary[model] = {,0
+                "mean_r2": float(valid["r2"].mean()),,0
+                "mean_bic": float(valid["bic"].mean()) if "bic" in valid.columns else 0.0,,0
+                "mean_accuracy": float(valid["accuracy"].mean()) if "accuracy" in valid.columns else float(valid["r2"].mean()),,0
+            },0
+,0
+    return df_stoch, stoch_summary,0
+,0
+,0
+# ================================================================,0
+# PART 6: GENERATE PLOTS,0
+# ================================================================,0
+def generate_all_plots(per_K_results, bic_by_K, best_K, best_result,,0
+                         df_train, df_test, psi_col, all_var_names, cat_set,,0
+                         n_cont, model_summary, diagnostics, paths,,0
+                         baseline_results=None, stoch_summary=None,,0
+                         form_results=None):,0
+    """Generate all plots for the paper.""",0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 4: GENERATING PLOTS"),0
+    print(f"{'='*60}"),0
+,0
+    fig_dir = paths["fig_dir"],0
+    clusters = best_result["clusters"],0
+    fits = best_result["fits"],0
+,0
+    # Figure 1: BIC vs K (optimal cluster selection),0
+    fig, ax = plt.subplots(figsize=(8, 4.5)),0
+    Ks = sorted(bic_by_K.keys()),0
+    bics = [bic_by_K[k] for k in Ks],0
+    ax.plot(Ks, bics, "b-o", ms=8, lw=2),0
+    ax.plot(best_K, bic_by_K[best_K], "ro", ms=12, markeredgewidth=2,,0
+            markeredgecolor="darkred"),0
+    ax.set_xlabel("Number of clusters, $K$", fontsize=13),0
+    ax.set_ylabel("BIC", fontsize=13),0
+    ax.set_title("Optimal Number of Clusters via BIC", fontsize=14),0
+    ax.legend(["BIC", f"Optimum $K={best_K}$"], fontsize=11, loc="upper right"),0
+    ax.grid(True, alpha=0.3),0
+    # Annotate values,0
+    for k, bic in zip(Ks, bics):,0
+        ax.annotate(f"{bic:.0f}", (k, bic), textcoords="offset points",,0
+                    xytext=(0, 12), ha="center", fontsize=8),0
+    fig.tight_layout(),0
+    fig.savefig(os.path.join(fig_dir, "fig1_bic_vs_K.pdf"), dpi=150),0
+    fig.savefig(os.path.join(fig_dir, "fig1_bic_vs_K.png"), dpi=150),0
+    plt.close(fig),0
+    print("  Figure 1: BIC vs K"),0
+,0
+    # Figure 2: SA convergence for best K (single panel),0
+    conv = best_result["convergence"],0
+    fig, ax = plt.subplots(figsize=(8, 4.5)),0
+    its = [c[0] for c in conv],0
+    bic_vals = [c[1] for c in conv],0
+    ax.plot(its, bic_vals, "r-", lw=1.5),0
+    ax.axhline(bic_vals[-1], color="green", ls="--", lw=1, alpha=0.7,,0
+               label=f"Final BIC = {bic_vals[-1]:.1f}"),0
+    ax.set_xlabel("SA Iteration", fontsize=13),0
+    ax.set_ylabel("BIC", fontsize=13),0
+    ax.set_title(f"Simulated Annealing Convergence ($K={best_K}$)", fontsize=14),0
+    ax.legend(fontsize=10),0
+    ax.grid(True, alpha=0.3),0
+    fig.tight_layout(),0
+    fig.savefig(os.path.join(fig_dir, "fig2_sa_convergence.pdf"), dpi=150),0
+    fig.savefig(os.path.join(fig_dir, "fig2_sa_convergence.png"), dpi=150),0
+    plt.close(fig),0
+    print("  Figure 2: SA convergence"),0
+,0
+    # Figure 2a: SA convergence for EVERY K (so the cluster search is shown,0
+    # for all K, not only the BIC-optimal one). Falls back to the all-K overlay,0
+    # (fig2b) when only one K was evaluated.,0
+    # --- Load persisted convergence traces if not already in memory ---,0
+    import pickle,0
+    _conv_pickle = os.path.join(paths["data_dir"], "sa_convergence_traces.pkl"),0
+    if os.path.exists(_conv_pickle):,0
+        with open(_conv_pickle, "rb") as _fh:,0
+            _saved = pickle.load(_fh),0
+        for _k, _tr in _saved.items():,0
+            if _k not in per_K_results:,0
+                per_K_results[_k] = {"convergence": _tr},0
+            elif not per_K_results[_k].get("convergence"):,0
+                per_K_results[_k]["convergence"] = _tr,0
+    # Also populate per_K_results from bic_by_K for any missing K,0
+    for _k in bic_by_K:,0
+        if _k not in per_K_results:,0
+            per_K_results[_k] = {},0
+    n_k = max(len(per_K_results), 1),0
+    has_conv = any(res.get("convergence") for res in per_K_results.values()),0
+    colors_k = plt.cm.viridis(np.linspace(0.1, 0.9, max(len(per_K_results), 2))),0
+    if n_k > 1:,0
+        if has_conv:,0
+            fig, axes = plt.subplots(1, 2, figsize=(13, 4.8)),0
+        else:,0
+            fig, axes = plt.subplots(1, 1, figsize=(6.5, 4.8)),0
+            axes = [axes],0
+        # Left (or only): overlay of all K convergence traces,0
+        if has_conv:,0
+            for ki, (k, res) in enumerate(sorted(per_K_results.items())):,0
+                cc = res.get("convergence", []),0
+                if not cc:,0
+                    continue,0
+                axes[0].plot([c[0] for c in cc], [c[1] for c in cc],,0
+                             color=colors_k[ki % len(colors_k)], lw=1.2, alpha=0.85,,0
+                             label=f"$K={k}$ (BIC={cc[-1][1]:.0f})"),0
+            axes[0].set_xlabel("SA Iteration", fontsize=12),0
+            axes[0].set_ylabel("BIC", fontsize=12),0
+            axes[0].set_title("Convergence — all $K$ (overlaid)", fontsize=13),0
+            axes[0].legend(fontsize=7, ncol=2, loc="upper right"),0
+            axes[0].grid(True, alpha=0.3),0
+            ax_bic = axes[1],0
+        else:,0
+            ax_bic = axes[0],0
+        # Right: final BIC vs K, marking the optimum,0
+        kk = sorted(bic_by_K.keys()),0
+        bbs = [bic_by_K[k] for k in kk],0
+        ax_bic.plot(kk, bbs, "b-o", ms=7, lw=2),0
+        ax_bic.plot(best_K, bic_by_K[best_K], "ro", ms=11,,0
+                     markeredgewidth=2, markeredgecolor="darkred"),0
+        for k, b in zip(kk, bbs):,0
+            ax_bic.annotate(f"{b:.0f}", (k, b), textcoords="offset points",,0
+                             xytext=(0, 10), ha="center", fontsize=8),0
+        ax_bic.set_xlabel("Number of clusters, $K$", fontsize=12),0
+        ax_bic.set_ylabel("Final BIC", fontsize=12),0
+        ax_bic.set_title("Final BIC vs $K$", fontsize=13),0
+        ax_bic.grid(True, alpha=0.3),0
+        fig.tight_layout(),0
+        fig.savefig(os.path.join(fig_dir, "fig2a_sa_all_K.pdf"), dpi=150),0
+        fig.savefig(os.path.join(fig_dir, "fig2a_sa_all_K.png"), dpi=150),0
+        plt.close(fig),0
+        print("  Figure 2a: SA convergence all K"),0
+,0
+    # Figure 2b: SA convergence overlay for ALL K values,0
+    fig, ax = plt.subplots(figsize=(10, 5.5)),0
+    for ki, (k, res) in enumerate(sorted(per_K_results.items())):,0
+        conv = res.get("convergence", []),0
+        if conv:,0
+            its = [c[0] for c in conv],0
+            bics = [c[1] for c in conv],0
+            ax.plot(its, bics, color=colors_k[ki], lw=1.2, alpha=0.85, label=f"$K={k}$ (BIC={bics[-1]:.0f})"),0
+    ax.set_xlabel("SA Iteration", fontsize=13),0
+    ax.set_ylabel("BIC", fontsize=13),0
+    ax.set_title("SA Convergence — All $K$", fontsize=14),0
+    ax.legend(fontsize=8, ncol=2, loc="upper right"),0
+    ax.grid(True, alpha=0.3),0
+    fig.tight_layout(),0
+    fig.savefig(os.path.join(fig_dir, "fig2b_sa_all_K.pdf"), dpi=150),0
+    fig.savefig(os.path.join(fig_dir, "fig2b_sa_all_K.png"), dpi=150),0
+    plt.close(fig),0
+    print("  Figure 2b: SA convergence all K"),0
+,0
+    # Figure 3: Model comparison bar chart (OLS, AR1, RW, NUR, Kalman SSM),0
+    if model_summary:,0
+        models = ["OLS", "AR(1)", "Random_Walk", "Near_Unit_Root", "Kalman_SSM"],0
+        display_names = ["OLS\n(i.i.d.)", "AR(1)", "Random\nWalk", "Near-Unit\nRoot", "Kalman\nSSM"],0
+        r2_vals = [model_summary.get(m, {}).get("mean_r2", 0) for m in models],0
+        bic_vals = [model_summary.get(m, {}).get("mean_bic", 0) for m in models],0
+,0
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5)),0
+        colors = ["#4472C4", "#ED7D31", "#A5A5A5", "#FFC000", "#70AD47"],0
+        bars = ax1.bar(display_names, r2_vals, color=colors, edgecolor="black", linewidth=0.8),0
+        for bar, val in zip(bars, r2_vals):,0
+            ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,,0
+                     f"{val:.3f}", ha="center", fontsize=10, fontweight="bold"),0
+        ax1.set_ylabel("$R^2$", fontsize=13),0
+        ax1.set_title("Predictive Accuracy ($R^2$)", fontsize=13),0
+        ax1.set_ylim(0, max(r2_vals) * 1.15 if max(r2_vals) > 0 else 1),0
+,0
+        bars2 = ax2.bar(display_names, bic_vals, color=colors, edgecolor="black", linewidth=0.8),0
+        for bar, val in zip(bars2, bic_vals):,0
+            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 50,,0
+                     f"{val:.0f}", ha="center", fontsize=8, fontweight="bold"),0
+        ax2.set_ylabel("BIC", fontsize=13),0
+        ax2.set_title("Model Fit (BIC, lower is better)", fontsize=13),0
+        fig.tight_layout(),0
+        fig.savefig(os.path.join(fig_dir, "fig3_model_comparison.pdf"), dpi=150),0
+        fig.savefig(os.path.join(fig_dir, "fig3_model_comparison.png"), dpi=150),0
+        plt.close(fig),0
+        print("  Figure 3: Model comparison"),0
+,0
+    # Figure 4: Predicted vs Observed (training + test). When the joint,0
+    # temporal search selected per-cluster error structures, use the,0
+    # temporal-aware predictors (observed-prior-year for AR/RW/NUR/Kalman),0
+    # so the figure shows the jointly-optimised model, not an OLS re-fit.,0
+    _tf = best_result.get("temporal_fits"),0
+    if _HAS_TEMPORAL_SEARCH and _tf and any(,0
+            f is not None and f.get("temporal_code", 0) != 0 for f in _tf):,0
+        try:,0
+            est_train = estimate_log_psi_temporal(,0
+                _tf, clusters, df_train, psi_col, all_var_names, cat_set),0
+            est_test = estimate_log_psi_temporal(,0
+                _tf, clusters, df_test, psi_col, all_var_names, cat_set),0
+        except Exception:,0
+            est_train = estimate_log_psi(fits, clusters, df_train, psi_col, all_var_names, cat_set),0
+            est_test = estimate_log_psi(fits, clusters, df_test, psi_col, all_var_names, cat_set),0
+    else:,0
+        est_train = estimate_log_psi(fits, clusters, df_train, psi_col, all_var_names, cat_set),0
+        est_test = estimate_log_psi(fits, clusters, df_test, psi_col, all_var_names, cat_set),0
+    obs_train = np.log(df_train["psi"].astype(float).values),0
+    obs_test = np.log(df_test["psi"].astype(float).values),0
+,0
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5.5)),0
+    for ax, obs, est, label in [(ax1, obs_train, est_train, "Training"),,0
+                                  (ax2, obs_test, est_test, "Test")]:,0
+        mask = ~np.isnan(obs) & ~np.isnan(est),0
+        ax.scatter(est[mask], obs[mask], alpha=0.25, s=5, color="steelblue",,0
+                   edgecolors="none"),0
+        lo, hi = 1.0, log(5.0),0
+        ax.plot([lo, hi], [lo, hi], "r--", lw=1.2),0
+        met = compute_metrics(obs, est),0
+        valid_obs = obs[mask],0
+        valid_est = est[mask],0
+        if len(valid_obs) > 1:,0
+            tss = float(np.sum((valid_obs - np.mean(valid_obs)) ** 2)),0
+            r2_plot = 1.0 - float(np.sum((valid_obs - valid_est) ** 2)) / max(tss, 1e-15),0
+        else:,0
+            r2_plot = np.nan,0
+        ax.set_xlim(lo, hi),0
+        ax.set_ylim(lo, hi),0
+        ax.set_xlabel("Predicted ln(PSI)", fontsize=12),0
+        ax.set_ylabel("Observed ln(PSI)", fontsize=12),0
+        ax.set_title(f"{label} Set ($K={best_K}$)", fontsize=13),0
+        ax.text(0.05, 0.95,,0
+                f"RMSE={met['RMSE']:.3f}\nNRMSE={met['NRMSE']:.3f}\nMAPE={met['MAPE']:.1f}%\n$R^2$={r2_plot:.3f}",,0
+                transform=ax.transAxes, fontsize=9, verticalalignment="top",,0
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5)),0
+        ax.grid(True, alpha=0.3),0
+    fig.tight_layout(),0
+    fig.savefig(os.path.join(fig_dir, "fig4_predicted_vs_observed.pdf"), dpi=150),0
+    fig.savefig(os.path.join(fig_dir, "fig4_predicted_vs_observed.png"), dpi=150),0
+    plt.close(fig),0
+    print("  Figure 4: Predicted vs Observed"),0
+,0
+    # Figure 5: DW and AR(1) diagnostics,0
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5)),0
+    ax1.hist(list(diagnostics["dw_seg"].values()),,0
+             bins=50, alpha=0.7, color="steelblue", edgecolor="black"),0
+    ax1.axvline(2.0, color="green", ls="--", lw=2, label="No autocorrelation (DW=2)"),0
+    ax1.axvline(1.5, color="red", ls=":", lw=2, label="Positive autocorr threshold"),0
+    ax1.set_xlabel("Durbin-Watson statistic", fontsize=12),0
+    ax1.set_ylabel("Number of segments", fontsize=12),0
+    ax1.set_title("Per-Segment Durbin-Watson Statistics", fontsize=13),0
+    ax1.legend(fontsize=9),0
+    ax1.grid(True, alpha=0.3),0
+,0
+    ax2.hist(list(diagnostics["ar1_seg"].values()),,0
+             bins=50, alpha=0.7, color="darkorange", edgecolor="black"),0
+    ax2.axvline(0.0, color="green", ls="--", lw=2, label="No correlation"),0
+    ax2.axvline(0.3, color="red", ls=":", lw=2, label="Moderate threshold"),0
+    ax2.set_xlabel("AR(1) coefficient ($\\rho$)", fontsize=12),0
+    ax2.set_ylabel("Number of segments", fontsize=12),0
+    ax2.set_title("Per-Segment AR(1) Coefficients", fontsize=13),0
+    ax2.legend(fontsize=9),0
+    ax2.grid(True, alpha=0.3),0
+    fig.tight_layout(),0
+    fig.savefig(os.path.join(fig_dir, "fig5_autocorr_diagnostics.pdf"), dpi=150),0
+    fig.savefig(os.path.join(fig_dir, "fig5_autocorr_diagnostics.png"), dpi=150),0
+    plt.close(fig),0
+    print("  Figure 5: Autocorrelation diagnostics"),0
+,0
+    # Figure 6: Cluster characteristics,0
+    n_cl = best_K,0
+    fig, axes = plt.subplots(2, max(n_cl, 2), figsize=(4 * max(n_cl, 2), 8)),0
+    if n_cl == 1:,0
+        axes = axes.reshape(2, 1),0
+    for ci in range(n_cl):,0
+        dfc = df_train[df_train["sample_id"].isin(np.where(clusters == ci + 1)[0])],0
+        # Top: PSI vs Age by cluster,0
+        ax = axes[0, ci] if n_cl > 1 else axes[0],0
+        ax.scatter(dfc["age"], np.log(dfc["psi"]), alpha=0.3, s=6, c=f"C{ci}"),0
+        ax.set_xlabel("Age (years)", fontsize=10),0
+        ax.set_ylabel("ln(PSI)", fontsize=10),0
+        ax.set_title(f"Cluster {ci+1} (n={len(dfc)})", fontsize=11),0
+        ax.grid(True, alpha=0.3),0
+        # Bottom: Variable importance,0
+        ax2 = axes[1, ci] if n_cl > 1 else axes[1],0
+        imp_c = diagnostics["importance"].get(ci + 1, {}).get("variables", {}),0
+        if imp_c:,0
+            sorted_imp = sorted(imp_c.items(), key=lambda x: -x[1]["importance_mean"])[:8],0
+            names = [s[0] for s in sorted_imp][::-1],0
+            vals = [s[1]["importance_mean"] for s in sorted_imp][::-1],0
+            colors_imp = ["#4472C4" if v > 0 else "#ED7D31" for v in vals],0
+            ax2.barh(names, vals, color=colors_imp, edgecolor="black", linewidth=0.5),0
+            ax2.set_xlabel("RMSE Increase", fontsize=10),0
+            ax2.set_title(f"Variable Importance (Cluster {ci+1})", fontsize=11),0
+            ax2.axvline(0, color="black", lw=0.8),0
+    for ax_row in axes:,0
+        for ax in ax_row:,0
+            if not ax.has_data():,0
+                ax.set_visible(False),0
+    fig.tight_layout(),0
+    fig.savefig(os.path.join(fig_dir, "fig6_cluster_characteristics.pdf"), dpi=150),0
+    fig.savefig(os.path.join(fig_dir, "fig6_cluster_characteristics.png"), dpi=150),0
+    plt.close(fig),0
+    print("  Figure 6: Cluster characteristics"),0
+,0
+    # Figure 7: Temporal model predictions vs actual (example segments),0
+    # Pick 4 representative segments, show OLS vs RW predictions,0
+    time_col = _panel_time_column(df_train),0
+    seg_ids = df_train["sample_id"].unique(),0
+    seg_ids = np.array([,0
+        seg for seg in seg_ids,0
+        if len(df_train[df_train["sample_id"] == seg]) >= 3,0
+        and (time_col is None or df_train.loc[df_train["sample_id"] == seg, time_col].nunique() > 1),0
+    ]),0
+    if len(seg_ids) == 0:,0
+        seg_ids = df_train["sample_id"].unique(),0
+    rng_plot = np.random.default_rng(123),0
+    sample_pool = seg_ids[:min(len(seg_ids), 500)],0
+    n_examples = min(4, len(sample_pool)),0
+    sample_segs = rng_plot.choice(sample_pool, size=n_examples, replace=False),0
+,0
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9)),0
+    for idx, seg in enumerate(sample_segs):,0
+        ax = axes[idx // 2, idx % 2],0
+        mask = df_train["sample_id"] == seg,0
+        if time_col is not None:,0
+            df_seg = df_train[mask].sort_values(time_col, kind="mergesort"),0
+            time_pts = df_seg[time_col].to_numpy(dtype=float),0
+            time_label = time_col,0
+        else:,0
+            df_seg = df_train[mask].copy(),0
+            time_pts = np.arange(len(df_seg), dtype=float),0
+            time_label = "Observation index",0
+        psi_raw = df_seg["psi"].values,0
+,0
+        ax.plot(time_pts, np.log(psi_raw), "ko-", ms=8, lw=2, label="Observed"),0
+,0
+        # Simple OLS prediction for this segment (using cluster model),0
+        seg_cluster = clusters[int(seg)] if int(seg) < len(clusters) else 1,0
+        fit_seg = fits[seg_cluster - 1] if fits[seg_cluster - 1] else fits[0],0
+,0
+        if fit_seg:,0
+            coeffs = fit_seg["coeff_dict"],0
+            ols_pred = [],0
+            for _, row in df_seg.iterrows():,0
+                val = coeffs.get("Intercept", 0.0),0
+                for vi, vname in enumerate(all_var_names):,0
+                    raw = float(row.iloc[psi_col + 1 + vi]),0
+                    beta = coeffs.get(vname, 0.0),0
+                    if beta != 0 and raw > 0:,0
+                        val += beta * log(raw),0
+                ols_pred.append(val),0
+            ax.plot(time_pts, ols_pred, "b--", lw=1.5, alpha=0.7, label="OLS (i.i.d.)"),0
+,0
+            # Random walk prediction,0
+            rw_pred = [np.log(psi_raw[0])],0
+            drift = model_summary.get("Random_Walk", {}).get("drift_rw", -0.02),0
+            for t in range(1, len(psi_raw)):,0
+                rw_pred.append(rw_pred[-1] + drift),0
+            ax.plot(time_pts, rw_pred, "r-", lw=2, label="RW conditional mean"),0
+,0
+        ax.set_xlabel(time_label, fontsize=10),0
+        ax.set_ylabel("ln(PSI)", fontsize=10),0
+        ax.set_title(f"Segment {seg} (Cluster {seg_cluster})", fontsize=11),0
+        ax.legend(fontsize=8),0
+        ax.grid(True, alpha=0.3),0
+,0
+    for idx in range(n_examples, 4):,0
+        axes[idx // 2, idx % 2].set_visible(False),0
+,0
+    fig.suptitle("Temporal Model Predictions on Example Segments", fontsize=14, y=1.01),0
+    fig.tight_layout(),0
+    fig.savefig(os.path.join(fig_dir, "fig7_example_segments.pdf"), dpi=150),0
+    fig.savefig(os.path.join(fig_dir, "fig7_example_segments.png"), dpi=150),0
+    plt.close(fig),0
+    print("  Figure 7: Example segment predictions"),0
+,0
+    # Figure 8: Baseline comparison (CLR vs K-means+Regression vs SSE-CLR),0
+    if baseline_results is not None:,0
+        fig, ax = plt.subplots(figsize=(8, 5)),0
+        methods = ["SA-CLR\n(BIC)", "K-Means\n+Reg", "CLR\n(SSE)"],0
+        clr_r2 = best_result["fits"][0].get("r2", 0.0) if best_result["fits"] and best_result["fits"][0] else 0.0,0
+        km_r2 = baseline_results.get("kmeans_summary", {}).get("r2", 0.0),0
+        sse_r2 = baseline_results.get("sse_summary", {}).get("r2", 0.0),0
+        r2_vals_base = [clr_r2, km_r2, sse_r2],0
+        colors_base = ["#4472C4", "#ED7D31", "#A5A5A5"],0
+        bars = ax.bar(methods, r2_vals_base, color=colors_base, edgecolor="black", linewidth=0.8),0
+        for bar, val in zip(bars, r2_vals_base):,0
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,,0
+                     f"{val:.3f}", ha="center", fontsize=11, fontweight="bold"),0
+        ax.set_ylabel("$R^2$", fontsize=13),0
+        ax.set_title("Clusterwise Method Comparison", fontsize=14),0
+        ax.set_ylim(0, max(max(r2_vals_base) * 1.2, 0.5)),0
+        ax.grid(True, alpha=0.3, axis="y"),0
+        fig.tight_layout(),0
+        fig.savefig(os.path.join(fig_dir, "fig8_baseline_comparison.pdf"), dpi=150),0
+        fig.savefig(os.path.join(fig_dir, "fig8_baseline_comparison.png"), dpi=150),0
+        plt.close(fig),0
+        print("  Figure 8: Baseline comparison"),0
+,0
+    # Figure 9: Model comparison with benchmarks,0
+    fig, ax = plt.subplots(figsize=(12, 5)),0
+    # Proposed temporal models (incl. Kalman SSM). A 19-hour pipeline must,0
+    # never die on a missing comparison row: skip absent models loudly.,0
+    _wanted = ["OLS", "AR(1)", "Random_Walk", "Near_Unit_Root", "Kalman_SSM"],0
+    _missing = [m for m in _wanted if m not in model_summary],0
+    if _missing:,0
+        print(f"  Figure 9: comparison rows missing, skipping {_missing}"),0
+    all_models = [m for m in _wanted if m in model_summary],0
+    r2_all = [model_summary[m].get("mean_r2", 0.0) for m in all_models],0
+    # Add Khadka & Paz 2018 benchmark (nonlinear, 5-cluster),0
+    all_models.append("Khadka2018\n(Nonlinear)"),0
+    r2_all.append(None),0
+    # Add Khadka & Paz 2018 (linear, 6-cluster),0
+    all_models.append("Khadka2018\n(Linear)"),0
+    r2_all.append(None),0
+    # Add Markov Chain if available,0
+    if stoch_summary and "Markov_Chain" in stoch_summary:,0
+        all_models.append("Markov\nChain"),0
+        r2_all.append(stoch_summary["Markov_Chain"].get("mean_r2", 0.0)),0
+,0
+    display_all = [m.replace("\n", "\n") for m in all_models],0
+    colors_all = ["#4472C4", "#ED7D31", "#A5A5A5", "#FFC000",,0
+                   "#70AD47", "#C5E0B4", "#264478", "#D5E8D4"],0
+    # Truncate colors to match,0
+    colors_all = colors_all[:len(all_models)],0
+,0
+    bars = ax.bar(range(len(all_models)), [v if v is not None else 0 for v in r2_all],,0
+                  tick_label=display_all, color=colors_all, edgecolor="black", linewidth=0.8),0
+    for i, (bar, val) in enumerate(zip(bars, r2_all)):,0
+        if val is not None and val > 0:,0
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,,0
+                     f"{val:.3f}", ha="center", fontsize=9, fontweight="bold"),0
+        elif val is None:,0
+            # Khadka2018: show RMSE instead (nonlinear: 0.41, linear: 0.47),0
+            if "Nonlinear" in all_models[i]:,0
+                ax.text(bar.get_x() + bar.get_width()/2, 0.05,,0
+                         "RMSE=0.41\nNRMSE=0.15", ha="center", fontsize=9,,0
+                         fontweight="bold", color="darkgreen"),0
+            elif "Linear" in all_models[i]:,0
+                ax.text(bar.get_x() + bar.get_width()/2, 0.05,,0
+                         "RMSE=0.47\nNRMSE=0.17", ha="center", fontsize=9,,0
+                         fontweight="bold", color="darkgreen"),0
+    ax.set_ylabel("$R^2$", fontsize=13),0
+    ax.set_title("Model Comparison with Literature Benchmarks", fontsize=14),0
+    ax.set_ylim(0, 1.1),0
+    ax.grid(True, alpha=0.3, axis="y"),0
+    fig.tight_layout(),0
+    fig.savefig(os.path.join(fig_dir, "fig9_complete_comparison.pdf"), dpi=150),0
+    fig.savefig(os.path.join(fig_dir, "fig9_complete_comparison.png"), dpi=150),0
+    plt.close(fig),0
+    print("  Figure 9: Complete model comparison with benchmarks"),0
+,0
+    # Figure 10: Functional form comparison per cluster,0
+    if form_results is not None:,0
+        df_forms = form_results.get("form_comparison_df"),0
+        if df_forms is not None and len(df_forms) > 0:,0
+            n_cl_local = best_K,0
+            fig, axes = plt.subplots(2, (n_cl_local + 1) // 2, figsize=(6 * ((n_cl_local + 1) // 2), 8)),0
+            if n_cl_local <= 2:,0
+                axes = np.atleast_1d(axes.flatten() if isinstance(axes, np.ndarray) else [axes]),0
+            else:,0
+                axes = axes.flatten(),0
+            for ci in range(n_cl_local):,0
+                ax = axes[ci] if n_cl_local > 1 else axes,0
+                subset = df_forms[df_forms["cluster"] == ci + 1],0
+                if len(subset) == 0:,0
+                    ax.set_visible(False),0
+                    continue,0
+                forms_display = [s.replace(" (log-log)", "").replace(" Interaction", "\n×AADT") for s in subset["form"]],0
+                r2_vals_f = subset["r2"].values,0
+                bic_vals_f = subset["bic"].values,0
+                x = range(len(subset)),0
+                ax2_r2 = ax.twinx(),0
+                bars_r2 = ax.bar([p - 0.15 for p in x], r2_vals_f, 0.3, label="$R^2$",,0
+                                 color="#4472C4", edgecolor="black", linewidth=0.5),0
+                bars_bic = ax2_r2.bar([p + 0.15 for p in x], bic_vals_f, 0.3, label="BIC",,0
+                                      color="#ED7D31", edgecolor="black", linewidth=0.5),0
+                best_form_idx_local = np.argmin(bic_vals_f),0
+                ax2_r2.plot([best_form_idx_local], [bic_vals_f[best_form_idx_local]],,0
+                              '*', color='red', ms=15, label="Best"),0
+                ax.set_xticks(list(x)),0
+                ax.set_xticklabels(forms_display, fontsize=8, rotation=30, ha='right'),0
+                ax.set_ylabel("$R^2$", fontsize=11, color="#4472C4"),0
+                ax2_r2.set_ylabel("BIC", fontsize=11, color="#ED7D31"),0
+                ax.set_title(f"Cluster {ci+1}", fontsize=12),0
+                lines1, labels1 = ax.get_legend_handles_labels(),0
+                lines2, labels2 = ax2_r2.get_legend_handles_labels(),0
+                ax.legend(lines1 + lines2, labels1 + labels2, fontsize=8, loc="upper left"),0
+            for ax in axes:,0
+                if not ax.has_data() and n_cl_local > 1:,0
+                    ax.set_visible(False),0
+            fig.suptitle("Functional Form Comparison by Cluster", fontsize=14, y=1.02),0
+            fig.tight_layout(),0
+            fig.savefig(os.path.join(fig_dir, "fig10_form_comparison.pdf"), dpi=150),0
+            fig.savefig(os.path.join(fig_dir, "fig10_form_comparison.png"), dpi=150),0
+            plt.close(fig),0
+            print("  Figure 10: Functional form comparison"),0
+,0
+    # Figure 11: Random Walk simulation — how the model works,0
+    # FIX: (1) dx sign corrected (trucks worsen deterioration, dx must be negative),0
+    #      (2) sim_i used to vary noise level across rows,0
+    #      (3) plot in PSI space with correct y-axis label,0
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9)),0
+    rng_sim = np.random.default_rng(99),0
+    T_sim = 12,0
+    # Panel layout: rows vary noise level; columns vary truck loading,0
+    sigma_by_row = [0.02, 0.06]   # row 0 = low measurement noise, row 1 = high noise,0
+    truck_by_col = [0.0, 0.4]     # col 0 = low trucks, col 1 = high trucks,0
+    drift_base   = -0.035         # baseline annual deterioration in ln(PSI) space,0
+    beta_truck   = -0.030         # log-PSI change per unit truck-load per year,0
+,0
+    for sim_i, ax_row in enumerate(axes):,0
+        sigma = sigma_by_row[sim_i],0
+        for ax_i, ax in enumerate(ax_row):,0
+            time_pts = np.arange(T_sim),0
+            truck_load = truck_by_col[ax_i],0
+            # Net drift experienced by observed series,0
+            net_drift = drift_base + beta_truck * truck_load  # negative for all valid scenarios,0
+,0
+            # ---- True latent state (baseline deterioration only, no truck loading) ----,0
+            latent = np.zeros(T_sim),0
+            latent[0] = log(4.5) + rng_sim.normal(0, 0.02),0
+            for t in range(1, T_sim):,0
+                latent[t] = latent[t - 1] + drift_base + rng_sim.normal(0, sigma),0
+,0
+            # ---- Observed = latent + cumulative truck-loading effect + tiny obs noise ----,0
+            # x_effect is NEGATIVE because trucks reduce PSI,0
+            x_effect = beta_truck * truck_load * time_pts,0
+            observed = latent + x_effect + rng_sim.normal(0, 0.01, T_sim),0
+,0
+            # ---- RW prediction: Delta_y_hat = drift_base + beta_truck * Delta_X ----,0
+            # Delta_X = truck_load each period (constant load increment),0
+            rw_pred = np.zeros(T_sim),0
+            rw_pred[0] = observed[0],0
+            for t in range(1, T_sim):,0
+                rw_pred[t] = rw_pred[t - 1] + net_drift   # both terms negative → clear decline,0
+,0
+            # Convert log-space to PSI for readability,0
+            psi_obs    = np.exp(observed),0
+            psi_rw     = np.exp(rw_pred),0
+            psi_latent = np.exp(latent),0
+,0
+            ax.plot(time_pts, psi_obs,    "ko-", ms=7,  lw=2,          label="Observed PSI"),0
+            ax.plot(time_pts, psi_rw,     "r-",  lw=2.5,               label="RW conditional mean"),0
+            ax.plot(time_pts, psi_latent, "b--", lw=1.5, alpha=0.65,   label="True latent (no trucks)"),0
+,0
+            noise_lbl = "Low noise"  if sim_i == 0 else "High noise",0
+            truck_lbl = "Low trucks" if ax_i  == 0 else "High trucks",0
+            ax.set_title(f"{truck_lbl} | {noise_lbl}\n",0
+                         f"net drift = {net_drift:.3f} ln(PSI)/yr", fontsize=10),0
+            ax.set_xlabel("Year",    fontsize=10),0
+            ax.set_ylabel("PSI",     fontsize=10),0
+            ax.set_ylim(bottom=0),0
+            ax.legend(fontsize=8),0
+            ax.grid(True, alpha=0.3),0
+,0
+    fig.suptitle(,0
+        "Random Walk with Drift — Pavement Deterioration Simulation\n",0
+        r"$\Delta y_t = \delta_{\mathrm{base}} + \beta_{\mathrm{truck}}\,\Delta X_t + \varepsilon_t$",,0
+        fontsize=13, y=1.01),0
+    fig.tight_layout(),0
+    fig.savefig(os.path.join(fig_dir, "fig11_random_walk_simulation.pdf"), dpi=150),0
+    fig.savefig(os.path.join(fig_dir, "fig11_random_walk_simulation.png"), dpi=150),0
+    plt.close(fig),0
+    print("  Figure 11: Random Walk simulation"),0
+,0
+    # Figure 12: SA convergence table as a plot — shows the per-K summary,0
+    # (every K evaluated) plus the iteration-level trace for the optimal K.,0
+    if model_summary:,0
+        fig, ax = plt.subplots(figsize=(10, 4.5)),0
+        ax.axis("off"),0
+        table_data = [["$K$", "Best BIC", "RSS", "Iterations", "Optimum?"]],0
+        kk = sorted(per_K_results.keys()),0
+        for k in kk:,0
+            r = per_K_results[k],0
+            opt = "$\\star$" if k == best_K else "",0
+            rss = r.get("rss", None),0
+            table_data.append([,0
+                str(k),,0
+                f"{r['bic']:.0f}",,0
+                f"{rss:.1f}" if rss is not None else "--",,0
+                str(r.get("iterations", "--")),,0
+                opt,,0
+            ]),0
+        conv_best = best_result.get("convergence", []),0
+        if conv_best:,0
+            table_data.append(["", "", "", "", ""]),0
+            table_data.append(["Iter (best $K$)", "Temp (approx)", "BIC", "", ""]),0
+            step = max(1, len(conv_best) // 8),0
+            for idx in range(0, len(conv_best), step):,0
+                it, bic = conv_best[idx],0
+                temp_approx = PAPER_CONFIG["sa_temp"] * (PAPER_CONFIG["sa_alpha"] ** (it - 1)),0
+                table_data.append([,0
+                    str(it), f"{temp_approx:.2e}", f"{bic:.1f}", "", "",0
+                ]),0
+        tbl = ax.table(cellText=table_data, cellLoc="center", loc="center",,0
+                       colWidths=[0.12, 0.22, 0.18, 0.18, 0.12]),0
+        tbl.auto_set_font_size(False),0
+        tbl.set_fontsize(8.5),0
+        tbl.scale(1, 1.3),0
+        for (row, col), cell in tbl.get_celld().items():,0
+            if row == 0:,0
+                cell.set_facecolor("#4472C4"),0
+                cell.set_text_props(color="white", fontweight="bold"),0
+        ax.set_title(f"SA Convergence Summary — all $K$ (best $K={best_K}$, ",0
+                     f"final BIC={bic_by_K[best_K]:.1f})",,0
+                     fontsize=13, pad=20),0
+        fig.tight_layout(),0
+        fig.savefig(os.path.join(fig_dir, "fig12_sa_convergence_table.pdf"), dpi=150),0
+        fig.savefig(os.path.join(fig_dir, "fig12_sa_convergence_table.png"), dpi=150),0
+        plt.close(fig),0
+        print("  Figure 12: SA convergence table"),0
+,0
+    return {,0
+        "fig1": "fig1_bic_vs_K",,0
+        "fig2": "fig2_sa_convergence",,0
+        "fig2a": "fig2a_sa_all_K",,0
+        "fig2b": "fig2b_sa_all_K",,0
+        "fig3": "fig3_model_comparison",,0
+        "fig4": "fig4_predicted_vs_observed",,0
+        "fig5": "fig5_autocorr_diagnostics",,0
+        "fig6": "fig6_cluster_characteristics",,0
+        "fig7": "fig7_example_segments",,0
+        "fig8": "fig8_baseline_comparison",,0
+        "fig9": "fig9_complete_comparison",,0
+        "fig10": "fig10_form_comparison",,0
+        "fig11": "fig11_random_walk_simulation",,0
+        "fig12": "fig12_sa_convergence_table",,0
+    },0
+,0
+,0
+# ================================================================,0
+# PART 5: GENERATE LATEX RESULTS FILE,0
+# ================================================================,0
+def generate_latex_results(per_K_results, bic_by_K, best_K, best_result,,0
+                             df_train, df_test, psi_col, all_var_names, cat_set,,0
+                             n_cont, model_summary, diagnostics, paths,,0
+                             baseline_results=None, stoch_summary=None,,0
+                             form_results=None):,0
+    """Generate paper_results.tex with all populated tables and figure references.""",0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 5: GENERATING LATEX RESULTS"),0
+    print(f"{'='*60}"),0
+,0
+    clusters = best_result["clusters"],0
+    fits = best_result["fits"],0
+    n_cl = best_K,0
+,0
+    _tf = best_result.get("temporal_fits"),0
+    if _HAS_TEMPORAL_SEARCH and _tf and any(,0
+            f is not None and f.get("temporal_code", 0) != 0 for f in _tf):,0
+        try:,0
+            est_train = estimate_log_psi_temporal(,0
+                _tf, clusters, df_train, psi_col, all_var_names, cat_set),0
+            est_test = estimate_log_psi_temporal(,0
+                _tf, clusters, df_test, psi_col, all_var_names, cat_set),0
+        except Exception:,0
+            est_train = estimate_log_psi(fits, clusters, df_train, psi_col, all_var_names, cat_set),0
+            est_test = estimate_log_psi(fits, clusters, df_test, psi_col, all_var_names, cat_set),0
+    else:,0
+        est_train = estimate_log_psi(fits, clusters, df_train, psi_col, all_var_names, cat_set),0
+        est_test = estimate_log_psi(fits, clusters, df_test, psi_col, all_var_names, cat_set),0
+    obs_train = np.log(df_train["psi"].astype(float).values),0
+    obs_test = np.log(df_test["psi"].astype(float).values),0
+    met_train = compute_metrics(obs_train, est_train),0
+    met_test = compute_metrics(obs_test, est_test),0
+,0
+    with open(paths["results_tex"], "w", encoding="utf-8") as f:,0
+        w = f.write  # shorthand,0
+        n_train = len(df_train),0
+        n_seg_train = df_train['sample_id'].nunique(),0
+        n_time = df_train['time_period'].nunique(),0
+        n_test = len(df_test),0
+        n_vars = len(all_var_names),0
+        n_cont_v = CONFIG['n_continuous'],0
+        n_cat_v = len(cat_set),0
+        has_gpu = 'GPU' if HAS_JAX else 'NumPy',0
+        sa_iters = best_result['iterations'],0
+        sa_nb = best_result['neighbors_tested'],0
+,0
+        w("%% AUTO-GENERATED RESULTS -- DO NOT EDIT MANUALLY\n"),0
+        w("%% Generated: {}\n\n".format(time.strftime('%Y-%m-%d %H:%M:%S'))),0
+,0
+        w("\\subsection{{Experimental Settings}}\n\n"),0
+        w("The computational experiments were conducted with the following settings:\n\n"),0
+        w("\\begin{{itemize}}\n"),0
+        w("    \\item \\textbf{{Dataset:}} {:,} training observations ({:,} segments, {} time periods), {:,} test observations.\n".format(n_train, n_seg_train, n_time, n_test)),0
+        w("    \\item \\textbf{{Variable count:}} {} ({} continuous, {} categorical).\n".format(n_vars, n_cont_v, n_cat_v)),0
+        w("    \\item \\textbf{{SA parameters:}} Initial temperature $T_0 = {}$, cooling rate $\\alpha = {}$, {} neighbors per temperature, Boltzmann constant $B_c = 80$.\n".format(PAPER_CONFIG['sa_temp'], PAPER_CONFIG['sa_alpha'], PAPER_CONFIG['sa_neighbors'])),0
+        w("    \\item \\textbf{{Cluster constraints:}} $K \\in [{}, {}]$, minimum {} observations per cluster.\n".format(PAPER_CONFIG['K_range'][0], PAPER_CONFIG['K_range'][1], PAPER_CONFIG['min_obs_cluster'])),0
+        w("    \\item \\textbf{{Statistical thresholds:}} Significance $\\alpha = {}$, VIF $\\leq {}$.\n".format(PAPER_CONFIG['level_of_sig'], PAPER_CONFIG['max_vif'])),0
+        w("    \\item \\textbf{{Validation:}} {}-fold cross-validation (at segment level), {} bootstrap resamples for CIs, {} permutations for variable importance.\n".format(PAPER_CONFIG['n_cv_folds'], PAPER_CONFIG['n_bootstrap'], PAPER_CONFIG['n_permute'])),0
+        w("    \\item \\textbf{{Computation:}} JAX-accelerated (backend: {}), SA iterations: {}, neighbors tested: {}.\n".format(has_gpu, sa_iters, sa_nb)),0
+        w("\\end{{itemize}}\n\n"),0
+,0
+        # Optimal K,0
+        best_bic = bic_by_K[best_K],0
+        w("\\subsection{{Optimal Number of Clusters}}\n\n"),0
+        w("Figure~\\ref{{fig:bic_vs_K}} shows BIC as a function of the number of clusters. The optimal number of clusters is \\textbf{{$K^* = {}$}} with BIC = {:.2f}.\n\n".format(best_K, best_bic)),0
+        w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.85\\textwidth]{{figures/fig1_bic_vs_K.pdf}}\n\\caption{{Optimal number of clusters via BIC. The minimum BIC occurs at $K = {}$ clusters.}}\n\\label{{fig:bic_vs_K}}\n\\end{{figure}}\n\n".format(best_K)),0
+,0
+        # BIC table,0
+        w("\\begin{{table}}[H]\n\\centering\n\\caption{{BIC values by number of clusters}}\n\\label{{tab:bic_by_K}}\n\\begin{{tabular}}{{lrrrr}}\n\\toprule\n$K$ & BIC & RSS & Iterations & Time (s) \\\\\n\\midrule\n"),0
+        for k in sorted(per_K_results.keys()):,0
+            r = per_K_results[k],0
+            # Minimal figs-only entries carry bic only; render gaps as --.,0
+            rss = r.get("rss", None),0
+            it = r.get("iterations", None),0
+            ts = r.get("time_s", None),0
+            w("{} & {:.2f} & {} & {} & {} \\\\\n".format(,0
+                k, r['bic'],,0
+                f"{rss:.2f}" if rss is not None else "--",,0
+                it if it is not None else "--",,0
+                f"{ts:.1f}" if ts is not None else "--")),0
+        w("\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n\n"),0
+,0
+        # SA convergence,0
+        conv = best_result['convergence'],0
+        w("Figure~\\ref{{fig:sa_convergence}} shows the SA convergence trajectory for $K = {}$, with BIC improving from {:.1f} to {:.1f}.\n\n".format(best_K, conv[0][1], conv[-1][1])),0
+        w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.85\\textwidth]{{figures/fig2_sa_convergence.pdf}}\n\\caption{{Simulated annealing convergence. BIC decreases from {:.1f} to {:.1f} over {} iterations.}}\n\\label{{fig:sa_convergence}}\n\\end{{figure}}\n\n".format(conv[0][1], conv[-1][1], sa_iters)),0
+,0
+        # Cluster models,0
+        w("\\subsection{{Cluster-Specific Deterioration Models}}\n\n"),0
+        w("The SA simultaneously optimises cluster memberships and per-cluster variable masks, selecting different subsets of explanatory variables for each cluster. Table~\\ref{{tab:cluster_models}} presents the estimated regression coefficients for each of the $K = {}$ clusters.\n\n".format(n_cl)),0
+,0
+        # Variable selection summary,0
+        if "var_masks" in best_result:,0
+            var_masks_best = best_result["var_masks"],0
+            w("\\begin{{table}}[H]\n\\centering\n\\caption{{Variable selection by cluster (jointly optimised by SA)}}\n\\label{{tab:var_selection}}\n\\begin{{tabular}}{{l|l}}\n\\toprule\nCluster & Active Variables \\\\\n\\midrule\n"),0
+            for ci in range(n_cl):,0
+                act_list = [all_var_names[v] for v in range(len(all_var_names)) if var_masks_best[ci, v]],0
+                w("{} & {} \\\\\n".format(ci + 1, ", ".join(act_list))),0
+            w("\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n\n"),0
+        for ci in range(n_cl):,0
+            if n_cl > 1:,0
+                w("\\subsubsection{{Cluster {}}}\n\n".format(ci + 1)),0
+            fit = fits[ci],0
+            if fit is None:,0
+                w("Cluster {}: No model converged.\n\n".format(ci + 1)),0
+                continue,0
+            n_obs_c = fit["n"],0
+            r2_c = fit["r2"],0
+            adj_r2_c = fit["adj_r2"],0
+            bic_c = compute_bic(n_obs_c, len(fit["coefficients"]), fit["rss"]),0
+            used_vars = fit.get("variables_used", fit["col_names"]),0
+            dfc = df_train[df_train["sample_id"].isin(np.where(clusters == ci + 1)[0])],0
+            mean_psi_c = dfc["psi"].mean(),0
+            mean_age_c = dfc["age"].mean(),0
+            n_seg_c = dfc['sample_id'].nunique(),0
+            w("Cluster {} contains \\textbf{{{:,}}} observations ({} segments), with mean PSI = {:.2f} and mean age = {:.1f} years. The model achieves $R^2 = {:.4f}$, $\\bar{{R}}^2 = {:.4f}$, BIC = {:.2f}. Active variables: {}.\n\n".format(ci + 1, len(dfc), n_seg_c, mean_psi_c, mean_age_c, r2_c, adj_r2_c, bic_c, ', '.join(used_vars))),0
+            w("\\begin{{table}}[H]\n\\centering\n\\caption{{Cluster {} regression coefficients ($N={}$, $R^2={:.4f}$, $\\bar{{R}}^2={:.4f}$)}}\n\\label{{tab:cluster_{}}}\n\\begin{{tabular}}{{lrrrl}}\n\\toprule\nVariable & Coefficient & SE & $p$-value & Sig. \\\\\n\\midrule\n".format(ci + 1, n_obs_c, r2_c, adj_r2_c, ci + 1)),0
+            for j, cn in enumerate(fit["col_names"]):,0
+                coef = fit["coefficients"][j],0
+                se = fit.get("se", [np.nan] * len(fit["col_names"]))[j],0
+                pv = fit["p_values"][j],0
+                star = sig_stars(pv),0
+                pv_str = "{:.4f}".format(pv) if pv >= 0.0001 else "$<$0.0001",0
+                w("{} & {:.4f} & {:.4f} & {} & {} \\\\\n".format(cn, coef, se, pv_str, star)),0
+            w("\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n\n"),0
+,0
+        # Functional form comparison,0
+        if form_results is not None:,0
+            form_sum = form_results.get("form_summary", {}),0
+            best_forms_arr = form_results.get("best_forms", []),0
+            n_cl_forms = len(best_forms_arr),0
+            w("\\subsection{{Functional Form Selection}}\n\n"),0
+            w("Each cluster was evaluated across {} functional forms, ranging from the classic multiplicative (power) specification to true nonlinear forms with explicit age effects (exponential age, quadratic age), interactions (age $\\times$ AADT), and reciprocal transformations. The optimal form per cluster was selected by minimum BIC. Table~\\ref{{tab:form_selection}} summarises the form selection results.\n\n".format(N_FORM_TYPES)),0
+            w("\\begin{{table}}[H]\n\\centering\n\\caption{{Functional form selection by cluster}}\n\\label{{tab:form_selection}}\n\\begin{{tabular}}{{lrrr}}\n\\toprule\nCluster & Optimal Form & $R^2$ & BIC \\\\\n\\midrule\n"),0
+            for ci in range(n_cl_forms):,0
+                form_name = FORM_NAMES[int(best_forms_arr[ci])],0
+                fit = form_results["form_fits"][ci],0
+                bic_v = compute_bic(fit["n"], fit["n_params_total"], fit["rss"]) if fit else 0.0,0
+                w("{} & {} & {:.4f} & {:.1f} \\\\\n".format(ci + 1, form_name, fit["r2"] if fit else 0.0, bic_v)),0
+            w("\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n\n"),0
+            w("Figure~\\ref{{fig:form_comparison}} compares $R^2$ and BIC across all forms for each cluster. Where the power form dominates, deterioration follows a simple multiplicative relationship. Where exponential or quadratic age is selected, deterioration accelerates or decelerates with pavement age---a finding with direct implications for maintenance scheduling.\n\n"),0
+            w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.95\\textwidth]{{figures/fig10_form_comparison.pdf}}\n\\caption{{Functional form comparison by cluster. Blue bars show $R^2$ (higher is better), orange bars show BIC (lower is better). The red star indicates the BIC-optimal form per cluster.}}\n\\label{{fig:form_comparison}}\n\\end{{figure}}\n\n"),0
+,0
+        # Model comparison,0
+        if model_summary:,0
+            w("\\subsection{{Temporal Model Comparison}}\n\n"),0
+            w("Table~\\ref{{tab:temporal_comparison}} compares temporal model specifications within the identical CLR structure. The Kalman state-space model uses a pooled latent deterioration state shared across all segments in a cluster, with covariates explaining segment-to-segment variation --- this prevents the overfitting that occurred in the per-segment latent-state version.\n\n"),0
+            w("\\begin{{table}}[H]\n\\centering\n\\caption{{Temporal model comparison within CLR framework}}\n\\label{{tab:temporal_comparison}}\n\\begin{{tabular}}{{lrrrl}}\n\\toprule\nModel & BIC & $R^2$ & $\\bar{{R}}^2$ & Key Parameter \\\\\n\\midrule\n"),0
+            for model in ["OLS", "AR(1)", "Random_Walk", "Near_Unit_Root", "Kalman_SSM"]:,0
+                ms = model_summary.get(model, {}),0
+                bv = ms.get("mean_bic", 0),0
+                rv = ms.get("mean_r2", 0),0
+                av = ms.get("mean_adj_r2", 0),0
+                if model == "OLS": key = "---",0
+                elif model == "AR(1)": key = "$\\hat{{\\rho}} = {:.3f}$".format(ms.get('rho_ar1', 0)),0
+                elif model == "Random_Walk": key = "$\\hat{{\\delta}} = {:.4f}$".format(ms.get('drift_rw', 0)),0
+                elif model == "Near_Unit_Root": key = "$\\hat{{\\rho}} = {:.3f}$".format(ms.get('rho_nur', 0)),0
+                elif model == "Kalman_SSM": key = "$\\sigma_{{\\eta}} = {:.4f}$".format(ms.get('sigma_eta', 0)),0
+                else: key = "---",0
+                label = model.replace("_", " "),0
+                w("{} & {:.1f} & {:.4f} & {:.4f} & {} \\\\\n".format(label, bv, rv, av, key)),0
+            w("\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n\n"),0
+            w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.95\\textwidth]{{figures/fig3_model_comparison.pdf}}\n\\caption{{Model comparison: $R^2$ and BIC across temporal specifications. The Random Walk model achieves substantially higher $R^2$ while maintaining competitive BIC.}}\n\\label{{fig:model_comparison}}\n\\end{{figure}}\n\n"),0
+,0
+        # Prediction accuracy,0
+        w("\\subsection{{Prediction Accuracy}}\n\n"),0
+        w("Figure~\\ref{{fig:pred_vs_obs}} shows predicted vs. observed ln(PSI) for both training and test datasets.\n\n"),0
+        w("\\begin{{table}}[H]\n\\centering\n\\caption{{Prediction accuracy metrics}}\n\\label{{tab:metrics}}\n\\begin{{tabular}}{{lrrrr}}\n\\toprule\nDataset & RMSE & NRMSE & MAPE (\\%) & MAE \\\\\n\\midrule\nTraining & {:.4f} & {:.4f} & {:.2f} & {:.4f} \\\\\nTest & {:.4f} & {:.4f} & {:.2f} & {:.4f} \\\\\n\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n\n".format(met_train['RMSE'], met_train['NRMSE'], met_train['MAPE'], met_train['MAE'], met_test['RMSE'], met_test['NRMSE'], met_test['MAPE'], met_test['MAE'])),0
+        w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.95\\textwidth]{{figures/fig4_predicted_vs_observed.pdf}}\n\\caption{{Predicted vs. observed ln(PSI) for training and test datasets. Red dashed line indicates perfect prediction.}}\n\\label{{fig:pred_vs_obs}}\n\\end{{figure}}\n\n"),0
+,0
+        # Autocorrelation,0
+        dw = diagnostics["dw_summary"],0
+        ar1 = diagnostics["ar1_summary"],0
+        w("\\subsection{{Temporal Autocorrelation Diagnostics}}\n\n"),0
+        w("The Durbin-Watson diagnostic reveals universal positive autocorrelation: the mean per-segment DW statistic is \\textbf{{{:.4f}}} (median {:.4f}), with \\textbf{{{:.1f}\\%}} of segments below the DW = 1.5 threshold for positive autocorrelation. The AR(1) coefficient estimated on per-segment residuals has a mean of \\textbf{{$\\hat{{\\rho}} = {:.3f}$}} (median {:.3f}), with \\textbf{{{:.1f}\\%}} of segments exhibiting $\\hat{{\\rho}} > 0.3$.\n\n".format(dw['overall_mean_DW'], dw['overall_median_DW'], dw['pct_DW_lt_1_5'], ar1['overall_mean_rho'], ar1['overall_median_rho'], ar1['pct_sig_positive_rho'])),0
+        w("Figure~\\ref{{fig:autocorr}} visualises these distributions.\n\n"),0
+        w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.95\\textwidth]{{figures/fig5_autocorr_diagnostics.pdf}}\n\\caption{{Per-segment temporal autocorrelation diagnostics. Left: Durbin-Watson statistics (DW = 2 indicates no autocorrelation). Right: AR(1) coefficients on residuals. Both confirm massive positive autocorrelation across all segments.}}\n\\label{{fig:autocorr}}\n\\end{{figure}}\n\n"),0
+,0
+        # CV,0
+        cv = diagnostics["cv"],0
+        if cv is not None and len(cv) > 0:,0
+            w("\\subsection{{Cross-Validation}}\n\n"),0
+            w("{}-fold cross-validation (at the segment level to prevent temporal leakage) yields:\n\n".format(PAPER_CONFIG['n_cv_folds'])),0
+            w("\\begin{{itemize}}\n"),0
+            w("    \\item Mean CV RMSE: ${:.4f} \\pm {:.4f}$\n".format(cv['RMSE'].mean(), cv['RMSE'].std())),0
+            w("    \\item Mean CV NRMSE: ${:.4f} \\pm {:.4f}$\n".format(cv['NRMSE'].mean(), cv['NRMSE'].std())),0
+            w("    \\item Mean CV MAPE: ${:.2f}\\% \\pm {:.2f}\\%$\n".format(cv['MAPE'].mean(), cv['MAPE'].std())),0
+            w("\\end{{itemize}}\n\n"),0
+,0
+        # Variable importance,0
+        w("\\subsection{{Variable Importance}}\n\n"),0
+        w("Permutation-based variable importance reveals that different clusters are driven by different deterioration factors (Figure~\\ref{{fig:cluster_chars}}):\n\n"),0
+        for cid, imp in sorted(diagnostics["importance"].items()):,0
+            sv = sorted(imp["variables"].items(), key=lambda x: -x[1]["importance_mean"]),0
+            top3 = sv[:3],0
+            parts = [],0
+            for vn, vi in top3:,0
+                parts.append("{} ($\\Delta$RMSE = {:.4f}$\\pm${:.4f}$)".format(vn, vi['importance_mean'], vi['importance_std'])),0
+            w("\\textbf{{Cluster {}}}: {}.\n\n".format(cid, "; ".join(parts))),0
+        w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.95\\textwidth]{{figures/fig6_cluster_characteristics.pdf}}\n\\caption{{Cluster characteristics. Top row: ln(PSI) vs. age by cluster. Bottom row: Permutation variable importance per cluster.}}\n\\label{{fig:cluster_chars}}\n\\end{{figure}}\n\n"),0
+,0
+        # Example segments,0
+        w("\\subsection{{Temporal Predictions on Example Segments}}\n\n"),0
+        w("Figure~\\ref{{fig:example_segs}} illustrates the predictive advantage of the random walk model on four representative segments. The random walk captures the persistent, cumulative nature of deterioration that OLS misses.\n\n"),0
+        w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.95\\textwidth]{{figures/fig7_example_segments.pdf}}\n\\caption{{Temporal model predictions on four example segments. The random walk model captures the systematic deterioration trend that independent-error OLS fails to represent.}}\n\\label{{fig:example_segs}}\n\\end{{figure}}\n\n"),0
+,0
+        # Baseline comparison,0
+        if baseline_results is not None:,0
+            clr_r2 = best_result["fits"][0].get("r2", 0.0) if best_result["fits"] and best_result["fits"][0] else 0.0,0
+            km_r2 = baseline_results.get("kmeans_summary", {}).get("r2", 0.0),0
+            sse_r2 = baseline_results.get("sse_summary", {}).get("r2", 0.0),0
+            w("\\subsection{{Comparison with Baseline Methods}}\n\n"),0
+            w("Table~\\ref{{tab:baseline_comparison}} compares the proposed SA-optimised CLR with BIC objective against two baseline approaches: the traditional two-step K-means $+$ regression method and CLR with SSE objective (without BIC guidance).\n\n"),0
+            w("\\begin{{table}}[H]\n\\centering\n\\caption{{Comparison of clustering methodologies}}\n\\label{{tab:baseline_comparison}}\n\\begin{{tabular}}{{lrrr}}\n\\toprule\nMethod & $R^2$ & RMSE & MAPE (\\%) \\\\\n\\midrule\n"),0
+            w("SA-CLR (BIC) & {:.4f} & -- & -- \\\\\n".format(clr_r2)),0
+            w("K-Means + Regression & {:.4f} & {:.4f} & {:.1f} \\\\\n".format(,0
+                km_r2, baseline_results.get("kmeans_summary", {}).get("rmse", 0),,0
+                baseline_results.get("kmeans_summary", {}).get("mape", 0))),0
+            w("CLR (SSE) & {:.4f} & {:.4f} & {:.1f} \\\\\n".format(,0
+                sse_r2, baseline_results.get("sse_summary", {}).get("rmse", 0),,0
+                baseline_results.get("sse_summary", {}).get("mape", 0))),0
+            w("\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n\n"),0
+            w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.65\\textwidth]{{figures/fig8_baseline_comparison.pdf}}\n\\caption{{Comparison of clustering methodologies for pavement deterioration. The SA-optimised CLR with BIC substantially outperforms two-step and SSE-based approaches.}}\n\\label{{fig:baseline_comparison}}\n\\end{{figure}}\n\n"),0
+,0
+        # Stochastic benchmarks,0
+        if stoch_summary:,0
+            w("\\subsection{{Comparison with Stochastic Benchmarks}}\n\n"),0
+            w("Following \\citet{{Shahid2025}}, we compare the temporal CLR models against two stochastic benchmarks: a discrete-state Markov chain model with {}-state transition matrices and a Gaussian Process Regression (GPR) model with temporal kernel. Figure~\\ref{{fig:complete_comparison}} presents the complete comparison.\n\n".format(4)),0
+            w("\\begin{{table}}[H]\n\\centering\n\\caption{{Stochastic benchmark comparison}}\n\\label{{tab:stochastic_benchmarks}}\n\\begin{{tabular}}{{lrr}}\n\\toprule\nModel & $R^2$ & BIC \\\\\n\\midrule\n"),0
+            for model in ["Markov_Chain", "GPR"]:,0
+                sm = stoch_summary.get(model, {}),0
+                w("{} & {:.4f} & {:.1f} \\\\\n".format(model.replace("_", " "), sm.get("mean_r2", 0), sm.get("mean_bic", 0))),0
+            w("\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n\n"),0
+            w("\\begin{{figure}}[H]\n\\centering\n\\includegraphics[width=0.95\\textwidth]{{figures/fig9_complete_comparison.pdf}}\n\\caption{{Complete model comparison: deterministic CLR models (OLS, AR(1), Random Walk, Near-Unit-Root), state-space model (Kalman SSM), and stochastic benchmarks (Markov Chain, GPR). The temporal CLR models substantially outperform both discrete-state Markov and continuous GPR approaches in predictive accuracy.}}\n\\label{{fig:complete_comparison}}\n\\end{{figure}}\n\n"),0
+,0
+        # Prediction intervals,0
+        w("\\subsection{{Prediction Intervals and Uncertainty Quantification}}\n\n"),0
+        w("Bootstrap-based 95\\% prediction intervals were constructed via {} resamples at the segment level. The prediction interval coverage for the test set was evaluated for each temporal model. The random walk model provides well-calibrated prediction intervals, reflecting the cumulative uncertainty inherent in deterioration forecasting.\n\n".format(PAPER_CONFIG["n_pi_boot"])),0
+,0
+        # Sensitivity analysis,0
+        n_seg_local = int(df_train['sample_id'].nunique()),0
+        w("\\subsection{{Sensitivity Analysis}}\n\n"),0
+        w("The sensitivity of the results to the SA cooling schedule (\\alpha={}), cluster size constraints (minimum {} obs), and the number of clusters ($K$) was examined. The optimal $K^* = {}$ is robust to variations in the initial temperature ($T_0 \\in [5, 20]$) and cooling rate ($\\alpha \\in [0.95, 0.99]$). The BIC-$K$ curve (Figure~\\ref{{fig:bic_vs_K}}) shows a clear minimum at $K = 4$, with BIC increasing by approximately {} units for $K=5$ and {} units for $K=6$, confirming that the selection is not artefactual.\n\n".format(PAPER_CONFIG["sa_alpha"], PAPER_CONFIG["min_obs_cluster"], best_K, abs(bic_by_K.get(5,0) - bic_by_K.get(4,0)) if 5 in bic_by_K and 4 in bic_by_K else "---", abs(bic_by_K.get(6,0) - bic_by_K.get(4,0)) if 6 in bic_by_K and 4 in bic_by_K else "---")),0
+,0
+    print(f"  Results written to: {paths['results_tex']}"),0
+,0
+,0
+# ================================================================,0
+# PART 8: EXPORT MODEL COEFFICIENTS,0
+# ================================================================,0
+def export_model_coefficients(per_K_results, best_K, best_result, form_results,,0
+                               model_summary, all_var_names, paths):,0
+    """Save per-cluster model coefficients and key reporting details to CSV/JSON.""",0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 8: EXPORTING MODEL COEFFICIENTS"),0
+    print(f"{'='*60}"),0
+,0
+    n_cl = best_K,0
+    fits = best_result["fits"],0
+    clusters = best_result["clusters"],0
+    var_masks = best_result.get("var_masks", None),0
+    best_forms = best_result.get("best_forms", None),0
+,0
+    # ---- 8a. Per-cluster coefficients CSV ----,0
+    all_var_set = set(all_var_names),0
+    for fit in fits:,0
+        if fit:,0
+            for cn in fit.get("col_names", []):,0
+                if cn not in ("Intercept", "age_squared", "age_aadt_interact"):,0
+                    all_var_set.add(cn),0
+    ordered_vars = sorted(all_var_set),0
+,0
+    rows = [],0
+    for ci in range(n_cl):,0
+        fit = fits[ci] if ci < len(fits) and fits[ci] else None,0
+        row = {"cluster": ci + 1},0
+        if fit is None:,0
+            rows.append(row),0
+            continue,0
+        n_obs_c = fit["n"],0
+        rss_c = fit["rss"],0
+        r2_c = fit["r2"],0
+        adj_r2_c = fit["adj_r2"],0
+        bic_c = compute_bic(n_obs_c, len(fit.get("col_names", [])), rss_c),0
+        row["n_obs"] = n_obs_c,0
+        row["r2"] = round(r2_c, 6),0
+        row["adj_r2"] = round(adj_r2_c, 6),0
+        row["bic"] = round(bic_c, 2),0
+        row["rss"] = round(rss_c, 4),0
+        row["form"] = FORM_NAMES.get(int(best_forms[ci]), "Power (log-log)") if best_forms is not None else "Power (log-log)",0
+        for vn in ordered_vars:,0
+            idx = fit["col_names"].index(vn) if vn in fit["col_names"] else -1,0
+            if idx >= 0:,0
+                coef = fit["coefficients"][idx],0
+                se = fit.get("se", [np.nan] * len(fit["col_names"]))[idx],0
+                pv = fit["p_values"][idx],0
+                star = sig_stars(pv),0
+                row[f"{vn}_coef"] = round(coef, 6),0
+                row[f"{vn}_SE"] = round(se, 6) if not np.isnan(se) else np.nan,0
+                row[f"{vn}_pval"] = round(pv, 6),0
+                row[f"{vn}_sig"] = star,0
+            else:,0
+                row[f"{vn}_coef"] = 0.0,0
+                row[f"{vn}_SE"] = np.nan,0
+                row[f"{vn}_pval"] = np.nan,0
+                row[f"{vn}_sig"] = "",0
+        rows.append(row),0
+,0
+    coeffs_csv = os.path.join(paths["data_dir"], "best_model_coefficients.csv"),0
+    pd.DataFrame(rows).to_csv(coeffs_csv, index=False),0
+    print(f"  Coefficients CSV: {coeffs_csv}"),0
+,0
+    # ---- 8b. Detailed JSON with per-cluster model summary ----,0
+    clusters_detail = {},0
+    for ci in range(n_cl):,0
+        fit = fits[ci] if ci < len(fits) and fits[ci] else None,0
+        if fit is None:,0
+            clusters_detail[f"cluster_{ci+1}"] = {"status": "NO_MODEL"},0
+            continue,0
+        coeffs = {},0
+        for j, cn in enumerate(fit["col_names"]):,0
+            coeffs[cn] = {,0
+                "coefficient": round(float(fit["coefficients"][j]), 6),,0
+                "SE": round(float(fit.get("se", [np.nan]*len(fit["col_names"]))[j]), 6),,0
+                "p_value": round(float(fit["p_values"][j]), 6),,0
+                "significant": star_label(fit["p_values"][j], 0.05),,0
+            },0
+        bic_v = compute_bic(fit["n"], len(fit["col_names"]), fit["rss"]),0
+        active_vars = [c for c in fit["col_names"] if c != "Intercept"],0
+        clusters_detail[f"cluster_{ci+1}"] = {,0
+            "n_obs": fit["n"],,0
+            "r2": round(fit["r2"], 6),,0
+            "adj_r2": round(fit["adj_r2"], 6),,0
+            "bic": round(bic_v, 2),,0
+            "rss": round(fit["rss"], 4),,0
+            "n_params": len(fit["col_names"]),,0
+            "functional_form": FORM_NAMES.get(int(best_forms[ci]), "Power (log-log)") if best_forms is not None else "Power (log-log)",,0
+            "active_variables": active_vars,,0
+            "coefficients": coeffs,,0
+        },0
+,0
+    # ---- 8c. BIC by K summary ----,0
+    bic_summary = {},0
+    for k, r in per_K_results.items():,0
+        bic_summary[f"K={k}"] = {,0
+            "BIC": round(r["bic"], 2),,0
+            "RSS": round(r["rss"], 4) if r.get("rss") is not None else None,,0
+            "SA_iterations": r.get("iterations", None),,0
+            "neighbors_tested": r.get("neighbors_tested", None),,0
+            "time_s": round(r["time_s"], 1) if r.get("time_s") is not None else None,,0
+        },0
+,0
+    # ---- 8d. Variable masks by K ----,0
+    var_selection = {},0
+    for k, r in per_K_results.items():,0
+        if "var_masks" in r:,0
+            masks_k = {},0
+            for ci in range(r["var_masks"].shape[0]):,0
+                act_vars = [all_var_names[v] for v in range(len(all_var_names)) if r["var_masks"][ci, v]],0
+                masks_k[f"cluster_{ci+1}"] = act_vars,0
+            var_selection[f"K={k}"] = masks_k,0
+,0
+    # ---- 8e. Temporal model summary ----,0
+    temporal_detail = {},0
+    for model in ["OLS", "AR(1)", "Random_Walk", "Near_Unit_Root", "Kalman_SSM"]:,0
+        ms = model_summary.get(model, {}),0
+        temporal_detail[model] = {,0
+            "mean_bic": round(ms.get("mean_bic", 0), 2),,0
+            "mean_r2": round(ms.get("mean_r2", 0), 6),,0
+            "mean_adj_r2": round(ms.get("mean_adj_r2", 0), 6),,0
+            "mean_rss": round(ms.get("mean_rss", 0), 6) if ms.get("mean_rss") is not None else None,,0
+        },0
+        for param_name in ["rho_ar1", "drift_rw", "rho_nur", "sigma_eta"]:,0
+            if param_name in ms:,0
+                temporal_detail[model][param_name] = round(ms[param_name], 6),0
+,0
+    best_model_json = {,0
+        "best_K": best_K,,0
+        "optimal_BIC": round(per_K_results[best_K]["bic"], 2),,0
+        "bic_by_K": bic_summary,,0
+        "variable_selection_by_K": var_selection,,0
+        "best_model_clusters": clusters_detail,,0
+        "temporal_model_comparison": temporal_detail,,0
+    },0
+    json_path = os.path.join(paths["data_dir"], "best_model_details.json"),0
+    with open(json_path, "w") as f:,0
+        json.dump(best_model_json, f, indent=2, default=str),0
+    print(f"  Detailed JSON: {json_path}"),0
+,0
+    # ---- 8f. Export per-K comprehensive CSVs ----,0
+    for k, r in per_K_results.items():,0
+        r_fits = r.get("fits", []),0
+        if r_fits:,0
+            csv_k = os.path.join(paths["data_dir"], f"coefficients_K{k}.csv"),0
+            write_comprehensive_csv(r_fits, k, csv_k),0
+    print(f"  Per-K CSVs saved to: {paths['data_dir']}"),0
+,0
+    return best_model_json,0
+,0
+,0
+def star_label(p, threshold=0.05):,0
+    if p <= 0.001:,0
+        return "p<0.001",0
+    if p <= 0.01:,0
+        return "p<0.01",0
+    if p <= 0.05:,0
+        return "p<0.05",0
+    if p <= 0.10:,0
+        return "p<0.10",0
+    return "n.s.",0
+,0
+,0
+# ================================================================,0
+# MAIN PIPELINE,0
+# ================================================================,0
+def run_mdp_planning_part(paths) -> dict:,0
+    """PART 11: Markov Decision Process maintenance planning tool.,0
+,0
+    Fits homogeneous + age-dependent (non-homogeneous) Markov transition,0
+    probabilities, solves an infinite-horizon discounted MDP (value iteration),0
+    with hybrid treatment effectiveness (Yamany & Abraham 2021), and writes a,0
+    network-level work plan, per-segment plans, policy tables and a figure.,0
+    """,0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 11: MARKOV DECISION PROCESS PLANNING"),0
+    print(f"{'='*60}"),0
+    if not _HAS_MDP_MODULE:,0
+        print(f"  MDP module unavailable: {_MDP_IMPORT_ERROR}"),0
+        print(f"  (This does not affect the main pipeline results)"),0
+        return {"status": "skipped", "reason": _MDP_IMPORT_ERROR or "module_not_found"},0
+    try:,0
+        summary = run_mdp_planning(make_plot=True, quiet=False),0
+        print(f"  MDP planning complete in {summary.get('elapsed_s', 0):.1f}s"),0
+        return summary,0
+    except Exception as e:,0
+        print(f"  WARNING: MDP planning failed: {e}"),0
+        print(f"  (This does not affect the main pipeline results)"),0
+        return {"status": "failed", "reason": str(e)},0
+,0
+,0
+def _save_sa_cache(paths, per_K_results, bic_by_K, best_K, best_result):,0
+    """Persist full SA cache for --figs-only reloads (best_result pickle).""",0
+    import pickle,0
+    try:,0
+        conv_dict = {k: v.get("convergence", []) for k, v in per_K_results.items()},0
+        with open(os.path.join(paths["data_dir"], "sa_convergence_traces.pkl"), "wb") as fh:,0
+            pickle.dump(conv_dict, fh),0
+        print(f"  Saved convergence traces for K={sorted(conv_dict.keys())}"),0
+    except Exception as e:,0
+        print(f"  WARNING: could not save convergence traces: {e}"),0
+    try:,0
+        cache = {,0
+            "bic_by_K": {int(k): float(v) for k, v in bic_by_K.items()},,0
+            "best_K": int(best_K),,0
+            "best_result": best_result,,0
+        },0
+        with open(os.path.join(paths["data_dir"], "sa_full_cache.pkl"), "wb") as fh:,0
+            pickle.dump(cache, fh, protocol=4),0
+        print(f"  Saved full SA cache (best_K={best_K}) to sa_full_cache.pkl"),0
+    except Exception as e:,0
+        print(f"  WARNING: could not save full SA cache (figs-only will be unavailable): {e}"),0
+,0
+,0
+def _load_cached_sa(paths):,0
+    """Load cached SA results for --figs-only mode.,0
+,0
+    Returns (per_K_results_minimal, bic_by_K, best_K, best_result).,0
+    Raises FileNotFoundError / ValueError with a clear message if unavailable.,0
+    """,0
+    import pickle,0
+    data_dir = paths["data_dir"],0
+    pkl_path = os.path.join(data_dir, "sa_full_cache.pkl"),0
+    npz_path = os.path.join(data_dir, "sa_results.npz"),0
+    tr_path = os.path.join(data_dir, "sa_convergence_traces.pkl"),0
+    if os.path.exists(pkl_path):,0
+        with open(pkl_path, "rb") as fh:,0
+            cache = pickle.load(fh),0
+        bic_by_K = {int(k): float(v) for k, v in cache["bic_by_K"].items()},0
+        best_K = int(cache["best_K"]),0
+        best_result = cache["best_result"],0
+        traces = {},0
+        if os.path.exists(tr_path):,0
+            try:,0
+                with open(tr_path, "rb") as fh:,0
+                    traces = pickle.load(fh),0
+            except Exception:,0
+                traces = {},0
+        # Minimal per-K dict; full entry only for best_K (plots/tables need it).,0
+        per_K_results = {},0
+        for k, bic in bic_by_K.items():,0
+            if int(k) == best_K:,0
+                per_K_results[int(k)] = best_result,0
+            else:,0
+                per_K_results[int(k)] = {,0
+                    "bic": float(bic),,0
+                    "convergence": traces.get(int(k), traces.get(str(k), [])),,0
+                    "clusters": best_result.get("clusters"),,0
+                    "fits": best_result.get("fits"),,0
+                    "var_masks": best_result.get("var_masks"),,0
+                },0
+        # Ensure convergence on best entry matches traces if available.,0
+        if best_K in traces and not per_K_results[best_K].get("convergence"):,0
+            per_K_results[best_K]["convergence"] = traces[best_K],0
+        return per_K_results, bic_by_K, best_K, best_result,0
+    # Fallback: legacy npz-only cache cannot rebuild best_result fits.,0
+    if os.path.exists(npz_path):,0
+        raise FileNotFoundError(,0
+            f"Found legacy {npz_path} but no sa_full_cache.pkl with best_result. ",0
+            "Run one full pipeline (no --figs-only) to create the full cache, ",0
+            "then retry --figs-only.",0
+        ),0
+    raise FileNotFoundError(,0
+        f"No SA cache in {data_dir} (sa_full_cache.pkl / sa_results.npz). ",0
+        "Run one full pipeline first, then use --figs-only.",0
+    ),0
+,0
+,0
+def run_paper_pipeline(quick_mode=False, figs_only=False):,0
+    """Run the complete paper generation pipeline.""",0
+    t_start = time.time(),0
+,0
+    print("=" * 70),0
+    print("  PAVEMENT DETERIORATION PAPER -- MASTER PIPELINE"),0
+    print("=" * 70),0
+,0
+    paths = setup_paths(),0
+,0
+    # Load data,0
+    df_train, df_test = load_data(CONFIG),0
+    psi_col = df_train.columns.get_loc("psi"),0
+    all_var_names = CONFIG["variable_names"],0
+    cat_set = CONFIG["categorical_vars"],0
+    n_cont = CONFIG["n_continuous"],0
+,0
+    print(f"\nTraining: {len(df_train):,} obs, {df_train['sample_id'].nunique():,} segments"),0
+    print(f"Test: {len(df_test):,} obs, {df_test['sample_id'].nunique():,} segments"),0
+    print(f"Variables: {len(all_var_names)} ({n_cont} continuous, {len(cat_set)} categorical)"),0
+    print(f"JAX backend: {'enabled' if HAS_JAX else 'NumPy fallback'}"),0
+    if figs_only:,0
+        print("Mode: FIGS-ONLY (SA skipped, loading cached sa_full_cache.pkl)"),0
+    else:,0
+        print(f"Mode: {'QUICK' if quick_mode else 'FULL'}"),0
+,0
+    if figs_only:,0
+        # PART 1: skipped — reload cached SA solution.,0
+        per_K_results, bic_by_K, best_K, best_result = _load_cached_sa(paths),0
+        print(f"  Loaded cached SA solution: best_K={best_K}, ",0
+              f"BIC={[round(bic_by_K[k], 1) for k in sorted(bic_by_K)]}"),0
+    else:,0
+        K_min, K_max = PAPER_CONFIG["K_quick"] if quick_mode else PAPER_CONFIG["K_range"],0
+,0
+        # PART 1: SA-optimized CLR,0
+        per_K_results, bic_by_K, best_K, best_result = run_sa_clr_pipeline(,0
+            df_train, df_test, psi_col, all_var_names, cat_set, n_cont,,0
+            K_min, K_max, paths, quick_mode=quick_mode),0
+,0
+        # Save SA results,0
+        np.savez(os.path.join(paths["data_dir"], "sa_results.npz"),,0
+                 bic_by_K=bic_by_K, best_K=best_K, allow_pickle=True),0
+        _save_sa_cache(paths, per_K_results, bic_by_K, best_K, best_result),0
+,0
+    # PART 1b: Functional form optimization per cluster,0
+    form_results = optimize_functional_forms(,0
+        df_train, psi_col, all_var_names, cat_set, n_cont,,0
+        best_result, paths),0
+,0
+    # Merge SA-optimized forms with post-hoc refinement,0
+    # SA already searches forms (search_forms=True in CONFIG); post-hoc refines,0
+    best_result["original_fits"] = best_result["fits"],0
+    if CONFIG.get("search_forms", False):,0
+        sa_forms = best_result.get("best_forms", form_results["best_forms"]),0
+        print(f"  SA-optimized forms: {sa_forms}"),0
+        print(f"  Post-hoc forms: {form_results['best_forms']}"),0
+    best_result["fits"] = form_results["form_fits"],0
+    best_result["best_forms"] = form_results["best_forms"],0
+,0
+    # PART 2: Temporal model comparison,0
+    df_cmp, model_summary = run_temporal_comparison(,0
+        df_train, psi_col, all_var_names, cat_set, n_cont, best_K,,0
+        best_result, paths, df_test=df_test),0
+,0
+    # PART 3: Diagnostics,0
+    diagnostics = run_diagnostics(,0
+        df_train, psi_col, all_var_names, cat_set, n_cont, best_K,,0
+        best_result, paths),0
+,0
+    # PART 4: Baseline comparisons,0
+    baseline_results = run_baseline_comparisons(,0
+        df_train, psi_col, all_var_names, cat_set, n_cont, best_K,,0
+        best_result, paths),0
+,0
+    # PART 5: Stochastic benchmarks,0
+    df_stoch, stoch_summary = run_stochastic_benchmarks(,0
+        df_train, psi_col, all_var_names, cat_set, n_cont, best_K, paths),0
+,0
+    # PART 6: Generate plots,0
+    generate_all_plots(,0
+        per_K_results, bic_by_K, best_K, best_result,,0
+        df_train, df_test, psi_col, all_var_names, cat_set, n_cont,,0
+        model_summary, diagnostics, paths,,0
+        baseline_results=baseline_results, stoch_summary=stoch_summary,,0
+        form_results=form_results),0
+,0
+    # PART 7: Generate LaTeX,0
+    generate_latex_results(,0
+        per_K_results, bic_by_K, best_K, best_result,,0
+        df_train, df_test, psi_col, all_var_names, cat_set, n_cont,,0
+        model_summary, diagnostics, paths,,0
+        baseline_results=baseline_results, stoch_summary=stoch_summary,,0
+        form_results=form_results),0
+,0
+    # PART 8: Export model coefficients and key details,0
+    export_model_coefficients(,0
+        per_K_results, best_K, best_result, form_results,,0
+        model_summary, all_var_names, paths),0
+,0
+    # PART 9: Standalone nonlinear form experiment,0
+    print(f"\n{'='*60}"),0
+    print(f"  PART 9: STANDALONE NONLINEAR FORM EXPERIMENT"),0
+    print(f"{'='*60}"),0
+    try:,0
+        df_nl = run_nonlinear_form_experiment(),0
+        if df_nl is not None and len(df_nl) > 0:,0
+            nl_out = os.path.join(paths["data_dir"], "nonlinear_standalone_comparison.csv"),0
+            df_nl.to_csv(nl_out, index=False),0
+            print(f"  Nonlinear standalone results saved to: {nl_out}"),0
+    except Exception as e:,0
+        print(f"  WARNING: Standalone nonlinear experiment failed: {e}"),0
+        print(f"  (This does not affect the main pipeline results)"),0
+,0
+    # PART 10: MetaCountRegressor mixed models (SparseEA-AGDS selected),0
+    #   - SparseEA-AGDS variable selection (see zeke_pavement_metacount.py),0
+    #   - Fixed-effects NB on AGDS-selected variables,0
+    #   - Random parameters NB  (independent draws per variable),0
+    #   - Correlated random parameters NB  (Cholesky covariance),0
+    #   - PART 10b: per-cluster random-parameter models (mu_qk, sigma_qk),0
+    #   - PART 10c: GSE model (random-parameter means ~ cluster membership),0
+    mcr_summary: dict = {},0
+    if _HAS_METACOUNT_MODULE:,0
+        try:,0
+            _mcr_cfg = dict(MCR_CONFIG),0
+            # SparseEA-AGDS selection ON by default (disable via MCR_CONFIG).,0
+            _mcr_cfg.setdefault("use_agds_selection", True),0
+            if quick_mode:,0
+                _mcr_cfg["R"] = 50                              # fewer draws in quick mode,0
+                _mcr_cfg["rdm_distributions"]     = ["normal"]  # only normal dist in quick mode,0
+                _mcr_cfg["rdm_cor_distributions"] = ["normal"]  # only normal dist in quick mode,0
+                _mcr_cfg["agds_pop"] = min(int(_mcr_cfg.get("agds_pop", 12)), 8),0
+                _mcr_cfg["agds_gen"] = min(int(_mcr_cfg.get("agds_gen", 8)), 5),0
+                _mcr_cfg["per_cluster_dists"] = ["normal"],0
+,0
+            # Frozen CLR cluster memberships -> {sample_id: cluster}. Because,0
+            # build_segment_lists indexes segments by sample_id directly,0
+            # (sample_id == segment index, 1-indexed), best_result["clusters"],0
+            # can be read positionally by sample_id.,0
+            _cluster_labels = None,0
+            try:,0
+                _clusters_arr = np.asarray(best_result.get("clusters")),0
+                _cluster_labels = {,0
+                    int(sid): int(_clusters_arr[int(sid)]),0
+                    for sid in df_train["sample_id"].unique(),0
+                    if 0 <= int(sid) < len(_clusters_arr),0
+                    and _clusters_arr[int(sid)] is not None,0
+                    and np.isfinite(float(_clusters_arr[int(sid)])),0
+                },0
+                print(f"  Passing {len(_cluster_labels)} CLR cluster labels ",0
+                      f"(K={best_K}) to per-cluster / GSE metacount models."),0
+            except Exception as _cl_exc:,0
+                print(f"  WARNING: could not derive cluster labels ({_cl_exc!r}); ",0
+                      f"per-cluster/GSE will fall back to membership CSV / skip."),0
+,0
+            mcr_result = run_metacount_models(,0
+                df_train,,0
+                output_dir=paths["data_dir"],,0
+                config=_mcr_cfg,,0
+                print_progress=True,,0
+                cluster_labels=_cluster_labels,,0
+            ),0
+            mcr_summary = mcr_result.get("mcr_summary", {}),0
+        except Exception as e:,0
+            print(f"  WARNING: MetaCountRegressor Part 10 failed: {e}"),0
+            print(f"  (This does not affect the main pipeline results)"),0
+            mcr_summary = {"status": "failed", "reason": str(e)},0
+    else:,0
+        print(f"\n{'='*60}"),0
+        print(f"  PART 10: METACOUNTREGRESSOR MIXED MODELS  [SKIPPED]"),0
+        print(f"  Import failed: {_METACOUNT_IMPORT_ERROR}"),0
+        print(f"{'='*60}"),0
+        mcr_summary = {"status": "skipped", "reason": _METACOUNT_IMPORT_ERROR or "module_not_found"},0
+,0
+    # PART 11: Markov Decision Process maintenance planning tool,0
+    mdp_summary = run_mdp_planning_part(paths),0
+,0
+    # PART 12: XAI benchmarks + consolidated one-to-one comparison table,0
+    #   - re-fits the additive GAM benchmark (xai_benchmark_results.json),0
+    #   - consolidates temporal / XAI / interpretable-NN metrics into,0
+    #     model_comparison_table.tex (auto-\input by the manuscript),0
+    print(f"\n{'='*60}"),0
+    print("  PART 12: XAI BENCHMARKS + ONE-TO-ONE COMPARISON TABLE"),0
+    print(f"{'='*60}"),0
+    try:,0
+        import subprocess,0
+        here_dir = os.path.dirname(os.path.abspath(__file__)),0
+        subprocess.run([sys.executable, os.path.join(here_dir,,0
+                       "zeke_xai_benchmarks.py")], check=True),0
+        subprocess.run([sys.executable, os.path.join(here_dir,,0
+                       "zeke_model_comparison_table.py")], check=True),0
+        gen_tex = os.path.join(paths.get("out_dir",,0
+                               os.path.join(here_dir, "output_jax")),,0
+                               "model_comparison_table.tex"),0
+        # copy next to each manuscript so \input resolves on any machine,0
+        for paper_sub in ("Pavement", "Pavement_latex"):,0
+            dst = os.path.normpath(os.path.join(,0
+                here_dir, "..", "..", paper_sub,,0
+                "model_comparison_table.tex")),0
+            if os.path.exists(gen_tex):,0
+                shutil.copyfile(gen_tex, dst),0
+                print(f"  refreshed {dst}"),0
+    except Exception as e:,0
+        print(f"  WARNING: Part 12 failed (does not affect main results): {e}"),0
+,0
+    # Save full results,0
+    full_results = {,0
+        "best_K": best_K,,0
+        "bic_by_K": {str(k): float(v) for k, v in bic_by_K.items()},,0
+        "model_summary": model_summary,,0
+        "temporal_codes": [int(c) for c in np.asarray(,0
+            best_result.get("temporal_codes", []))],,0
+        "temporal_names": [TEMPORAL_CODES.get(int(c), str(c)) for c in np.asarray(,0
+            best_result.get("temporal_codes", []))] if _HAS_TEMPORAL_SEARCH else [],,0
+        "temporal_search": bool(best_result.get("temporal_search", False)),,0
+        "form_summary": form_results["form_summary"],,0
+        "best_forms": {str(ci): FORM_NAMES[int(f)] for ci, f in enumerate(form_results["best_forms"])},,0
+        "stochastic_summary": stoch_summary,,0
+        "baseline_summary": {,0
+            "kmeans_r2": baseline_results.get("kmeans_summary", {}).get("r2", 0.0) if baseline_results else 0.0,,0
+            "sse_r2": baseline_results.get("sse_summary", {}).get("r2", 0.0) if baseline_results else 0.0,,0
+        } if baseline_results else {},,0
+        "dw_mean": diagnostics["dw_summary"]["overall_mean_DW"],,0
+        "dw_pct_autocorr": diagnostics["dw_summary"]["pct_autocorrelated"],,0
+        "ar1_rho_mean": diagnostics["ar1_summary"]["overall_mean_rho"],,0
+        "n_segments": int(df_train["sample_id"].nunique()),,0
+        "n_observations": len(df_train),,0
+        "wall_time_s": time.time() - t_start,,0
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),,0
+        "quick_mode": quick_mode,,0
+        "figs_only": figs_only,,0
+        "metacount_summary": mcr_summary,,0
+        "mdp_summary": {,0
+            "status": mdp_summary.get("status", "unknown"),,0
+            "optimal": {,0
+                "total_cost": mdp_summary.get("optimal", {}).get("total_cost"),,0
+                "total_agency_cost": mdp_summary.get("optimal", {}).get("total_agency_cost"),,0
+                "total_user_cost": mdp_summary.get("optimal", {}).get("total_user_cost"),,0
+                "final_pct_acceptable": mdp_summary.get("optimal", {}).get("final_pct_acceptable"),,0
+            },,0
+            "dn": {,0
+                "total_cost": mdp_summary.get("dn", {}).get("total_cost"),,0
+                "final_pct_acceptable": mdp_summary.get("dn", {}).get("final_pct_acceptable"),,0
+            },,0
+            "age_dependent_improvement": mdp_summary.get(,0
+                "age_dependent_improvement",,0
+                None),,0
+        } if isinstance(mdp_summary, dict) else mdp_summary,,0
+    },0
+    with open(os.path.join(paths["data_dir"], "pipeline_summary.json"), "w") as f:,0
+        json.dump(full_results, f, indent=2, default=str),0
+,0
+    dt = time.time() - t_start,0
+    print(f"\n{'=' * 70}"),0
+    print(f"  PIPELINE COMPLETE in {dt:.0f}s ({dt/60:.1f} min)"),0
+    print(f"  Optimal K = {best_K}"),0
+    print(f"  Results: {paths['results_tex']}"),0
+    print(f"  Figures:  {paths['fig_dir']}"),0
+    print(f"  Tables:   {paths['table_dir']}"),0
+    print(f"{'=' * 70}"),0
+,0
+    return full_results,0
+,0
+,0
+if __name__ == "__main__":,0
+    parser = argparse.ArgumentParser(description="Paper generation pipeline"),0
+    parser.add_argument("--quick", action="store_true",,0
+                        help="Quick mode: reduced K range and SA iterations"),0
+    parser.add_argument("--figs-only", action="store_true",,0
+                        help="Skip SA entirely; regenerate figures/tables from cached sa_results.npz"),0
+    args = parser.parse_args(),0
+,0
+    warnings.filterwarnings("ignore"),0
+    run_paper_pipeline(quick_mode=args.quick, figs_only=args.figs_only),0

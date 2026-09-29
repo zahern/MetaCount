@@ -4926,17 +4926,44 @@ class StructureEvaluator:
         if key in self.cache:
             return self.cache[key]
 
+        # Every 1e12 return below is indistinguishable to the caller, which
+        # is how a broken probe scaffold reported a confident "grouped loses"
+        # for every term having fitted nothing. Count the reason for each.
+        _fail = np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+
+        def _note(reason, **kw):
+            if not hasattr(self, "_reject_counts"):
+                self._reject_counts = {}
+            d = self._reject_counts.setdefault(reason, {"count": 0})
+            d["count"] += 1
+            for k, v in kw.items():
+                d[k] = v
+            if not hasattr(self, "_last_rejection"):
+                self._last_rejection = []
+            self._last_rejection.append(
+                {"reason": reason, **kw,
+                 "variable": self.vars[int(kw["var_index"])]
+                 if "var_index" in kw else None}
+                if "var_index" in kw else {"reason": reason, **kw})
+            if len(self._last_rejection) > 50:
+                self._last_rejection = self._last_rejection[-50:]
+            return _fail
+
         spec_dict = self.build_spec(decision)
         if spec_dict is None:
-            self.cache[key] = np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
-            return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
+            return _note("build_spec_rejected",
+                         detail=str(getattr(self, "last_rejection_reason",
+                                            ""))[:200])
         sig = self.structural_signature(spec_dict)
 
         if sig in self._failed_structures:
-            return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
+            return _note("known_failed_structure")
 
         if sig in self.structure_cache:
-            return np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
+            # structure_cache holds one entry and is cleared on every success,
+            # so this only fires for a signature seen within the current
+            # step -- a repeat request for the same structure.
+            return _note("duplicate_structure_signature")
         
         self.structure_cache.clear()
         self.structure_cache.add(sig)
@@ -4984,14 +5011,17 @@ class StructureEvaluator:
 
         except Exception as e:
             print("Fitness error:", e)
-            # Only count newly-activated variables (role 0→non-zero
-            # vs the last successful fit) as culprits of this failure.
+            # Blame any variable whose ROLE changed, not only one that went
+            # 0 -> non-zero. A variable that fails specifically as Grouped
+            # (role 1 -> 4) was already active, so the old 0->non-zero test
+            # scored it innocent: the failure was recorded against nobody
+            # and the SA simply saw an unexplained 1e12. That is how a whole
+            # structural axis (grouped RP) stayed untested across two runs.
             if (sig is not None and self._last_successful_decision is not None
                     and len(decision) >= len(self.vars)
                     and len(self._last_successful_decision) >= len(self.vars)):
                 for i in range(len(self.vars)):
-                    if (int(self._last_successful_decision[i]) == 0
-                            and int(decision[i]) != 0):
+                    if int(self._last_successful_decision[i]) != int(decision[i]):
                         var = self.vars[i]
                         if not hasattr(self, "_variable_failure_counts"):
                             self._variable_failure_counts = {}
@@ -5019,9 +5049,21 @@ class StructureEvaluator:
                 self._failed_structures.add(sig)
                 if len(self._failed_structures) > 2000:
                     self._failed_structures.clear()
-            fail_val = np.array([1e12, 1e12]) if self.mode=="multi" else 1e12
-            self.cache[key] = fail_val
-            return fail_val
+            _note("fit_exception", detail=f"{type(e).__name__}: {e}"[:200])
+            self.cache[key] = _fail
+            return _fail
+
+    def reject_summary(self):
+        """Counts per 1e12 rejection reason, for run-level reporting.
+
+        Lets a caller distinguish "the search tried and failed" from "the
+        search never tried" and from "the structure was already known
+        broken" -- previously all three looked identical.
+        """
+        return {
+            "counts": dict(getattr(self, "_reject_counts", {})),
+            "recent": list(getattr(self, "_last_rejection", []))[-20:],
+        }
 
 
 
