@@ -6,16 +6,25 @@ the shared `zigenv` conda environment has your most recent push.  The publish
 workflow bumps the version and uploads to PyPI on every push to master, so
 `pip install --upgrade` here always grabs the newest commit.
 
+Requires MCR_SSH_PASSWORD in the environment (the password is deliberately
+not stored in this repo; it was committed here previously and has since been
+rotated).
+
 Usage:
+    $env:MCR_SSH_PASSWORD = "..."   # PowerShell
     python update_hpc_package.py
 """
+
+import os
 
 import paramiko
 
 HOST = "aqua.qut.edu.au"
 PORT = 22
 USER = "ahernz"
-PASSWORD = "SandySponge@1"
+PASSWORD = os.environ.get("MCR_SSH_PASSWORD", "")
+if not PASSWORD:
+    raise SystemExit("MCR_SSH_PASSWORD is not set; refusing to run without it.")
 
 CONDA_ENV = "zigenv"
 

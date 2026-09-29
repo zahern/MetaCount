@@ -1,10 +1,17 @@
 """Compare valid HPC backups (md5) and show a valid .pbs wrapper template."""
+import os
+
 import paramiko
 
 HOST = "aqua.qut.edu.au"
 PORT = 22
 USER = "ahernz"
-PASSWORD = "SandySponge@1"
+# Password comes from the environment, never from the repo. This value used to
+# be committed here; it has been rotated. Set MCR_SSH_PASSWORD in your shell
+# (PowerShell: $env:MCR_SSH_PASSWORD = "...") before running.
+PASSWORD = os.environ.get("MCR_SSH_PASSWORD", "")
+if not PASSWORD:
+    raise SystemExit("MCR_SSH_PASSWORD is not set; refusing to run without it.")
 REMOTE_DIR = "/mnt/hpccs01/home/ahernz/latent_class_metacount"
 
 ssh = paramiko.SSHClient()

@@ -5154,6 +5154,11 @@ def decode_best_solution(best_solution, evaluator):
 
         role = roles[i]
 
+        # Keep in sync with model_constraints._ROLE_LABELS. Codes 7/8 are
+        # latent-class membership roles: outside an LC search they are
+        # stripped from allowed_roles, so seeing one here means the decision
+        # predates that strip (a stale checkpoint warm start) and the variable
+        # is NOT a plain outcome term. Flag it rather than printing "Unknown".
         role_map = {
             0: "Excluded",
             1: "Fixed",
@@ -5161,10 +5166,13 @@ def decode_best_solution(best_solution, evaluator):
             3: "Random Correlated",
             4: "Grouped",
             5: "Heterogeneity",
-            6: "Zero Inflated"
+            6: "Zero Inflated",
+            7: "Membership Only (non-LC: DROPPED)",
+            8: "Membership + Fixed (non-LC: fixed term)",
+            9: "Heterogeneity in Variances"
         }
 
-        role_name = role_map.get(role, "Unknown")
+        role_name = role_map.get(role, f"Unknown (role {role})")
 
         dist = None
         if var in evaluator.allowed_distributions:

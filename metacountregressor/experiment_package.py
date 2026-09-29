@@ -3344,6 +3344,32 @@ class ExperimentBuilder:
         allowed_roles = populate_allowed_roles(
             variables, merged_override, default_roles=default_roles
         )
+        # ── Single-class searches must not offer membership roles ──────
+        # Roles 7 (membership-only) and 8 (membership + fixed) are latent-class
+        # constructs. With max_latent_classes == 1 there is no membership
+        # equation, so build_spec treats them as degenerate: role 7 silently
+        # drops the variable from every list, and role 8 appends it to
+        # `fixed` with the membership half discarded. Both are reachable
+        # because ModelConstraints.to_evaluator_kwargs() derives
+        # fixed_override from _ALL_ROLES (0..8) and no_random()/no_zi() only
+        # discard the random and ZI codes, leaving 7 and 8 allowed.
+        #
+        # The effect is not a wrong model -- a single-variable role 8 still
+        # decodes to the fixed term it claims to be, and the BIC is computed
+        # on the same structure that is later refitted -- but the search burns
+        # evaluations on genes that are not real degrees of freedom, and the
+        # printed structure table shows "Unknown" for them (role_map in
+        # main_hpc.decode_best_solution has no 7/8 entries). Strip them so the
+        # search space matches the model that can actually be expressed.
+        if max_latent_classes <= 1:
+            _MEMBERSHIP_CODES = (7, 8)
+            for _v, _roles in allowed_roles.items():
+                _kept = [r for r in _roles if r not in _MEMBERSHIP_CODES]
+                # Never leave a variable with an empty role set: it would fail
+                # the `role not in allowed_roles` check in build_spec for every
+                # candidate, making the variable unsearchable rather than absent.
+                allowed_roles[_v] = _kept if _kept else [0]
+
         allowed_dists = populate_allowed_distributions(variables, None)
 
         if engine == "numba":
