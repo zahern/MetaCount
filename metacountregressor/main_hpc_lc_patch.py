@@ -388,6 +388,7 @@ def build_jax_data(
     class_fixed_cols=None,       # per-class fixed variable lists (list of lists)
     class_rdm_ind_cols=None,     # per-class random indep lists
     class_rdm_cor_cols=None,     # per-class random corr lists
+    event_col=None,              # survival/hazard: column of 0/1 event flags
     draw_method='sobol',        # 'halton' or 'sobol' (Sobol faster, more stable)
     R=200,
 ):
@@ -423,7 +424,13 @@ def build_jax_data(
         + grouped_cols + hetro_cols + hetro_var_cols + gse_cols + zi_cols + membership_cols   # NEW
     ))
 
-    X_all, y, mask = balance_panel_dataframe(df, id_col, y_col, all_features)
+    # Survival/hazard: the right-censoring indicator has to live on the SAME
+    # balanced (N, P) grid as y/mask, so it is routed through
+    # balance_panel_dataframe and extracted by the same col_map rather than
+    # hand-built -- hand-building is how the event vector silently drifts out
+    # of alignment with the durations.
+    _bal_features = all_features + ([event_col] if event_col else [])
+    X_all, y, mask = balance_panel_dataframe(df, id_col, y_col, _bal_features)
 
     # Group IDs - compute per-individual (N) not per-observation (N*P)
     if group_id_col is not None and len(grouped_cols) > 0:
@@ -435,13 +442,18 @@ def build_jax_data(
         group_codes = None
         G = 0
 
-    col_map = {col: i for i, col in enumerate(all_features)}
+    col_map = {col: i for i, col in enumerate(_bal_features)}
 
     def extract(cols):
         if len(cols) == 0:
             return np.zeros((X_all.shape[0], X_all.shape[1], 0))
         idx = [col_map[c] for c in cols if c in col_map]
         return X_all[:, :, idx]
+
+    _event = extract([event_col]) if event_col else None
+    if _event is not None:
+        # Missing event flags mean "not yet observed" -> censored.
+        _event = np.nan_to_num(np.asarray(_event, dtype=float), nan=0.0)
 
     fixed_cols_with_intercept = [intercept_name] + fixed_cols
     Xf   = np.concatenate([extract([intercept_name]), extract(fixed_cols)], axis=2)
@@ -535,6 +547,11 @@ def build_jax_data(
         "y":        jnp.array(y),
         "mask":     jnp.array(mask),
         "offset":   jnp.array(offset),
+        # Right-censoring indicator (N, P, 1): 1 = event observed, 0 = censored.
+        # Only present for survival/hazard specs.  NOTE this is NOT the same
+        # as "mask": mask marks structurally valid (N, P) slots, event marks
+        # whether a valid slot is an observed failure or a censored one.
+        "event":    jnp.array(_event) if _event is not None else jnp.ones((N, P, 1)),
         "draws_ind":jnp.zeros((N, 0, R)) if draws_ind is None else jnp.array(draws_ind),
         "draws_cor":jnp.zeros((N, 0, R)) if draws_cor is None else jnp.array(draws_cor),
         "draws_g":  jnp.zeros((N, 0, R)) if draws_g   is None else jnp.array(draws_g),
@@ -631,7 +648,7 @@ _hpc.parse_manual_spec = parse_manual_spec
 def build_model_from_manual_spec(
     df, manual_spec, id_col, y_col,
     offset_col=None, draws_ind=None, draws_cor=None, draws_g=None,
-    draw_method='sobol', R=200
+    draw_method='sobol', R=200, event_col=None
 ):
     (
         fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, hetro_var_cols,
@@ -666,6 +683,7 @@ def build_model_from_manual_spec(
         random_ind_dists=random_ind_dists,
         random_cor_dists=random_cor_dists,
         grouped_dists=grouped_dists,
+        event_col=event_col,
         draw_method=draw_method,
         R=R,
     )

@@ -114,6 +114,130 @@ class FitResult(dict):
             raise AttributeError(name) from None
 
 
+def _ph_families():
+    """The proportional-hazards family set, or an empty set if unavailable."""
+    try:
+        from .survival_models import PH_FAMILIES
+    except ImportError:
+        try:
+            from survival_models import PH_FAMILIES
+        except ImportError:
+            return set()
+    return set(PH_FAMILIES)
+
+
+def _survival_summary_df(result, objective, data, spec, param_index, family):
+    """
+    Named coefficient table for a survival/hazard fit.
+
+    Deliberately does NOT reuse the count-oriented print_summary: that path
+    applies PARTE shrinkage and delta-method transforms that are only
+    defined for the count/linear parameterisations.  Here the parameters are
+    already on the model's own scale (log-hazard for PH, latent normal for
+    AFT), so the estimate is the parameter itself and the interesting
+    column is exp(beta) -- a hazard ratio or a time ratio depending on the
+    family.
+
+    The returned DataFrame carries ``attrs["fit_stats"]`` so the caller can
+    report LL/AIC/BIC from the same (expensive) objective evaluation.
+    """
+    from scipy import stats as _st
+
+    params = np.asarray(
+        result.params if hasattr(result, "params") else result.x, dtype=float
+    )
+    names = _param_names_for_spec(spec)
+    if len(names) != len(params):
+        names = [f"param_{i}" for i in range(len(params))]
+
+    try:
+        se = np.asarray(
+            _hessian_se(params, objective), dtype=float
+        )
+    except Exception:
+        se = np.full(len(params), np.nan)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        z = np.where(se > 1e-12, params / np.where(se > 1e-12, se, 1.0), 0.0)
+    p = 2.0 * (1.0 - _st.norm.cdf(np.abs(z)))
+
+    ll = float(-objective(params))
+    k = len(params)
+    n = int(np.asarray(data["y"]).shape[0])
+    stats_out = {
+        "loglik": ll, "num_parm": k, "n_obs": n,
+        "aic": 2 * k - 2 * ll, "bic": k * np.log(n) - 2 * ll,
+        "family": family,
+    }
+
+    df_out = pd.DataFrame({
+        "Parameter": names,
+        "Estimate": params,
+        "Std.Err": se,
+        "z-value": z,
+        "p-value": p,
+    })
+    ratio_col = "hazard_ratio" if family in _ph_families() else "time_ratio"
+    with np.errstate(over="ignore"):
+        df_out[ratio_col] = np.exp(params)
+    # The trailing scale/shape parameter is not a covariate effect.
+    for scale in ("sigma", "shape"):
+        if scale in names:
+            df_out.loc[names.index(scale), ratio_col] = np.nan
+
+    df_out.attrs["fit_stats"] = stats_out
+    return df_out
+
+
+def _hessian_se(params, objective):
+    """Standard errors from a numerical Hessian of the objective."""
+    import jax as _jax
+
+    hess = np.asarray(_jax.hessian(objective)(_jax.numpy.asarray(params)),
+                      dtype=float)
+    hess = np.where(np.isfinite(hess), hess, 0.0)
+    try:
+        eigvals, eigvecs = np.linalg.eigh(0.5 * (hess + hess.T))
+    except np.linalg.LinAlgError:
+        return np.full(len(params), np.nan)
+    mx = float(np.max(np.abs(eigvals)))
+    if not np.isfinite(mx) or mx <= 0:
+        return np.full(len(params), np.nan)
+    ridge = float(np.clip(mx * 1e-6, 1e-12, 1e-4))
+    cov = (eigvecs * (1.0 / (eigvals + ridge))) @ eigvecs.T
+    var = np.diag(cov)
+    var = np.where(var > 0, var, np.nan)
+    return np.sqrt(var)
+
+
+def _param_names_for_spec(spec):
+    """Parameter names in flat-vector order, matching build_base_index."""
+    names = list(getattr(spec, "fixed_names", ()) or ())
+    zi = list(getattr(spec, "zi_names", ()) or ())
+    cor = list(getattr(spec, "random_cor_names", ()) or ())
+    ind = list(getattr(spec, "random_ind_names", ()) or ())
+    grp = list(getattr(spec, "grouped_names", ()) or ())
+    het = list(getattr(spec, "hetro_names", ()) or ())
+    names += [f"zi({n})" for n in zi]
+    names += [f"cor_mean({n})" for n in cor]
+    names += [f"chol({cor[i]},{cor[j]})"
+              for i in range(len(cor)) for j in range(i + 1)]
+    names += [f"mean({n})" for n in ind]
+    names += [f"sd({n})" for n in ind]
+    names += [f"group_mean({n})" for n in grp]
+    names += [f"group_sd({n})" for n in grp]
+    rand_total = len(cor) + len(ind)
+    if rand_total and het:
+        names += [f"hetro({r}|{z})" for r in (cor + ind) for z in het]
+    if getattr(spec, "model", None) == "nb":
+        names.append("dispersion")
+    elif getattr(spec, "model", None) in {
+        "lognormal", "gaussian", "tobit", "weibull", "loglogistic", "weibull_ph"
+    }:
+        names.append("sigma")
+    return names
+
+
 def _fit_stats_from(objective, result, data) -> dict:
     """Rebuild the fit-stats dict that print_summary() returns.
 
@@ -459,10 +583,15 @@ class StructureEvaluatorLC(StructureEvaluator):
       • warm-started LC estimation in fitness()
     """
 
-    def __init__(self, *args, max_latent_classes: int = 3, mutual_exclusion=None, **kwargs):
+    def __init__(self, *args, max_latent_classes: int = 3, mutual_exclusion=None,
+                 event_col: Optional[str] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_latent_classes = max(1, int(max_latent_classes))
         self.mutual_exclusion = mutual_exclusion or []
+        # Survival/hazard: column holding the 0/1 right-censoring flag.
+        # None for every other family, in which case data["event"] is all
+        # ones and the count/duration likelihoods ignore it.
+        self.event_col = event_col
         # Populated after every fitness() call; read by BanditGuidedSA
         # to avoid a second fit call for identifiability diagnostics.
         self._last_fit_cache: Optional[dict] = None
@@ -484,8 +613,51 @@ class StructureEvaluatorLC(StructureEvaluator):
         # (invalid structure).  None when the last call succeeded.
         self.last_rejection_reason: Optional[str] = None
 
-    # ── build_spec ──────────────────────────────────────────────────
+    # ── survival / hazard single-class fit ────────────────────────
 
+    def _fit_survival_single(self, spec, data, family) -> tuple:
+        """
+        Fit one single-class survival structure and return ``(bic, params)``.
+
+        Uses SurvivalModel (survival_mixed_model_loglik) instead of
+        CountModel (mixed_model_loglik), because the survival likelihood
+        needs the right-censoring indicator in ``data["event"]`` and the
+        count likelihood has no notion of censoring.  BIC is computed on the
+        training split exactly as the count path does, so hazard and count
+        structures are ranked on the same footing.
+        """
+        from .survival_models import SurvivalModel
+        from .survival_models import _ALL_SURVIVAL_FAMILIES  # noqa: F401
+        try:
+            if "event" not in data:
+                raise ValueError(
+                    "survival spec requires data['event']; pass event_col= to "
+                    "ExperimentBuilder/build_search"
+                )
+            if family not in _ALL_SURVIVAL_FAMILIES:
+                raise ValueError(f"unknown survival family {family!r}")
+            # No zero-inflation and no latent classes on the survival path:
+            # censoring is the only "structural zero" mechanism, and the LC
+            # machinery is wired to mixed_model_loglik.
+            spec = replace(spec, zero_inflated=False, latent_classes=1)
+            sm = SurvivalModel(spec=spec, data=data, family=family,
+                               maxiter=200, n_restarts=1)
+            sm.fit()
+            bic = sm.bic()
+            if not np.isfinite(bic):
+                raise ValueError("non-finite BIC from survival fit")
+            return float(bic), np.asarray(sm.params)
+        except Exception as exc:
+            # The search treats any failure as an infeasible structure, so a
+            # survival head that cannot be fitted simply loses that structure
+            # rather than aborting the whole run.
+            warnings.warn(
+                f"survival fit failed for family={family!r}: {exc}",
+                RuntimeWarning,
+            )
+            return 1e12, None
+
+    # ── build_spec ──────────────────────────────────────────────────
     def build_spec(self, decision) -> Optional[dict]:
         """
         Decode a decision vector into a manual_spec dict.
@@ -803,8 +975,10 @@ class StructureEvaluatorLC(StructureEvaluator):
     def build_data(self, df, spec_dict, master_halton):
         """
         Extends parent build_data to pass membership_cols through to
-        build_jax_data (handled by main_hpc_lc_patch).
+        build_jax_data (handled by main_hpc_lc_patch), plus event_col for
+        survival/hazard specs.
         """
+        _ev = self.event_col
         data_tmp, spec = build_model_from_manual_spec(
             df=df,
             manual_spec=spec_dict,
@@ -813,6 +987,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             offset_col=self.offset_col,
             draw_method=getattr(self, 'draw_method', 'sobol'),
             R=self.R,
+            event_col=_ev,
         )
 
         var_index = {v: i for i, v in enumerate(self.vars)}
@@ -846,6 +1021,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             draws_g=draws_g,
             draw_method=getattr(self, 'draw_method', 'sobol'),
             R=self.R,
+            event_col=_ev,
         )
 
         return data, spec
@@ -979,15 +1155,25 @@ class StructureEvaluatorLC(StructureEvaluator):
 
             # ── Single-class path ──────────────────────────────────
             if C == 1:
-                model = CountModel(spec, data_train)
-                result_1 = model.fit()
-                bic = model.bic()
+                # Survival/hazard families cannot go through CountModel,
+                # which is hard-wired to mixed_model_loglik.  Route them to
+                # SurvivalModel, which uses survival_mixed_model_loglik and
+                # therefore reads data["event"] (the censoring indicator).
+                fam = _survival_family_for(spec.model)
+                if fam is not None:
+                    bic, surv_params = self._fit_survival_single(spec, data_train, fam)
+                    result_1 = None
+                else:
+                    model = CountModel(spec, data_train)
+                    result_1 = model.fit()
+                    bic = model.bic()
+                    surv_params = np.asarray(result_1.params)
 
                     # ── Adaptive identifiability guard + cache ─────────
                 # Store the fit so BanditGuidedSA can read t-stats
                 # without a second fit call.
                 self._last_fit_cache = {
-                    "params": np.asarray(result_1.params),
+                    "params": surv_params,
                     "spec":   spec,
                     "data":   data_train,
                     "bic":    float(bic),
@@ -1253,6 +1439,11 @@ class ForcedModelStructureEvaluatorLC(StructureEvaluatorLC):
         spec["model"] = self.forced_model
         if self.forced_model in {"lognormal", "gaussian", "tobit"}:
             spec["dispersion"] = 0
+        # Survival families carry a scale/shape parameter, not a
+        # Poisson/NB dispersion bit, and have no zero-inflation block.
+        if _survival_family_for(self.forced_model) is not None:
+            spec["dispersion"] = 0
+            spec["zi_terms"] = []
         return spec
 
 
@@ -1542,6 +1733,28 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
 _solvers.AdvancedSimulatedAnnealing.generate_neighbor = _generate_neighbor_patched
 
 
+def _survival_family_for(model: Optional[str]) -> Optional[str]:
+    """
+    Map a ``spec.model`` string to a survival family name, or None.
+
+    Survival specs carry the family name in ``spec.model`` itself
+    ("weibull_ph", "lognormal", ...), so this is an identity lookup guarded
+    by membership in the survival family set.  Imported lazily: the survival
+    module pulls in main_hpc, and importing it at module scope would make
+    experiment_package's import order significant.
+    """
+    if not model:
+        return None
+    try:
+        from .survival_models import ALL_SURVIVAL_FAMILIES
+    except ImportError:                       # flat import (script in package dir)
+        try:
+            from survival_models import ALL_SURVIVAL_FAMILIES
+        except ImportError:
+            return None
+    return model if model in ALL_SURVIVAL_FAMILIES else None
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # ExperimentBuilder
 # ═══════════════════════════════════════════════════════════════════════
@@ -1587,12 +1800,16 @@ class ExperimentBuilder:
         group_id_col: Optional[str] = None,
         default_model_family: str = "count",
         default_engine: str = "jax",
+        event_col:    Optional[str] = None,
     ):
         self.df           = df.copy()
         self.id_col       = id_col
         self.y_col        = y_col
         self.offset_col   = offset_col
         self.group_id_col = group_id_col
+        # Survival/hazard only: column of 0/1 right-censoring flags.  When
+        # set, y_col must hold a strictly positive DURATION, not a count.
+        self.event_col    = event_col
         self.default_model_family = default_model_family.lower()
         self.default_engine = default_engine.lower()
         self._evaluator: Optional[StructureEvaluatorLC] = None
@@ -1976,8 +2193,72 @@ class ExperimentBuilder:
             y_col=self.y_col,
             offset_col=self.offset_col,
             R=R,
+            event_col=self.event_col,
         )
         spec = replace(spec, model=model)
+
+        # ── Survival / hazard: entirely separate fitting path ──────────
+        # The count machinery below is hard-wired to CountModel /
+        # mixed_model_loglik, which has no notion of right-censoring (it
+        # raises "Unknown model: weibull_ph" and would silently treat every
+        # censored row as an event if it did not).  Branch out before any
+        # of that runs rather than patching the objective later.
+        _surv_family = _survival_family_for(spec.model)
+        if _surv_family is not None:
+            if self.event_col is None:
+                raise ValueError(
+                    "survival/hazard refit needs an event_col on the builder "
+                    "(ExperimentBuilder(..., event_col='<0/1 flag column>'))"
+                )
+            if "event" not in data:
+                raise ValueError("data['event'] missing for a survival spec")
+            from .survival_models import SurvivalModel
+            from .survival_models import survival_mixed_model_loglik as _smll
+
+            # No zero-inflation and no latent classes: censoring is the only
+            # structural-zero mechanism, and the LC path is count-specific.
+            spec = replace(spec, zero_inflated=False, latent_classes=1)
+            _sm = SurvivalModel(spec=spec, data=data, family=_surv_family,
+                                maxiter=1500, n_restarts=2)
+            _sm.fit()
+            _obj = partial(_smll, data=data, spec=spec, family=_surv_family)
+            _pidx = build_param_index(spec)
+
+            buf_s = io.StringIO()
+            with redirect_stdout(buf_s):
+                _named = _survival_summary_df(
+                    result=_sm, objective=_obj, data=data, spec=spec,
+                    param_index=_pidx, family=_surv_family,
+                )
+            summary_text = buf_s.getvalue()
+            if print_report:
+                print(summary_text, end="")
+            _co = _named_coefs_from_df(_named)
+            _stats = _named.attrs.get("fit_stats", {})
+            return FitResult({
+                "result": _sm,
+                "data": data,
+                "spec": spec,
+                "manual_spec": manual_spec,
+                "summary": _stats,
+                "param_index": _pidx,
+                "predictions": None,
+                "de_warm_start_report": {},
+                "coef_table": _named,
+                "coefficient_names": _co["names"],
+                "params": _co["params"],
+                "bse": _co["bse"],
+                "tvalues": _co["tvalues"],
+                "pvalues": _co["pvalues"],
+                "variable_coefs": _variable_coefs(_co),
+                "survival_family": _surv_family,
+                "ratio_kind": (
+                    "hazard_ratio" if _surv_family in _ph_families()
+                    else "time_ratio"
+                ),
+                "random_parameter_diagnostics": {},
+                "_summary_text": summary_text,
+            })
 
         # Harden latent-class estimation with warm start + EM + polish retries.
         if spec.latent_classes > 1:
@@ -2324,25 +2605,38 @@ class ExperimentBuilder:
         buf = io.StringIO()
         with redirect_stdout(buf):
             named = None
-            try:
-                named = print_summary(
-                    result=result,
-                    objective=objective,
-                    data=data,
-                    spec=spec,
-                    param_index=param_index,
-                    return_df=True,
+            if _surv_family is not None:
+                # The generic print_summary applies PARTE shrinkage and
+                # count-model delta transforms, neither of which is defined
+                # for a log-hazard parameterisation.  Build the named table
+                # straight from the survival objective instead, and add an
+                # explicit hazard/time-ratio column.
+                named = _survival_summary_df(
+                    result=result, objective=objective, data=data,
+                    spec=spec, param_index=param_index,
+                    family=_surv_family,
                 )
-                summary = named
-            except TypeError:
-                # print_summary variant without return_df support
-                summary = print_summary(
-                    result=result,
-                    objective=objective,
-                    data=data,
-                    spec=spec,
-                    param_index=param_index,
-                )
+                summary = named.attrs.get("fit_stats", {})
+            else:
+                try:
+                    named = print_summary(
+                        result=result,
+                        objective=objective,
+                        data=data,
+                        spec=spec,
+                        param_index=param_index,
+                        return_df=True,
+                    )
+                    summary = named
+                except TypeError:
+                    # print_summary variant without return_df support
+                    summary = print_summary(
+                        result=result,
+                        objective=objective,
+                        data=data,
+                        spec=spec,
+                        param_index=param_index,
+                    )
         summary_text = buf.getvalue()
         if print_report:
             print(summary_text, end="")
@@ -2368,7 +2662,13 @@ class ExperimentBuilder:
             "manual_spec": manual_spec,
             "summary": summary,
             "param_index": param_index,
-            "predictions": np.asarray(fitted.predict()).squeeze(),
+            "predictions": (
+                np.asarray(fitted.predict()).squeeze() if fitted is not None
+                else np.asarray(
+                    _smll(result.params if hasattr(result, "params") else result.x,
+                          data, spec, _surv_family)
+                ).squeeze() if _surv_family is not None else None
+            ),
             "de_warm_start_report": de_report,
             "coef_table": named_df,
             "coefficient_names": coefs["names"],
@@ -2377,6 +2677,11 @@ class ExperimentBuilder:
             "tvalues": coefs["tvalues"],
             "pvalues": coefs["pvalues"],
             "variable_coefs": _variable_coefs(coefs),
+            "survival_family": _surv_family,
+            "ratio_kind": (
+                "hazard_ratio" if (_surv_family in _ph_families() or _surv_family is None)
+                else "time_ratio"
+            ) if _surv_family is not None else None,
             "random_parameter_diagnostics": random_parameter_diagnostics,
             "_summary_text": summary_text,
         })
@@ -3435,6 +3740,7 @@ class ExperimentBuilder:
             R                     = R,
             max_latent_classes    = max_latent_classes,
             draw_dtype            = draw_dtype,
+            event_col             = self.event_col,
         )
 
         D   = len(variables)
@@ -3509,6 +3815,7 @@ class ExperimentBuilder:
                     R=R,
                     max_latent_classes=max_latent_classes,
                     forced_model="gaussian",
+                    event_col=self.event_col,
                 )
                 self._raise_on_unused_kwargs(kwargs, "linear search")
                 return LinearSearchProblem(
@@ -3610,6 +3917,85 @@ class ExperimentBuilder:
                 evaluator=evaluator,
                 metadata={
                     "model": "tobit",
+                    "variables": variables,
+                    "max_latent_classes": max_latent_classes,
+                },
+            )
+
+        if model_family in ("survival", "hazard", "aft"):
+            # Survival / hazard structure search.  Runs the same SA driver
+            # over the same role space as every other family; the only
+            # difference is the likelihood, which reads the right-censoring
+            # indicator data["event"] instead of a count.
+            #
+            #   family="weibull_ph" (default) -> exp(beta) is a HAZARD ratio
+            #   family="weibull"/"lognormal"/"loglogistic" -> exp(beta) is a
+            #                                          TIME ratio (AFT)
+            surv_family = str(kwargs.pop("family", "weibull_ph")).lower()
+            try:
+                from .survival_models import ALL_SURVIVAL_FAMILIES, PH_FAMILIES
+            except ImportError:
+                from survival_models import ALL_SURVIVAL_FAMILIES, PH_FAMILIES
+            if surv_family not in ALL_SURVIVAL_FAMILIES:
+                raise ValueError(
+                    f"survival family {surv_family!r} not in "
+                    f"{sorted(ALL_SURVIVAL_FAMILIES)}"
+                )
+            if self.event_col is None:
+                raise ValueError(
+                    "survival/hazard search needs an event_col: pass "
+                    "ExperimentBuilder(..., event_col='<0/1 flag column>') so "
+                    "the censoring indicator reaches the likelihood."
+                )
+            if not surv_family.startswith(("lognormal", "weibull", "loglogistic")):
+                raise ValueError(
+                    f"{surv_family!r} is not a continuous-time survival family"
+                )
+            # Latent classes are not wired into the survival likelihood, and
+            # "multi" Pareto mode assumes a count objective.  Both are forced
+            # rather than rejected, so a caller can pass the same kwargs it
+            # uses for every other family without special-casing survival.
+            kwargs.pop("max_latent_classes", None)
+            kwargs.pop("mode", None)
+            max_latent_classes = 1
+            mode = "single"
+            R = kwargs.pop("R", 200)
+            default_roles = kwargs.pop("default_roles", None) or [0, 1, 2, 3, 4, 5]
+            fixed_override = self._normalize_override_map(
+                kwargs.pop("fixed_override", None), "fixed_override")
+            membership_override = self._normalize_override_map(
+                kwargs.pop("membership_override", None), "membership_override")
+            evaluator = ForcedModelStructureEvaluatorLC(
+                df=self.df,
+                id_col=self.id_col,
+                y_col=self.y_col,
+                offset_col=self.offset_col,
+                all_variables=variables,
+                allowed_roles=populate_allowed_roles(
+                    variables,
+                    {**fixed_override, **membership_override},
+                    default_roles=default_roles,
+                ),
+                allowed_distributions=populate_allowed_distributions(variables, None),
+                group_id_col=self.group_id_col,
+                mode=mode,
+                R=R,
+                max_latent_classes=max_latent_classes,
+                forced_model=surv_family,
+                event_col=self.event_col,
+            )
+            self._raise_on_unused_kwargs(kwargs, "survival search")
+            # LinearSearchProblem is the generic "builder + evaluator" SA
+            # wrapper; only the reported family label differs.
+            return LinearSearchProblem(
+                builder=self,
+                evaluator=evaluator,
+                metadata={
+                    "model": surv_family,
+                    "family": model_family,
+                    "event_col": self.event_col,
+                    "ratio": ("hazard_ratio" if surv_family in PH_FAMILIES
+                              else "time_ratio"),
                     "variables": variables,
                     "max_latent_classes": max_latent_classes,
                 },

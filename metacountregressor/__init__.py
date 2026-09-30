@@ -130,6 +130,16 @@ __all__ = [
     "fit_hazard",
     "GPSymbolicRegressor",
     "tree_to_lambda",
+    # Survival / hazard.  AFT_FAMILIES report time ratios (exp(beta));
+    # PH_FAMILIES report hazard ratios (exp(beta)).  Not interchangeable.
+    "AFTFitter",
+    "SurvivalModel",
+    "SurvivalSearchProblem",
+    "aft_loglik",
+    "ph_loglik",
+    "AFT_FAMILIES",
+    "PH_FAMILIES",
+    "ALL_SURVIVAL_FAMILIES",
 ]
 
 _EXPORTS = {
@@ -139,6 +149,17 @@ _EXPORTS = {
     "ExperimentBuilder": ("experiment_package", "ExperimentBuilder"),
     "LinearSearchProblem": ("family_search", "LinearSearchProblem"),
     "MultivariateSearchProblem": ("family_search", "MultivariateSearchProblem"),
+    # Survival / hazard.  AFT_FAMILIES report time ratios (exp(beta)); the
+    # PH_FAMILIES report hazard ratios (exp(beta)).  They are not
+    # interchangeable, which is why both sets are exported by name.
+    "AFTFitter": ("survival_models", "AFTFitter"),
+    "SurvivalModel": ("survival_models", "SurvivalModel"),
+    "SurvivalSearchProblem": ("survival_models", "SurvivalSearchProblem"),
+    "aft_loglik": ("survival_models", "aft_loglik"),
+    "ph_loglik": ("survival_models", "ph_loglik"),
+    "AFT_FAMILIES": ("survival_models", "AFT_FAMILIES"),
+    "PH_FAMILIES": ("survival_models", "PH_FAMILIES"),
+    "ALL_SURVIVAL_FAMILIES": ("survival_models", "ALL_SURVIVAL_FAMILIES"),
     "BayesianModel": ("bayesian_model", "BayesianModel"),
     "BayesianModelError": ("bayesian_model", "BayesianModelError"),
     "build_bayesian_model": ("bayesian_model", "build_bayesian_model"),

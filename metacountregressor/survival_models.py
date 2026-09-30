@@ -98,6 +98,19 @@ except ImportError:
     )
 
 _SURVIVAL_FAMILIES = {"lognormal", "weibull", "loglogistic"}
+# Proportional-hazards families.  These are NOT interchangeable with the AFT
+# families above: exp(beta) is a constant HAZARD ratio (PH) rather than a
+# time ratio (AFT), and the two relate by  k_PH = 1/sigma_AFT  and
+# beta_PH = -beta_AFT / sigma_AFT.
+_PH_FAMILIES = {"weibull_ph"}
+_ALL_SURVIVAL_FAMILIES = _SURVIVAL_FAMILIES | _PH_FAMILIES
+
+# Public, stable names for the family sets (PH is not interchangeable with
+# AFT: exp(beta) means different things).
+AFT_FAMILIES = frozenset(_SURVIVAL_FAMILIES)
+PH_FAMILIES = frozenset(_PH_FAMILIES)
+ALL_SURVIVAL_FAMILIES = frozenset(_ALL_SURVIVAL_FAMILIES)
+
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # 1.  Per-family AFT log-likelihoods
@@ -169,7 +182,66 @@ def aft_loglik(y, event, eta, sigma_raw, family: str):
         return _aft_weibull_ll(y, event, eta, sigma_raw)
     if family == "loglogistic":
         return _aft_loglogistic_ll(y, event, eta, sigma_raw)
-    raise ValueError(f"Unknown AFT family '{family}'. Choose: lognormal, weibull, loglogistic")
+    if family in _PH_FAMILIES:
+        return _ph_weibull_ll(y, event, eta, sigma_raw)
+    raise ValueError(
+        f"Unknown survival family '{family}'. Choose: "
+        f"{sorted(_ALL_SURVIVAL_FAMILIES)}"
+    )
+
+
+def _ph_weibull_ll(y, event, eta, shape_raw):
+    """
+    Weibull PROPORTIONAL HAZARDS, written on the log-hazard scale.
+
+        log h(t | x) = a + k*log(t) + x'b
+        H(t | x)     = exp(a) * t**k * exp(eta) = exp(gamma)
+        S(t | x)     = exp(-H)
+        f(t | x)     = h(t | x) * S(t | x)
+
+    where ``eta`` is the full linear predictor (it already contains the
+    intercept column, since build_jax_data prepends ``__INTERCEPT__``) and
+    k = softplus(shape_raw) > 0 is the Weibull shape.  With
+
+        gamma = eta + k*log(t)          ==  log H(t | x)
+
+    the per-observation log-likelihood is
+
+        right-censored :  log S = -exp(gamma)
+        event observed :  log f = log h + log S
+                                 = log k + (k-1)*log(t) + eta - exp(gamma)
+
+    Note the event term is log f, NOT log h and NOT log H.  Using log H for
+    events (an easy slip, since gamma is exactly log H) drops both the
+    log k and the -H terms and yields a different, wrong fit.
+
+    ``exp(beta)`` is a hazard ratio that does not depend on t, which is
+    what makes this the family to use when the reported quantity must be a
+    risk-per-unit-exposure (the traffic-safety "risk rises X% per km/h"
+    statement).  The AFT families above report time ratios instead.
+
+    The censored branch exponentiates the cumulative hazard, so it can
+    overflow.  The clip below is an overflow guard only: at 500 the
+    cumulative hazard is e**500, i.e. survival probability numerically zero,
+    so no estimable model lives in the clipped region.
+    """
+    k       = jax.nn.softplus(shape_raw)
+    log_y   = jnp.log(jnp.clip(y, 1e-12, None))
+    gamma   = eta + k * log_y
+    log_H   = jnp.exp(jnp.clip(gamma, -500.0, 500.0))          # H(t|x)
+    ll_cens = -log_H
+    ll_obs  = jnp.log(k) + (k - 1.0) * log_y + eta - log_H
+    return jnp.where(event > 0, ll_obs, ll_cens)
+
+
+def ph_loglik(y, event, eta, shape_raw, family: str = "weibull_ph"):
+    """Proportional-hazards log-likelihood dispatcher (Weibull only)."""
+    if family not in _PH_FAMILIES:
+        raise ValueError(
+            f"family must be one of {sorted(_PH_FAMILIES)}, got {family!r}"
+        )
+    return _ph_weibull_ll(y, event, eta, shape_raw)
+
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -580,8 +652,36 @@ class SurvivalModel:
         For all AFT families: median(T) = exp(Î·).
         Averaged over Halton draws.
         """
+        if self.family in _PH_FAMILIES:
+            raise NotImplementedError(
+                "predict_median() is an AFT quantity. Under proportional "
+                "hazards use predict_hazard(t), or read exp(coef) off the "
+                "summary as a hazard ratio."
+            )
         eta = build_eta(self.params, self.data, self.spec)  # (N, P, R)
         return np.array(jnp.exp(eta).mean(axis=(-2, -1)))   # (N,)
+
+    def predict_hazard(self, t) -> np.ndarray:
+        """
+        Weibull proportional-hazards hazard h(t | x), averaged over the
+        Halton random-parameter draws.
+
+            log h(t | x) = eta + k*log(t),   k = softplus(shape)
+
+        so  h(t | x) = k * t**(k-1) * exp(eta),  with the intercept already
+        inside ``eta``.  Returns shape (N,) for a scalar ``t``.
+        """
+        if self.family not in _PH_FAMILIES:
+            raise NotImplementedError(
+                "predict_hazard() is only defined for the proportional-hazards "
+                f"family; got {self.family!r}."
+            )
+        blocks = unpack_params(self.params, self.spec)
+        k = float(jax.nn.softplus(blocks["sigma"]))
+        t = float(t)
+        eta = np.array(build_eta(self.params, self.data, self.spec))
+        log_h = eta + k * np.log(max(t, 1e-12))
+        return np.exp(log_h).mean(axis=(-2, -1))            # (N,)
 
     def predict_mean(self) -> np.ndarray:
         """
@@ -591,6 +691,12 @@ class SurvivalModel:
           loglogistic : E[T] = exp(Î·) Â· Ï€Ïƒ / sin(Ï€Ïƒ)   [only for Ïƒ < 1]
         Averaged over Halton draws.
         """
+        if self.family in _PH_FAMILIES:
+            raise NotImplementedError(
+                "predict_mean() is an AFT quantity; the mean survival time is "
+                "not identified from the PH parameters in this form. Use "
+                "predict_hazard(t)."
+            )
         blocks = unpack_params(self.params, self.spec)
         sigma  = float(jax.nn.softplus(blocks["sigma"]))
         eta    = np.array(build_eta(self.params, self.data, self.spec))  # (N, P, R)
@@ -622,7 +728,10 @@ class AFTFitter:
 
     Parameters
     ----------
-    family : "lognormal" | "weibull" | "loglogistic"
+    family : "lognormal" | "weibull" | "loglogistic"  -> AFT, exp(beta) is a
+             TIME ratio
+             "weibull_ph"                             -> proportional hazards,
+             exp(beta) is a constant HAZARD ratio
     random_terms : variables with independently-distributed normal random coef.
     correlated_random_terms : variables with jointly-normal random coef.
         (Cholesky-correlated).  Must be a subset of random_terms.
@@ -630,6 +739,9 @@ class AFTFitter:
     n_draws : number of Halton draws for simulation integration.
     maxiter / n_restarts : LBFGS options.
     """
+
+    #: True when exp(beta) is a hazard ratio rather than a time ratio.
+    is_ph = False
 
     def __init__(
         self,
@@ -641,9 +753,10 @@ class AFTFitter:
         maxiter: int = 1500,
         n_restarts: int = 2,
     ):
-        if family not in _SURVIVAL_FAMILIES:
-            raise ValueError(f"family must be one of {_SURVIVAL_FAMILIES}")
+        if family not in _ALL_SURVIVAL_FAMILIES:
+            raise ValueError(f"family must be one of {sorted(_ALL_SURVIVAL_FAMILIES)}")
         self.family                  = family
+        self.is_ph                   = family in _PH_FAMILIES
         self.random_terms            = list(random_terms or [])
         self.correlated_random_terms = list(correlated_random_terms or [])
         self.hetro_in_means          = list(hetro_in_means or [])
@@ -778,7 +891,7 @@ class AFTFitter:
         bic = k * np.log(n) - 2 * ll
 
         self.params_ = pd.Series(params_np, index=names, dtype=float)
-        self.summary_ = pd.DataFrame(
+        summary = pd.DataFrame(
             {
                 "coef":   params_np,
                 "stderr": se_np,
@@ -787,6 +900,18 @@ class AFTFitter:
             },
             index=names,
         )
+        # Interpretation column.  Under PH exp(coef) is a hazard ratio that
+        # does not depend on t; under AFT it is a time ratio.  Reporting the
+        # bare coefficient for a PH fit invites the reader to mis-read it as
+        # a risk ratio, so the ratio is made explicit.
+        ratio_label = "hazard_ratio" if self.is_ph else "time_ratio"
+        with np.errstate(over="ignore"):
+            summary[ratio_label] = np.exp(params_np)
+        # The last block is the scale/shape parameter, not a covariate
+        # effect, so it gets no ratio interpretation.
+        if ratio_label in summary.columns and "sigma" in summary.index:
+            summary.loc["sigma", ratio_label] = np.nan
+        self.summary_ = summary
         self._bic = bic
         self._aic = aic
 
@@ -958,7 +1083,7 @@ class SurvivalSearchProblem:
         self.variables               = list(variables or [])
         self.random_terms            = list(random_terms or [])
         self.correlated_random_terms = list(correlated_random_terms or [])
-        self.families                = list(families or list(_SURVIVAL_FAMILIES))
+        self.families                = list(families or list(_ALL_SURVIVAL_FAMILIES))
         self.n_draws                 = int(n_draws)
 
     def run(self) -> pd.DataFrame:
@@ -1013,6 +1138,11 @@ __all__ = [
     "SurvivalModel",
     "survival_mixed_model_loglik",
     "aft_loglik",
+    "ph_loglik",
+    # Family sets
+    "AFT_FAMILIES",
+    "PH_FAMILIES",
+    "ALL_SURVIVAL_FAMILIES",
     # Backward-compatible aliases
     "RandomEffectsAFTFitter",
     "LogNormalRandomEffectsAFTFitter",
