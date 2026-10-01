@@ -77,3 +77,16 @@ __pycache__/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# MCR run artifacts.  Every search/fit writes these next to the working
+# directory (results/ by default); they are outputs, never source, and must
+# not be committed.  Only the filename shapes MCR itself generates are
+# ignored -- a deliberately added figure with another name is still tracked.
+results/sa_search_stats_*
+results/sa_convergence_*
+results/sa_seed*_config*
+results/DynamicHarmony_*
+results/*_search_stats_*
+results/*_convergence_*
+# Unit-test output checkpoints (regenerated on every pytest run).
+test_results_output/

@@ -233,9 +233,15 @@ class LinearSearchProblem:
     ):
         if self.builder is not None and self.evaluator is not None:
             result = self.builder.run_search(self.evaluator, algo=algo, **algorithm_kwargs)
-            result["family"] = "linear"
+            # The same wrapper class serves every JAX family (linear, tobit,
+            # survival, ...).  The metadata built by build_search() carries
+            # the true family; trust it over the dataclass default, or a
+            # survival search would report itself as "linear".
+            meta = self.metadata if isinstance(self.metadata, dict) else {}
+            fam = meta.get("family") or self.family
+            result["family"] = fam
             result["driver"] = "jax_hierarchical"
-            result["linear_metadata"] = self.metadata or {}
+            result[f"{fam}_metadata"] = meta
             return result
 
         X = self.df[self.variables].copy()

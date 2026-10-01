@@ -2075,6 +2075,16 @@ class ExperimentBuilder:
                 "budget_col": "Budget column used by the duration helper objective.",
                 "objective": "Duration objective: 'independent' or 'budget_penalty'.",
             },
+            "survival": {
+                "family": "Survival parameterisation: 'weibull_ph' (default, "
+                          "exp(beta) is a hazard ratio), 'weibull', "
+                          "'lognormal' or 'loglogistic' (AFT, exp(beta) is a "
+                          "time ratio).",
+                "default_roles": "Allowed structural roles per variable. "
+                                 "Roles 6 (ZI), 7 and 8 (LC membership) are "
+                                 "structurally excluded for survival.",
+                "fixed_override": "Force or restrict roles for specific variables.",
+            },
         }
 
     @staticmethod
@@ -2114,6 +2124,38 @@ class ExperimentBuilder:
                 "heterogeneity_in_means": True,
                 "zero_inflation": True,
                 "latent_classes": True,
+                "distribution_assumptions": True,
+            },
+            "survival": {
+                "jax_solver": True,
+                "metaheuristic_search": True,
+                "random_parameters": True,
+                "heterogeneity_in_means": True,
+                # Censoring is the structural-zero mechanism, so there is no
+                # zero-inflation block.
+                "zero_inflation": False,
+                # Latent classes are forced off (the LC estimation path is
+                # count-specific); the survival likelihood itself supports
+                # them, but the search does not yet wire them up.
+                "latent_classes": False,
+                "distribution_assumptions": True,
+            },
+            "hazard": {
+                "jax_solver": True,
+                "metaheuristic_search": True,
+                "random_parameters": True,
+                "heterogeneity_in_means": True,
+                "zero_inflation": False,
+                "latent_classes": False,
+                "distribution_assumptions": True,
+            },
+            "aft": {
+                "jax_solver": True,
+                "metaheuristic_search": True,
+                "random_parameters": True,
+                "heterogeneity_in_means": True,
+                "zero_inflation": False,
+                "latent_classes": False,
                 "distribution_assumptions": True,
             },
         }
@@ -3579,7 +3621,12 @@ class ExperimentBuilder:
             Defaults to [0,1,2,3,5] when max_latent_classes = 1,
             or [0,1,2,3,5,7,8] when max_latent_classes > 1.
         model_family
-            Search family to build. One of: "count", "cmf", "linear", "duration".
+            Search family to build. One of: "count", "cmf", "linear",
+            "duration", "tobit", "multivariate", "survival" (aliases
+            "hazard", "aft").  The survival family needs
+            ExperimentBuilder(..., event_col=...) and supports the same
+            metaheuristic role search over roles 0-5; roles 6/7/8 and
+            latent classes are structurally excluded.
         engine
             Execution engine. Use ``jax`` for the full model or ``numba`` for
             single-class fixed-effects Poisson/NB2 search.
@@ -3965,17 +4012,32 @@ class ExperimentBuilder:
                 kwargs.pop("fixed_override", None), "fixed_override")
             membership_override = self._normalize_override_map(
                 kwargs.pop("membership_override", None), "membership_override")
+            # Role space for survival.  Roles 6 (ZI), 7 and 8 (latent-class
+            # membership) are STRUCTURALLY meaningless here, not merely
+            # unselected: censoring is the only structural-zero mechanism,
+            # and latent classes are forced off (see below).  If the SA were
+            # allowed to propose them, build_spec would have to silently drop
+            # them and the structure actually fitted would differ from the
+            # structure described -- a quieter, worse failure than exclusion.
+            _allow = populate_allowed_roles(
+                variables,
+                {**fixed_override, **membership_override},
+                default_roles=default_roles,
+            )
+            _DROP = {6, 7, 8}
+            allowed_roles = {}
+            for _v, _r in _allow.items():
+                try:
+                    allowed_roles[_v] = [r for r in _r if r not in _DROP]
+                except TypeError:
+                    allowed_roles[_v] = _r
             evaluator = ForcedModelStructureEvaluatorLC(
                 df=self.df,
                 id_col=self.id_col,
                 y_col=self.y_col,
                 offset_col=self.offset_col,
                 all_variables=variables,
-                allowed_roles=populate_allowed_roles(
-                    variables,
-                    {**fixed_override, **membership_override},
-                    default_roles=default_roles,
-                ),
+                allowed_roles=allowed_roles,
                 allowed_distributions=populate_allowed_distributions(variables, None),
                 group_id_col=self.group_id_col,
                 mode=mode,
