@@ -11,7 +11,14 @@ Engines
 
 Genome
 ------
-``[form_1..form_K | var_mask (K*p bits) | markov_on (K bits) | hazard_family]``
+``[form_1..form_K | var_mask (K*p bits) | markov_on (K bits) | hazard_family |
+temporal_1..temporal_K]``
+
+``temporal_k`` is the per-cluster error structure ``e_k`` (decision layer):
+``ols`` (default), ``ar1``, ``ar2``, ``random_walk``, or ``nur``. When the
+temporal gene is present every cluster is scored on the conditional sample
+(t >= 2, identical N, log-PSI levels) so the error structure is selected
+jointly with the form, mask, and optional Markov/hazard layers.
 
 Objectives (minimised)
 ----------------------
@@ -19,7 +26,10 @@ Objectives (minimised)
    + Markov + hazard layers when ``enable_markov/enable_hazard``).
 2. hold-out RMSE on **log(PSI)** over the 2011--2012 test panel
    (continuous in the genes; falls back to mean active parameter count
-   without a ``test_df``).
+   without a ``test_df``). Clusters with a non-OLS temporal code are
+   predicted one-step-ahead with the observed prior level (previous
+   hold-out row, else the last training row), so the temporal decision
+   layer propagates into the hold-out metric too.
 
 Cluster membership is fixed input --- typically discovered by the
 count-model search / ``MetacountRegressorBridge``.
@@ -32,11 +42,13 @@ import numpy as np
 import pandas as pd
 
 try:
-    from .pavement_pipeline import Constraints, PavementDeteriorationEvaluator
+    from .pavement_pipeline import (Constraints, PavementDeteriorationEvaluator,
+                                    TEMPORAL_MODELS)
     from .pavement_forms import N_FORMS, build_design
     from .pavement_hazard import FAMILIES
 except ImportError:  # flat import (script inside package dir)
-    from pavement_pipeline import Constraints, PavementDeteriorationEvaluator
+    from pavement_pipeline import (Constraints, PavementDeteriorationEvaluator,
+                                   TEMPORAL_MODELS)
     from pavement_forms import N_FORMS, build_design
     from pavement_hazard import FAMILIES
 
@@ -68,6 +80,8 @@ def _genome_high(mo):
     hi[mo.mask_slice] = 1
     hi[mo.markov_slice] = 1
     hi[mo.haz_idx] = len(mo.hazard_families) - 1
+    if mo.enable_temporal and mo.temporal_slice.stop > mo.temporal_slice.start:
+        hi[mo.temporal_slice] = len(mo.temporal_models) - 1
     return hi
 
 
@@ -79,9 +93,18 @@ class PavementMultiObjectiveEvaluator:
                  constraints: Optional[Constraints] = None, test_df=None,
                  time_col: str = "age", treatment_col: Optional[str] = None,
                  hazard_default: str = "weibull",
-                 enable_markov: bool = False, enable_hazard: bool = False):
+                 enable_markov: bool = False, enable_hazard: bool = False,
+                 enable_temporal: bool = True,
+                 temporal_candidates=None):
         self.enable_markov = bool(enable_markov)
         self.enable_hazard = bool(enable_hazard)
+        self.enable_temporal = bool(enable_temporal)
+        self.temporal_models = (tuple(temporal_candidates)
+                                if temporal_candidates is not None
+                                else tuple(TEMPORAL_MODELS))
+        if self.enable_temporal and not self.temporal_models:
+            raise ValueError("temporal_candidates must be non-empty when "
+                             "enable_temporal is True")
         self.base = PavementDeteriorationEvaluator(
             df, id_col, psi_col, cont_vars, cat_vars,
             constraints or Constraints(),
@@ -101,7 +124,10 @@ class PavementMultiObjectiveEvaluator:
         mk0 = m0 + self.K * self.p
         self.markov_slice = slice(mk0, mk0 + self.K)
         self.haz_idx = mk0 + self.K
-        self.dimension = self.haz_idx + 1
+        t0 = self.haz_idx + 1
+        self.temporal_slice = (slice(t0, t0 + self.K) if self.enable_temporal
+                               else slice(t0, t0))
+        self.dimension = self.temporal_slice.stop
 
         # NSGA2Engine compatibility aliases
         self.vars = list(range(self.dimension))
@@ -127,7 +153,7 @@ class PavementMultiObjectiveEvaluator:
     # ------------------------------------------------------------------
     def decode(self, vec) -> Dict[str, Any]:
         v = np.asarray(vec, int)
-        return {
+        st = {
             "K": self.K,
             "membership": self.membership,
             "var_mask": v[self.mask_slice].reshape(self.K, self.p).astype(bool),
@@ -145,6 +171,14 @@ class PavementMultiObjectiveEvaluator:
                                      % len(self.hazard_families)],
             "gp_tree": None,
         }
+        # Presence of this key switches the regression layer onto the
+        # conditional-sample BIC; absence keeps the legacy level-scale score.
+        if self.enable_temporal:
+            st["temporal_models"] = [
+                self.temporal_models[int(g) % len(self.temporal_models)]
+                for g in v[self.temporal_slice]
+            ]
+        return st
 
     def fitness(self, vec):
         key = tuple(np.asarray(vec, int).tolist())
@@ -217,6 +251,42 @@ class PavementMultiObjectiveEvaluator:
         y_tr = d_tr[self.base.psi_col].to_numpy(float)
         return X_tr, X_te, y_tr
 
+    def _structure_with_fitted_form(self, st, fit, k):
+        """Structure copy whose cluster-k transform params are the ones the
+        evaluation actually fitted (estimable forms 6/7/8/10)."""
+        lam = np.asarray(st["lam"], float).copy()
+        shape = list(st.get("shape", [None] * self.K))
+        if fit is not None:
+            if fit.get("lam") is not None:
+                lam[k] = np.asarray(fit["lam"], float)
+            if fit.get("shape") is not None:
+                shape[k] = fit["shape"]
+        out = dict(st)
+        out["lam"], out["shape"] = lam, shape
+        return out
+
+    def _designs_from(self, frame, st, k):
+        """Form/dummy design for an arbitrary frame, using the training
+        category levels stored for cluster ``k`` (widths match by
+        construction)."""
+        mask = st["var_mask"][k]
+        names_a = [self.base.cont_vars[j] for j in range(self.p) if mask[j]]
+        lam_full = np.asarray(st["lam"][k], float)
+        form_id = int(st["form"][k])
+        lam_a = (lam_full[mask] if form_id == 6 else np.ones(int(mask.sum())))
+        shape = st["shape"][k]
+        Xc = frame[self.base.cont_vars].to_numpy(float)
+        num = build_design(Xc[:, mask], names_a, form_id, lam_a, shape=shape)
+        blocks = []
+        for c in self.base.cat_vars:
+            levels = self._cat_levels[k].get(c) or []
+            if c not in frame.columns or len(levels) < 2:
+                continue
+            b = pd.get_dummies(pd.Categorical(
+                frame[c].astype(str), categories=levels)).to_numpy(float)
+            blocks.append(b[:, 1:])
+        return np.hstack([num] + blocks)
+
     def front_records(self, vecs, objs):
         """Decode a front back into human-readable rows (with the layer
         BIC decomposition captured during evaluation)."""
@@ -239,32 +309,49 @@ class PavementMultiObjectiveEvaluator:
                 "active_vars": act,
                 "markov_on": list(st["markov_on"]),
                 "hazard_family": st["hazard_family"],
+                "temporal_models": list(st.get("temporal_models",
+                                               ["ols"] * self.K)),
             })
         return rows
 
     def _holdout_logrmse(self, st, res) -> float:
-        """RMSE on log(PSI) over the hold-out panel, refitting OLS on the
-        training panel with this module's own design construction."""
+        """RMSE on log(PSI) over the hold-out panel.
+
+        Clusters whose jointly selected error structure is non-OLS are
+        predicted one-step-ahead with the observed prior level (previous
+        hold-out observation, falling back to the last training
+        observation), so the hold-out metric reflects the temporal decision
+        layer as well as the form/mask layers.
+        """
         import os as _os
         dbg = _os.environ.get("PAVEMENT_SEARCH_DEBUG")
         sub = self.test_df[self.test_df[self.base.id_col].isin(
             self.base.seg_ids)]
+        codes = st.get("temporal_models")
+        temporal_fits = (getattr(res, "temporal", None) or {}) if res else {}
         sq_err, n_all = 0.0, 0
         for k in range(self.K):
             tr_ids = self.base.seg_ids[self.membership == k]
             d_te = sub[np.isin(sub[self.base.id_col].to_numpy(), tr_ids)]
             if len(d_te) == 0:
                 continue
+            model = str(codes[k]) if codes is not None else "ols"
+            fit_k = res.fits[k] if res is not None else None
+            st_k = self._structure_with_fitted_form(st, fit_k, k)
             try:
-                X_tr, X_te, y_tr = self._designs(st, res.fits[k], k, d_te)
-                beta, *_ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
-                pred = np.clip(X_te @ beta, -30.0, 30.0)
+                if model == "ols":
+                    X_tr, X_te, y_tr = self._designs(st_k, fit_k, k, d_te)
+                    beta, *_ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
+                    pred = np.clip(X_te @ beta, -30.0, 30.0)
+                else:
+                    pred = self._temporal_holdout_predict(
+                        st_k, k, d_te, model, temporal_fits.get(k))
                 y_log = np.log(np.clip(d_te[self.base.psi_col]
                                        .to_numpy(float), 1e-3, None))
                 sq_err += float(np.sum((pred - y_log) ** 2))
                 n_all += len(y_log)
                 if dbg:
-                    print(f"    [holdout] K{k} X={X_tr.shape}->{X_te.shape} "
+                    print(f"    [holdout] K{k} model={model} "
                           f"pred=[{pred.min():.2f},{pred.max():.2f}]")
             except Exception as exc:
                 if dbg:
@@ -275,6 +362,88 @@ class PavementMultiObjectiveEvaluator:
                 print("    [holdout] no hold-out rows matched")
             return float("nan")
         return float(np.sqrt(sq_err / n_all))
+
+    def _temporal_holdout_predict(self, st, k, d_te, model, t_rec):
+        """One-step-ahead hold-out predictions under a temporal error
+        structure, using observed prior levels (previous hold-out
+        observation, else the last training observation)."""
+        fit = (t_rec or {}).get("fit")
+        if fit is None:
+            raise RuntimeError("temporal fit missing from evaluation result")
+        id_c, psi_c, t_c = (self.base.id_col, self.base.psi_col,
+                            self.base.time_col)
+        d_tr = self._train_frames[k].sort_values([id_c, t_c],
+                                                 kind="mergesort")
+        order = np.lexsort((d_te[t_c].to_numpy(float),
+                            d_te[id_c].to_numpy()))
+        d_te_s = d_te.iloc[order].reset_index(drop=True)
+        X_tr = self._designs_from(d_tr.reset_index(drop=True), st, k)
+        X_te = self._designs_from(d_te_s, st, k)
+        y_tr = d_tr[psi_c].to_numpy(float)
+        y_te = d_te_s[psi_c].to_numpy(float)
+        b = np.asarray(fit.get("coefficients", []), dtype=float)
+        if b.size < 2 or X_te.shape[1] != b.size - 1:
+            raise RuntimeError(f"design/coefficient width mismatch for {model}")
+
+        Xb_te = b[0] + X_te @ b[1:]
+        Xb_tr = b[0] + X_tr @ b[1:]
+        seg_tr = d_tr[id_c].to_numpy()
+
+        prev_y, prev_x = {}, {}
+        res_hist = {}
+        for i in range(len(seg_tr)):
+            s = seg_tr[i]
+            prev_y[s] = float(y_tr[i])
+            prev_x[s] = X_tr[i]
+            h = res_hist.setdefault(s, [])
+            h.append(float(y_tr[i] - Xb_tr[i]))
+            if len(h) > 2:
+                del h[:-2]
+
+        rho = float(fit.get("rho_ar1", 0.0))
+        phi1 = float(fit.get("rho_ar2_1", 0.0))
+        phi2 = float(fit.get("rho_ar2_2", 0.0))
+        nur_rho = float(fit.get("rho_nur", 0.0))
+        nur_mu = float(fit.get("drift_nur", 0.0))
+        drift = float(fit.get("drift_rw", 0.0))
+
+        seg_te = d_te_s[id_c].to_numpy()
+        pred = np.empty(len(d_te_s), dtype=float)
+        for i in range(len(d_te_s)):
+            s = seg_te[i]
+            py = prev_y.get(s, np.nan)
+            px = prev_x.get(s, None)
+            has_prior = px is not None and np.isfinite(py)
+            if model == "random_walk":
+                if has_prior:
+                    pred[i] = py + drift + float((X_te[i] - px) @ b[1:])
+                else:
+                    pred[i] = b[0] + float(X_te[i] @ b[1:])
+            elif model == "nur":
+                if has_prior:
+                    pred[i] = nur_rho * py + (1.0 - nur_rho) * nur_mu \
+                        + Xb_te[i]
+                else:
+                    pred[i] = Xb_te[i]
+            elif model == "ar2":
+                h = res_hist.get(s, [])
+                e1 = h[-1] if len(h) >= 1 else 0.0
+                e2 = h[-2] if len(h) >= 2 else 0.0
+                pred[i] = Xb_te[i] + phi1 * e1 + phi2 * e2
+            else:  # ar1
+                h = res_hist.get(s, [])
+                pred[i] = Xb_te[i] + (rho * h[-1] if h else 0.0)
+            prev_y[s] = float(y_te[i])
+            prev_x[s] = X_te[i]
+            h = res_hist.setdefault(s, [])
+            h.append(float(y_te[i] - Xb_te[i]))
+            if len(h) > 2:
+                del h[:-2]
+
+        pred = np.clip(pred, -30.0, 30.0)
+        out = np.empty(len(d_te), dtype=float)
+        out[order] = pred
+        return out
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -393,12 +562,15 @@ def run_pavement_sparse_agds(
     generations: int = 20, seed: int = 0, max_time_s: Optional[float] = None,
     time_col: str = "age", treatment_col: Optional[str] = None,
     enable_markov: bool = False, enable_hazard: bool = False,
+    enable_temporal: bool = True, temporal_candidates=None,
 ):
     mo = PavementMultiObjectiveEvaluator(
         df, id_col, psi_col, cont_vars, cat_vars, membership,
         constraints=constraints, test_df=test_df,
         time_col=time_col, treatment_col=treatment_col,
-        enable_markov=enable_markov, enable_hazard=enable_hazard)
+        enable_markov=enable_markov, enable_hazard=enable_hazard,
+        enable_temporal=enable_temporal,
+        temporal_candidates=temporal_candidates)
     objective = PavementSparseAGDSObjective(
         mo, max_time_s=max_time_s, seed=seed)
     sparse_ea_agds(
@@ -423,6 +595,7 @@ def run_pavement_multiobjective_search(
     time_col: str = "age", treatment_col: Optional[str] = None,
     engine: str = "agds", max_time_s: Optional[float] = None,
     enable_markov: bool = False, enable_hazard: bool = False,
+    enable_temporal: bool = True, temporal_candidates=None,
 ):
     """Multi-objective pavement structure search (default SparseEA-AGDS).
 
@@ -436,13 +609,17 @@ def run_pavement_multiobjective_search(
             test_df=test_df, constraints=constraints,
             generations=generations, seed=seed, max_time_s=max_time_s,
             time_col=time_col, treatment_col=treatment_col,
-            enable_markov=enable_markov, enable_hazard=enable_hazard)
+            enable_markov=enable_markov, enable_hazard=enable_hazard,
+            enable_temporal=enable_temporal,
+            temporal_candidates=temporal_candidates)
 
     mo = PavementMultiObjectiveEvaluator(
         df, id_col, psi_col, cont_vars, cat_vars, membership,
         constraints=constraints, test_df=test_df,
         time_col=time_col, treatment_col=treatment_col,
-        enable_markov=enable_markov, enable_hazard=enable_hazard)
+        enable_markov=enable_markov, enable_hazard=enable_hazard,
+        enable_temporal=enable_temporal,
+        temporal_candidates=temporal_candidates)
     op = _PavementOperator(mo)
     # NSGA2Engine interprets max_iter as a TOTAL evaluation budget:
     #   generations = max_iter // pop_size

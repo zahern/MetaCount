@@ -36,6 +36,7 @@ structure = {
   "markov_on"     : (K,) bool transition modelling active,
   "hazard_on"     : (K,) bool hazard modelling active,
   "hazard_family" : str,
+  "temporal_models": (K,) str per-cluster error structure (e_k),
   "gp_tree"       : (K,) optional GP expression tree (form 11 only),
 }
 """
@@ -49,6 +50,11 @@ from .pavement_markov import (discretize, fit_transitions, forward_propagate,
                                 markov_bic, composite_bic)
 from .pavement_hazard import fit_hazard, FAMILIES
 
+# Per-cluster error structures selectable as a decision layer. "ols" keeps
+# the classical level-scale score; the others are scored on the conditional
+# sample (t >= 2, identical N, log-PSI levels) so they are like-for-like.
+TEMPORAL_MODELS = ("ols", "ar1", "ar2", "random_walk", "nur")
+
 
 # ---------------------------------------------------------------------------
 # Constraints (mirrors metacountregressor.ModelConstraints)
@@ -60,6 +66,8 @@ class Constraints:
         self.allow_lambda = True
         self.allow_markov = True
         self.allow_hazard = True
+        self.allow_temporal = True
+        self.allowed_temporal = list(TEMPORAL_MODELS)
         self.allowed_hazard_families = list(FAMILIES)
         self.max_clusters = 4
         self.min_cluster_size = 50
@@ -91,6 +99,7 @@ class EvalResult:
     fits: dict = field(default_factory=dict)
     transitions: dict = field(default_factory=dict)
     hazards: dict = field(default_factory=dict)
+    temporal: dict = field(default_factory=dict)
 
 
 class PavementDeteriorationEvaluator:
@@ -136,7 +145,8 @@ class PavementDeteriorationEvaluator:
         cont = self.df[self.cont_vars].to_numpy(float)
         p = len(self.cont_vars)
         bic_reg = bic_mk = bic_haz = 0.0
-        fits, transitions, hazards = {}, {}, {}
+        fits, transitions, hazards, temporal = {}, {}, {}, {}
+        temporal_codes = structure.get("temporal_models")
         total_n = 0
 
         for k in range(K):
@@ -163,7 +173,20 @@ class PavementDeteriorationEvaluator:
                            gp_callable=gp_call)
             n_k = len(y)
             total_n += n_k
-            k_reg = n_k * np.log(fit["rss"] / n_k) + fit["n_params"] * np.log(n_k)
+            if temporal_codes is None:
+                k_reg = n_k * np.log(fit["rss"] / n_k) \
+                    + fit["n_params"] * np.log(n_k)
+            else:
+                model = str(temporal_codes[k])
+                t_out = self._conditional_regression(df_k, y, fit, model)
+                if t_out is None:
+                    res = EvalResult(np.inf, np.inf, np.inf, np.inf)
+                    self.cache[key] = res
+                    return res
+                rss_c, n_c, k_c, t_fit = t_out
+                k_reg = n_c * np.log(rss_c / n_c) + k_c * np.log(n_c)
+                temporal[k] = {"model": model, "rss_cond": rss_c,
+                               "n_cond": n_c, "n_params": k_c, "fit": t_fit}
             bic_reg += k_reg
             fits[k] = fit
 
@@ -198,9 +221,72 @@ class PavementDeteriorationEvaluator:
 
         bic_tot = composite_bic(bic_reg, bic_mk, bic_haz)
         res = EvalResult(bic_tot, bic_reg, bic_mk, bic_haz,
-                         fits=fits, transitions=transitions, hazards=hazards)
+                         fits=fits, transitions=transitions, hazards=hazards,
+                         temporal=temporal)
         self.cache[key] = res
         return res
+
+    def _conditional_regression(self, df_k, y, form_fit, model):
+        """Like-for-like conditional-sample regression score (t >= 2).
+
+        The functional-form design is carried into the temporal fitters as
+        plain columns, so every error structure is estimated on the same
+        design and scored on log-PSI levels with the identical conditional
+        sample. ``ols`` keeps the form fit itself (same design, same beta),
+        just re-scored on the conditional sample so the BIC scale matches
+        the temporal structures.
+        """
+        import pandas as pd
+
+        from .pavement_clr import (fit_cluster_ar1, fit_cluster_ar2,
+                                   fit_cluster_random_walk, fit_cluster_nur,
+                                   _conditional_rss)
+        models = {
+            "ar1": fit_cluster_ar1,
+            "ar2": fit_cluster_ar2,
+            "random_walk": fit_cluster_random_walk,
+            "nur": fit_cluster_nur,
+        }
+        model = str(model)
+        if model != "ols" and model not in models:
+            return None
+        Xd = np.asarray(form_fit.get("design"), dtype=float)
+        if Xd.ndim != 2 or Xd.shape[0] != len(df_k):
+            return None
+
+        df_k = df_k.reset_index(drop=True)
+        order = np.lexsort((df_k[self.time_col].to_numpy(float),
+                            df_k[self.id_col].to_numpy()))
+        df_s = df_k.iloc[order].reset_index(drop=True)
+        cols = [f"d{i}" for i in range(Xd.shape[1])]
+        df_t = pd.DataFrame(Xd[order], columns=cols)
+        df_t.insert(0, self.id_col, df_s[self.id_col].to_numpy())
+        df_t.insert(1, self.psi_col, np.asarray(y, float)[order])
+
+        if model == "ols":
+            beta = np.asarray(form_fit.get("beta"), dtype=float)
+            X_int = np.hstack([np.ones((len(df_t), 1)), Xd[order]])
+            if X_int.shape[1] != len(beta):
+                return None
+            resid = df_t[self.psi_col].to_numpy(float) - X_int @ beta
+            t_fit = {"residuals": resid,
+                     "coefficients": beta,
+                     "n_params_total": int(form_fit.get("n_params",
+                                                        X_int.shape[1]))}
+        else:
+            t_fit = models[model](df_t, self.psi_col, cols, set(),
+                                  self.id_col)
+            if t_fit is None:
+                return None
+
+        rss_c, n_c = _conditional_rss(t_fit, model, df_t, self.id_col)
+        if not np.isfinite(rss_c) or n_c <= 0:
+            return None
+        k_c = int(t_fit.get("n_params_total",
+                            len(t_fit.get("coefficients", []))))
+        if n_c <= k_c:
+            return None
+        return float(rss_c), int(n_c), k_c, t_fit
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +329,7 @@ class MetacountRegressorBridge:
             "markov_on": [True] * K,
             "hazard_on": [True] * K,
             "hazard_family": "weibull",
+            "temporal_models": ["ols"] * K,
             "gp_tree": None,
         }
         if defaults:

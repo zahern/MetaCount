@@ -28,7 +28,7 @@ from __future__ import annotations
 import warnings
 from itertools import combinations as _it_comb
 from math import log, exp, pi, sqrt
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -342,6 +342,49 @@ def _bic(n: int, p: int, rss: float) -> float:
         return np.inf
     sigma2 = rss / n
     return n + n * log(2 * pi) + n * log(sigma2) + p * log(max(n, 1))
+
+
+def _conditional_rss(fit: dict, temporal_model: str, df_log: pd.DataFrame,
+                     segment_col: str) -> tuple:
+    """One-step-ahead RSS on the conditional sample (t >= 2 per segment).
+
+    Every temporal spec is scored on log-PSI LEVELS using the observed prior
+    level, so BIC values are comparable across error structures when the
+    temporal model is itself a decision variable in the SA search.
+    """
+    resid = np.asarray(fit.get("residuals", []), dtype=float)
+    if resid.size == 0 or resid.size != len(df_log):
+        return np.nan, 0
+    seg_ids = df_log[segment_col].values.astype(int)
+    model = str(temporal_model).strip().lower()
+    e = np.full(resid.size, np.nan, dtype=float)
+    for s in np.unique(seg_ids):
+        idx = np.where(seg_ids == s)[0]
+        if len(idx) < 2:
+            continue
+        r = resid[idx]
+        vals = np.empty(len(r), dtype=float)
+        if model == "ar1":
+            rho = float(fit.get("rho_ar1", 0.0))
+            for t in range(len(r)):
+                vals[t] = np.nan if t == 0 else r[t] - rho * r[t - 1]
+        elif model == "ar2":
+            phi1 = float(fit.get("rho_ar2_1", 0.0))
+            phi2 = float(fit.get("rho_ar2_2", 0.0))
+            for t in range(len(r)):
+                if t == 0:
+                    vals[t] = np.nan
+                else:
+                    lag2 = r[t - 2] if t >= 2 else 0.0
+                    vals[t] = r[t] - phi1 * r[t - 1] - phi2 * lag2
+        else:
+            vals = r.copy()
+            vals[0] = np.nan
+        e[idx] = vals
+    mask = np.isfinite(e)
+    if not mask.any():
+        return np.nan, 0
+    return float(np.sum(e[mask] ** 2)), int(mask.sum())
 
 
 def _build_design_matrix(
@@ -1237,6 +1280,18 @@ class PavementCLROptimizer:
         "ols" (default), "ar1", "random_walk", or "nur".  The AR(1) and
         near-unit-root (NUR) likelihoods are accelerated by the optional
         Numba kernels.  Forecast helpers assume the default OLS fits.
+    temporal_search : bool
+        When True, each cluster's error structure is itself a decision
+        variable mutated inside the SA loop and scored with the
+        conditional-sample BIC (t >= 2, level scale), so the temporal
+        layer is selected jointly with the partition and variable
+        selection rather than compared post hoc.
+    temporal_candidates : sequence of str, optional
+        Candidate error structures for the joint search
+        (default: "ols", "ar1", "random_walk", "nur").
+    temporal_flip_prob : float
+        Probability that one cluster's error structure is mutated per SA
+        neighbour when temporal_search is enabled.
 
     Examples
     --------
@@ -1267,12 +1322,26 @@ class PavementCLROptimizer:
         n_neighbors: int = 3,
         n_jobs: int = 1,
         temporal_model: str = "ols",
+        temporal_search: bool = False,
+        temporal_candidates: Optional[Sequence[str]] = None,
+        temporal_flip_prob: float = 0.15,
     ):
         if temporal_model not in self._TEMPORAL_MODELS:
             raise ValueError(
                 f"temporal_model must be one of {self._TEMPORAL_MODELS}, "
                 f"got {temporal_model!r}"
             )
+        candidates = (tuple(temporal_candidates)
+                      if temporal_candidates is not None
+                      else ("ols", "ar1", "random_walk", "nur"))
+        if not candidates:
+            raise ValueError("temporal_candidates must be a non-empty sequence")
+        for cand in candidates:
+            if cand not in self._TEMPORAL_MODELS:
+                raise ValueError(
+                    f"temporal_candidates entries must be one of "
+                    f"{self._TEMPORAL_MODELS}, got {cand!r}"
+                )
         self.variable_names = list(variable_names)
         self.categorical_vars = set(categorical_vars)
         self.psi_col = psi_col
@@ -1287,6 +1356,9 @@ class PavementCLROptimizer:
         self.n_neighbors = n_neighbors
         self.n_jobs = n_jobs
         self.temporal_model = temporal_model
+        self.temporal_search = bool(temporal_search)
+        self.temporal_candidates = candidates
+        self.temporal_flip_prob = float(temporal_flip_prob)
 
     # ----------------------------------------------------------
     # Public interface
@@ -1325,12 +1397,22 @@ class PavementCLROptimizer:
         seg_ids, obs_per_seg = self._build_segment_index(df_log)
         n_seg = len(seg_ids)
 
+        temporal_search = bool(self.temporal_search)
+        if temporal_search:
+            start_code = ("ols" if "ols" in self.temporal_candidates
+                          else self.temporal_candidates[0])
+        else:
+            start_code = self.temporal_model
+        codes = [start_code] * n_clusters
+
         clusters = self._random_init(seg_ids, obs_per_seg, n_clusters, rng)
-        fits = self._fit_all_clusters(df_log, clusters, n_clusters)
-        best_bic = self._total_bic(fits)
+        fits = self._fit_all_clusters(df_log, clusters, n_clusters, codes)
+        best_bic = (self._total_bic_cond(fits) if temporal_search
+                    else self._total_bic(fits))
 
         best_clusters = clusters.copy()
         best_fits = [f.copy() if f else None for f in fits]
+        best_codes = list(codes)
         convergence = [(0, best_bic)]
         temp = self.temp_init
         iteration = 0
@@ -1339,18 +1421,24 @@ class PavementCLROptimizer:
             for _ in range(self.n_neighbors):
                 nbr_c = self._perturb_clusters(clusters, seg_ids, obs_per_seg,
                                                n_clusters, rng)
-                nbr_fits = self._fit_all_clusters(df_log, nbr_c, n_clusters)
+                nbr_codes = (self._perturb_temporal_codes(codes, rng)
+                             if temporal_search else codes)
+                nbr_fits = self._fit_all_clusters(df_log, nbr_c, n_clusters,
+                                                  nbr_codes)
                 if any(f is None for f in nbr_fits):
                     continue
-                nbr_bic = self._total_bic(nbr_fits)
+                nbr_bic = (self._total_bic_cond(nbr_fits) if temporal_search
+                           else self._total_bic(nbr_fits))
                 diff = nbr_bic - best_bic
                 if diff < 0 or rng.random() < exp(-abs(diff / self.boltzmann) / max(temp, 1e-30)):
                     clusters = nbr_c
                     fits = nbr_fits
+                    codes = list(nbr_codes)
                     if nbr_bic < best_bic:
                         best_bic = nbr_bic
                         best_clusters = nbr_c.copy()
                         best_fits = [f.copy() if f else None for f in nbr_fits]
+                        best_codes = list(nbr_codes)
 
             temp *= self.cooling_rate
             iteration += 1
@@ -1367,6 +1455,8 @@ class PavementCLROptimizer:
             "iterations": iteration,
             "convergence": convergence,
             "n_clusters": n_clusters,
+            "temporal_search": temporal_search,
+            "temporal_models": list(best_codes),
         }
 
     def search_k(
@@ -1606,42 +1696,58 @@ class PavementCLROptimizer:
                 return new_c
         return clusters.copy()
 
-    def _fit_cluster(self, df_log: pd.DataFrame, cid: int, clusters: np.ndarray):
+    def _fit_cluster(self, df_log: pd.DataFrame, cid: int, clusters: np.ndarray,
+                     temporal_model: Optional[str] = None):
+        model = str(temporal_model or self.temporal_model)
         segs = set(np.where(clusters == cid)[0])
         dfc = df_log[df_log[self.segment_col].isin(segs)]
         if len(dfc) < self.min_observations:
             return None
-        if self.temporal_model == "ols":
-            return fit_cluster_ols(dfc, self.psi_col, self.variable_names,
-                                   self.categorical_vars,
-                                   self.level_of_significance, self.max_vif)
-        if self.temporal_model == "ar1":
-            return fit_cluster_ar1(dfc, self.psi_col, self.variable_names,
-                                   self.categorical_vars, self.segment_col)
-        if self.temporal_model == "ar2":
-            return fit_cluster_ar2(dfc, self.psi_col, self.variable_names,
-                                   self.categorical_vars, self.segment_col)
-        if self.temporal_model == "random_walk":
-            return fit_cluster_random_walk(dfc, self.psi_col, self.variable_names,
-                                           self.categorical_vars, self.segment_col)
-        return fit_cluster_nur(dfc, self.psi_col, self.variable_names,
-                               self.categorical_vars, self.segment_col)
+        if model == "ols":
+            mf = fit_cluster_ols(dfc, self.psi_col, self.variable_names,
+                                 self.categorical_vars,
+                                 self.level_of_significance, self.max_vif)
+        elif model == "ar1":
+            mf = fit_cluster_ar1(dfc, self.psi_col, self.variable_names,
+                                 self.categorical_vars, self.segment_col)
+        elif model == "ar2":
+            mf = fit_cluster_ar2(dfc, self.psi_col, self.variable_names,
+                                 self.categorical_vars, self.segment_col)
+        elif model == "random_walk":
+            mf = fit_cluster_random_walk(dfc, self.psi_col, self.variable_names,
+                                         self.categorical_vars, self.segment_col)
+        else:
+            mf = fit_cluster_nur(dfc, self.psi_col, self.variable_names,
+                                 self.categorical_vars, self.segment_col)
+        if mf is not None:
+            rss_c, n_c = _conditional_rss(mf, model, dfc, self.segment_col)
+            k_c = int(mf.get("n_params_total", len(mf.get("coefficients", []))))
+            mf["temporal_model"] = model
+            mf["rss_cond"] = float(rss_c)
+            mf["n_cond"] = int(n_c)
+            mf["bic_cond"] = (_bic(n_c, k_c, rss_c)
+                              if np.isfinite(rss_c) and n_c > k_c else np.inf)
+        return mf
 
-    def _fit_all_clusters(self, df_log, clusters, n_cl):
+    def _fit_all_clusters(self, df_log, clusters, n_cl, temporal_models=None):
+        codes = (list(temporal_models) if temporal_models is not None
+                 else [self.temporal_model] * n_cl)
         if self.n_jobs == 1 or n_cl < 2:
-            return [self._fit_cluster(df_log, ci, clusters) for ci in range(1, n_cl + 1)]
+            return [self._fit_cluster(df_log, ci, clusters, codes[ci - 1])
+                    for ci in range(1, n_cl + 1)]
         # Compile the Numba kernels once in the main thread so the AR(1)/NUR
         # fitters do not trigger concurrent first-call compilation.
-        if self.temporal_model in ("ar1", "nur"):
+        if any(c in ("ar1", "nur") for c in codes):
             warm_up_numba_kernels()
         try:
             from joblib import Parallel, delayed
             return Parallel(n_jobs=self.n_jobs, prefer="threads")(
-                delayed(self._fit_cluster)(df_log, ci, clusters)
+                delayed(self._fit_cluster)(df_log, ci, clusters, codes[ci - 1])
                 for ci in range(1, n_cl + 1)
             )
         except ImportError:
-            return [self._fit_cluster(df_log, ci, clusters) for ci in range(1, n_cl + 1)]
+            return [self._fit_cluster(df_log, ci, clusters, codes[ci - 1])
+                    for ci in range(1, n_cl + 1)]
 
     def _total_bic(self, fits):
         total = 0.0
@@ -1650,6 +1756,38 @@ class PavementCLROptimizer:
                 return np.inf
             total += f.get("bic", np.inf)
         return total
+
+    def _total_bic_cond(self, fits):
+        """Joint BIC on the conditional sample (t >= 2, level scale).
+
+        Uses rss_cond / n_cond tagged by ``_fit_cluster`` so clusterwise
+        error structures are scored like-for-like inside the SA loop.
+        """
+        total_rss, total_n, total_k = 0.0, 0, 0
+        for f in fits:
+            if f is None:
+                return np.inf
+            rss_c = float(f.get("rss_cond", np.nan))
+            n_c = int(f.get("n_cond", 0))
+            k_c = int(f.get("n_params_total", len(f.get("coefficients", []))))
+            if not np.isfinite(rss_c) or n_c <= k_c:
+                return np.inf
+            total_rss += rss_c
+            total_n += n_c
+            total_k += k_c
+        if total_n <= 0:
+            return np.inf
+        total_k += max(len(fits) - 1, 0)
+        return _bic(total_n, total_k, total_rss)
+
+    def _perturb_temporal_codes(self, codes, rng):
+        new_codes = list(codes)
+        if rng.random() < self.temporal_flip_prob:
+            k = int(rng.integers(0, len(new_codes)))
+            alts = [c for c in self.temporal_candidates if c != new_codes[k]]
+            if alts:
+                new_codes[k] = alts[int(rng.integers(0, len(alts)))]
+        return new_codes
 
 
 # ============================================================
