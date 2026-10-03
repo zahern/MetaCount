@@ -130,6 +130,12 @@ __all__ = [
     "fit_hazard",
     "GPSymbolicRegressor",
     "tree_to_lambda",
+    # Pavement structure -> Approximate Bayesian Computation (ABC)
+    "export_pavement_bayes",
+    "export_pavement_structure",
+    "run_pavement_abc",
+    "compare_pavement_coefficients",
+    "compare_pavement_outcomes",
     # Survival / hazard.  AFT_FAMILIES report time ratios (exp(beta));
     # PH_FAMILIES report hazard ratios (exp(beta)).  Not interchangeable.
     "AFTFitter",
@@ -273,6 +279,12 @@ _EXPORTS = {
     "fit_hazard": ("pavement_hazard", "fit_hazard"),
     "GPSymbolicRegressor": ("pavement_gp", "GPSymbolicRegressor"),
     "tree_to_lambda": ("pavement_gp", "tree_to_lambda"),
+    # Pavement structure -> Approximate Bayesian Computation (ABC)
+    "export_pavement_bayes": ("pavement_bayes", "export_search_result"),
+    "export_pavement_structure": ("pavement_bayes", "export_structure"),
+    "run_pavement_abc": ("pavement_bayes", "run_abc"),
+    "compare_pavement_coefficients": ("pavement_bayes", "compare_coefficients"),
+    "compare_pavement_outcomes": ("pavement_bayes", "compare_outcomes"),
 }
 
 _LEGACY_EXPORTS = {
