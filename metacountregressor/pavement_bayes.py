@@ -46,6 +46,7 @@ __all__ = [
     "run_abc",
     "compare_coefficients",
     "compare_outcomes",
+    "make_bayes_report",
 ]
 
 
@@ -299,17 +300,18 @@ def _summaries(model, X, y, seg_ids):
     return np.concatenate([np.atleast_1d(s).ravel() for s in stats])
 
 
-def _draw_prior(model, m, y, rng, prior_sd):
+def _draw_prior(model, m, y, rng, prior_sd, sigma_scale=None):
     sd = float(prior_sd)
+    sig = float(sigma_scale) if sigma_scale else sd
     if model == "random_walk":
         return {
             "drift": rng.normal(0.0, sd),
             "beta": rng.normal(0.0, sd, size=m),
-            "sigma": abs(rng.normal(0.0, sd)),
+            "sigma": abs(rng.normal(0.0, sig)),
         }
     params = {
         "beta": rng.normal(0.0, sd, size=m + 1),
-        "sigma": abs(rng.normal(0.0, sd)),
+        "sigma": abs(rng.normal(0.0, sig)),
     }
     if model == "ar1":
         params["rho"] = rng.uniform(-0.99, 0.99)
@@ -424,15 +426,39 @@ def _posterior_names(model, m):
     return names
 
 
+def _clip_params(model, T):
+    """Keep regression-adjusted draws inside the prior support."""
+    T = np.array(T, dtype=float, copy=True)
+    names = _posterior_names(model, T.shape[1] - _n_extra(model))
+    for j, name in enumerate(names):
+        if name == "sigma":
+            T[:, j] = np.maximum(T[:, j], 1e-6)
+        elif name == "rho":
+            lo = 0.85 if model == "nur" else -0.999
+            T[:, j] = np.clip(T[:, j], lo, 0.999)
+        elif name in ("phi1", "phi2"):
+            T[:, j] = np.clip(T[:, j], -0.999, 0.999)
+    return T
+
+
+def _n_extra(model):
+    if model == "random_walk":
+        return 2
+    return 2 + {"ar1": 1, "ar2": 2, "nur": 2}.get(model, 0)
+
+
 def run_abc(export_dir, out_dir=None, n_sims: int = 3000,
             n_posterior: int = 300, prior_sd: Optional[float] = None,
-            adjustment: str = "linear", seed: int = 0,
-            clusters=None) -> dict:
-    """Rejection ABC (optional local-linear adjustment) on an export bundle.
+            adjustment: str = "ridge", seed: int = 0,
+            clusters=None, sigma_prior_scale: Optional[float] = None) -> dict:
+    """Rejection ABC (optional local-linear/ridge adjustment) on an export.
 
     ``prior_sd`` is the scale of the coefficient/drift/mu priors. When None
-    (default) it is set to ``5 * std(y)`` so the prior comfortably covers
-    the observed response scale; pass a value to override.
+    (default) it is set from the observed response scale (``std(y)`` and the
+    pilot residual scale). ``sigma_prior_scale`` controls the Half-Normal
+    prior on the innovation SD; when None it is set to three times the pilot
+    residual SD (extracted from the observed summaries), which keeps the
+    observed region well inside the prior support.
     """
     spec, frames, _ = load_export(export_dir)
     out_dir = out_dir or export_dir
@@ -454,12 +480,16 @@ def run_abc(export_dir, out_dir=None, n_sims: int = 3000,
         X = frame[xcols].to_numpy(float)
         m = X.shape[1]
 
-        sd_k = (float(prior_sd) if prior_sd is not None
-                else 5.0 * max(float(np.std(y)), 1.0))
         s_obs = _summaries(model, X, y, seg_ids)
+        sigma0 = float(s_obs[m + 1]) if (len(s_obs) > m + 1
+                                         and np.isfinite(s_obs[m + 1])) else 0.1
+        sig_scale = (float(sigma_prior_scale) if sigma_prior_scale
+                     else 3.0 * max(sigma0, 1e-6))
+        sd_k = (float(prior_sd) if prior_sd is not None
+                else max(float(np.std(y)), 3.0 * max(sigma0, 1e-6)))
         sims, thetas = [], []
         for i in range(int(n_sims)):
-            params = _draw_prior(model, m, y, rng, sd_k)
+            params = _draw_prior(model, m, y, rng, sd_k, sig_scale)
             y_sim = _simulate(model, X, y, seg_ids, params, rng)
             s = _summaries(model, X, y_sim, seg_ids)
             if not np.all(np.isfinite(s)):
@@ -479,13 +509,25 @@ def run_abc(export_dir, out_dir=None, n_sims: int = 3000,
         acc = np.argsort(dist)[:n_acc]
         S_acc, T_acc = S_std[acc], T[acc]
 
-        if adjustment == "linear":
+        q = S_std.shape[1]
+        if adjustment in ("linear", "ridge") and n_acc >= 3 * (q + 1):
             Sb = S_acc - S_acc.mean(axis=0)
-            Tb = T_acc - T_acc.mean(axis=0)
-            A = np.hstack([np.ones((len(Sb), 1)), Sb])
-            coef, *_ = np.linalg.lstsq(A, T_acc, rcond=None)
+            A = np.hstack([np.ones((n_acc, 1)), Sb])
+            if adjustment == "ridge":
+                lam = 0.1 * np.trace(Sb.T @ Sb) / max(q, 1)
+                G = A.T @ A + np.diag([0.0] + [lam] * q)
+                try:
+                    coef = np.linalg.solve(G, A.T @ T_acc)
+                except np.linalg.LinAlgError:
+                    coef, *_ = np.linalg.lstsq(A, T_acc, rcond=None)
+            else:
+                coef, *_ = np.linalg.lstsq(A, T_acc, rcond=None)
             T_post = T_acc + (s_obs_std - S_acc.mean(axis=0)) @ coef[1:]
+            T_post = _clip_params(model, T_post)
         else:
+            if adjustment in ("linear", "ridge"):
+                print(f"[abc] cluster {k}: only {n_acc} accepted draws for "
+                      f"{q} summaries -> skipping regression adjustment")
             T_post = T_acc
 
         names = _posterior_names(model, m)
@@ -500,6 +542,8 @@ def run_abc(export_dir, out_dir=None, n_sims: int = 3000,
             "n_posterior": int(n_acc),
             "adjustment": adjustment,
             "prior_sd": sd_k,
+            "sigma_prior_scale": sig_scale,
+            "pilot_sigma": sigma0,
             "parameters": {},
         }
         for name in names:
@@ -540,7 +584,9 @@ def _point_predict(frame, model, params, id_c, time_col, psi_c):
         drift = float(params["drift"])
         pred = np.empty(len(y))
         for idx in slices:
-            pred[idx[0]] = drift + float(X[idx[0]] @ b)
+            # differenced coefficients carry no level information: anchor the
+            # first row to the observed level (pipeline convention, residual 0)
+            pred[idx[0]] = y[idx[0]]
             for t in range(1, len(idx)):
                 dx = X[idx[t]] - X[idx[t - 1]]
                 pred[idx[t]] = y[idx[t - 1]] + drift + float(dx @ b)
@@ -695,6 +741,230 @@ def compare_outcomes(export_dir, out_csv=None, n_draws: int = 200,
     out_csv = out_csv or os.path.join(export_dir, "outcome_comparison.csv")
     df.to_csv(out_csv, index=False)
     return df
+
+
+# ---------------------------------------------------------------------------
+# paper-ready report
+# ---------------------------------------------------------------------------
+def _design_labels(spec, cl):
+    """Human-readable design-column labels where the mapping is unambiguous."""
+    if cl.get("x_labels"):
+        return list(cl["x_labels"])
+    cont = list(spec.get("cont_vars", []))
+    mask = cl.get("mask")
+    form = int(cl.get("form", 0))
+    m = len(cl.get("x_columns", []))
+    active = ([v for v, mk in zip(cont, mask) if mk]
+              if mask and len(mask) == len(cont) else [])
+    if len(active) == m:
+        if form == 0:
+            return [f"ln({v})" for v in active]
+        if form == 1:
+            return list(active)
+        if form == 2:
+            return [f"1/{v}" for v in active]
+        if form == 3:
+            return [v if v == "age" else f"ln({v})" for v in active]
+    return [f"x{i}" for i in range(m)]
+
+
+def _tex_param(label):
+    label = str(label)
+    prefix = ""
+    if label.startswith("\u0394"):  # Greek Delta
+        prefix = r"$\Delta$"
+        label = label[1:]
+    if label.startswith("ln(") and label.endswith(")"):
+        return prefix + r"\ln(\text{%s})" % label[3:-1].replace("_", r"\_")
+    if label.startswith("1/"):
+        return prefix + r"1/\text{%s}" % label[2:].replace("_", r"\_")
+    return prefix + label.replace("_", r"\_")
+
+
+def _param_names(spec, cl):
+    labels = _design_labels(spec, cl)
+    model = str(cl["temporal_model"])
+    names = {}
+    if model == "random_walk":
+        names["drift"] = "Drift"
+    else:
+        names["beta_0"] = "Intercept"
+    for i in range(len(labels)):
+        names[f"x{i}"] = _tex_param(labels[i])
+    names.update({"sigma": r"$\sigma$", "rho": r"$\rho$",
+                  "phi1": r"$\phi_1$", "phi2": r"$\phi_2$",
+                  "mu": r"$\mu$"})
+    return names
+
+
+def make_bayes_report(export_dir, out_dir=None, prefix="bayes", dpi=200):
+    """Write paper-ready tables/figures comparing the searched model with
+    its ABC posterior. Returns the dict of written paths."""
+    spec, _, _ = load_export(export_dir)
+    out_dir = out_dir or export_dir
+    coef = compare_coefficients(export_dir)
+    outc = compare_outcomes(export_dir)
+    written = {}
+
+    # ---- coefficient table --------------------------------------------
+    lines = [
+        "% Auto-generated by pavement_bayes.make_bayes_report",
+        r"\begin{table}[h]",
+        r"\centering",
+        r"\small",
+        (r"\caption{Coefficient comparison between the searched (point) "
+         r"model and its Approximate Bayesian Computation posterior. "
+         r"``ABC mean'' is the posterior mean and the last column flags "
+         r"whether the search estimate lies inside the 95\% credible "
+         r"interval.}"),
+        r"\label{tab:bayes_coefficients}",
+        r"\begin{tabular}{llcccc}",
+        r"\toprule",
+        r"Cluster & Parameter & Search & ABC mean & 95\% CI & In CI \\",
+        r"\midrule",
+    ]
+    for cl in spec["clusters"]:
+        k = cl["cluster"]
+        sub = coef[coef["cluster"] == k]
+        if sub.empty:
+            continue
+        names = _param_names(spec, cl)
+        lines.append(r"\multicolumn{6}{l}{\textbf{Cluster %d (%s)}} \\"
+                     % (k, str(cl["temporal_model"]).replace("_", r"\_")))
+        for i, (_, r) in enumerate(sub.iterrows()):
+            lines.append(
+                "%s & %s & %.3f & %.3f & [%.3f, %.3f] & %s \\\\"
+                % (str(k) if i == 0 else "",
+                   names.get(r["parameter"], _tex_param(r["parameter"])),
+                   float(r["point_estimate"]),
+                   float(r["posterior_mean"]),
+                   float(r["ci_2.5"]), float(r["ci_97.5"]),
+                   r"\checkmark" if bool(r["inside_95ci"])
+                   else r"$\times$"))
+        lines.append(r"\midrule")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    p = os.path.join(out_dir, f"{prefix}_coeff_table.tex")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    written["coeff_table"] = p
+
+    # ---- outcome table --------------------------------------------------
+    lines = [
+        "% Auto-generated by pavement_bayes.make_bayes_report",
+        r"\begin{table}[h]",
+        r"\centering",
+        r"\small",
+        (r"\caption{One-step predictive error: searched point model versus "
+         r"ABC posterior-predictive mean. Draw RMSE summarises the spread "
+         r"of the posterior predictive over %d draws.}" % 200),
+        r"\label{tab:bayes_outcomes}",
+        r"\begin{tabular}{llccccc}",
+        r"\toprule",
+        (r"Cluster & Split & $n$ & RMSE (search) & RMSE (ABC mean) & "
+         r"MAE (search) & MAE (ABC mean) \\"),
+        r"\midrule",
+    ]
+    for _, r in outc.iterrows():
+        lines.append(
+            "%d & %s & %d & %.3f & %.3f & %.3f & %.3f \\\\"
+            % (int(r["cluster"]), str(r["split"]), int(r["n"]),
+               float(r["rmse_point"]), float(r["rmse_post_mean"]),
+               float(r["mae_point"]), float(r["mae_post_mean"])))
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    p = os.path.join(out_dir, f"{prefix}_outcome_table.tex")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    written["outcome_table"] = p
+
+    # ---- figures --------------------------------------------------------
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        zrows = coef[np.isfinite(coef["z_point_vs_post"].to_numpy(float))]
+        labels, zvals = [], []
+        for _, r in zrows.iterrows():
+            names = _param_names(spec, {c["cluster"]: c
+                                        for c in spec["clusters"]}[r["cluster"]])
+            label = names.get(r["parameter"], _tex_param(r["parameter"]))
+            labels.append(f"C{int(r['cluster'])} {label}")
+            zvals.append(float(r["z_point_vs_post"]))
+        if labels:
+            order = np.argsort(np.abs(zvals))
+            fig, ax = plt.subplots(figsize=(6.0, max(2.2, 0.22 * len(labels))))
+            ax.barh(np.arange(len(labels)),
+                    [zvals[i] for i in order], color="#4477aa")
+            ax.axvline(0.0, color="k", lw=0.8)
+            ax.axvline(1.96, color="r", lw=0.8, ls="--")
+            ax.axvline(-1.96, color="r", lw=0.8, ls="--")
+            ax.set_yticks(np.arange(len(labels)))
+            ax.set_yticklabels([labels[i] for i in order], fontsize=7)
+            ax.set_xlabel("search estimate vs ABC posterior (z)")
+            fig.tight_layout()
+            for ext in ("pdf", "png"):
+                fig.savefig(os.path.join(out_dir,
+                                         f"{prefix}_coeff_compare.{ext}"),
+                            dpi=dpi)
+            plt.close(fig)
+            written["coeff_figure"] = os.path.join(
+                out_dir, f"{prefix}_coeff_compare.pdf")
+
+        if len(outc):
+            fig, ax = plt.subplots(figsize=(6.0, 3.0))
+            xlabels = [f"C{int(r.cluster)} {r.split}" for r in outc.itertuples()]
+            pos = np.arange(len(outc))
+            ax.bar(pos - 0.18, outc["rmse_point"], width=0.36,
+                   label="search")
+            ax.bar(pos + 0.18, outc["rmse_post_mean"], width=0.36,
+                   label="ABC mean")
+            ax.set_xticks(pos)
+            ax.set_xticklabels(xlabels, fontsize=7)
+            ax.set_ylabel("one-step RMSE")
+            ax.legend()
+            fig.tight_layout()
+            for ext in ("pdf", "png"):
+                fig.savefig(os.path.join(out_dir,
+                                         f"{prefix}_outcome.{ext}"), dpi=dpi)
+            plt.close(fig)
+            written["outcome_figure"] = os.path.join(
+                out_dir, f"{prefix}_outcome.pdf")
+    except ImportError:
+        pass
+
+    # ---- combined fragment ---------------------------------------------
+    frag = [
+        "% Auto-generated by pavement_bayes.make_bayes_report -- \\input me",
+    ]
+    frag += [r"\input{%s_coeff_table.tex}" % prefix,
+             r"\input{%s_outcome_table.tex}" % prefix]
+    if "coeff_figure" in written:
+        frag += [
+            r"\begin{figure}[h]",
+            r"\centering",
+            r"\includegraphics[width=0.9\textwidth]{%s_coeff_compare.pdf}"
+            % prefix,
+            (r"\caption{Difference between the searched estimates and the "
+             r"ABC posterior, in posterior standard-deviation units; dashed "
+             r"lines mark $\pm 1.96$.}"),
+            r"\label{fig:bayes_coeff}",
+            r"\end{figure}",
+        ]
+    if "outcome_figure" in written:
+        frag += [
+            r"\begin{figure}[h]",
+            r"\centering",
+            r"\includegraphics[width=0.8\textwidth]{%s_outcome.pdf}" % prefix,
+            (r"\caption{One-step predictive RMSE: searched point model "
+             r"versus ABC posterior-predictive mean.}"),
+            r"\label{fig:bayes_outcome}",
+            r"\end{figure}",
+        ]
+    p = os.path.join(out_dir, f"{prefix}_report.tex")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(frag) + "\n")
+    written["report"] = p
+    return written
 
 
 def _params_from_draw(model, row, cl):

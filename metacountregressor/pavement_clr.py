@@ -1237,6 +1237,36 @@ def forecast_to_threshold(
 # PavementCLROptimizer — SA-based cluster + variable search
 # ============================================================
 
+def _adjusted_rand(a, b) -> float:
+    a = np.asarray(a)
+    b = np.asarray(b)
+    try:
+        from sklearn.metrics import adjusted_rand_score
+        return float(adjusted_rand_score(a, b))
+    except ImportError:
+        n = len(a)
+        if n < 2:
+            return 1.0
+        agree = total = 0
+        for i in range(n):
+            for j in range(i + 1, n):
+                total += 1
+                agree += int((a[i] == a[j]) == (b[i] == b[j]))
+        return agree / total if total else 1.0
+
+
+def _label_map(ref, other, K) -> dict:
+    """Best 1:1 map from other labels to ref labels (Hungarian)."""
+    from scipy.optimize import linear_sum_assignment
+    cont = np.zeros((K, K), dtype=int)
+    for k in range(1, K + 1):
+        mask = np.asarray(ref) == k
+        for j in range(1, K + 1):
+            cont[k - 1, j - 1] = int(np.sum(mask & (np.asarray(other) == j)))
+    rows, cols = linear_sum_assignment(-cont)
+    return {int(cols[i]) + 1: int(rows[i]) + 1 for i in range(K)}
+
+
 class PavementCLROptimizer:
     """
     Simultaneous cluster assignment and variable selection for pavement CLR.
@@ -1458,6 +1488,69 @@ class PavementCLROptimizer:
             "temporal_search": temporal_search,
             "temporal_models": list(best_codes),
         }
+
+    def fit_consensus(
+        self,
+        df_log: pd.DataFrame,
+        n_clusters: int,
+        n_seeds: int = 10,
+        seed: int = 0,
+        max_iterations: int = 1000,
+        verbose: bool = False,
+    ) -> dict:
+        """Multi-start consensus: run the SA from several seeds and return
+        the medoid model (highest mean pairwise ARI to the other runs) plus
+        stability diagnostics.
+
+        A high ``mean_pairwise_ari`` means the recovered partition is not an
+        arbitrary SA optimum. ``temporal_code_modes`` reports the modal
+        per-cluster error structure across restarts (labels aligned to the
+        medoid by optimal matching), which is the temporal-layer analogue of
+        partition stability.
+
+        Returns dict: best (the medoid result), stability, runs, ari_matrix.
+        """
+        from collections import Counter
+
+        runs = []
+        for s in range(int(n_seeds)):
+            runs.append(self.fit(df_log, n_clusters, seed=int(seed) + s,
+                                 max_iterations=max_iterations, verbose=False))
+        labels = [np.asarray(r["clusters"], int) for r in runs]
+        n_runs = len(runs)
+        aris = np.eye(n_runs)
+        for i in range(n_runs):
+            for j in range(i + 1, n_runs):
+                a = _adjusted_rand(labels[i][1:], labels[j][1:])
+                aris[i, j] = aris[j, i] = a
+        tri = np.triu_indices(n_runs, 1)
+        mean_ari = aris.mean(axis=1)
+        med = int(np.argmax(mean_ari))
+
+        counts = [Counter() for _ in range(n_clusters)]
+        for r in range(n_runs):
+            codes = runs[r].get("temporal_models")
+            if not codes:
+                continue
+            mapping = _label_map(labels[med], labels[r], n_clusters)
+            for other_lab, ref_lab in mapping.items():
+                counts[ref_lab - 1][str(codes[other_lab - 1])] += 1
+
+        stability = {
+            "n_seeds": n_runs,
+            "medoid_run": med,
+            "mean_pairwise_ari": float(np.mean(aris[tri])) if n_runs > 1 else 1.0,
+            "min_pairwise_ari": float(np.min(aris[tri])) if n_runs > 1 else 1.0,
+            "mean_ari_per_run": [float(v) for v in mean_ari],
+            "temporal_code_modes": [dict(c) for c in counts],
+        }
+        if verbose:
+            print(f"    consensus: mean pairwise ARI="
+                  f"{stability['mean_pairwise_ari']:.3f} "
+                  f"(min {stability['min_pairwise_ari']:.3f}, "
+                  f"medoid run {med})")
+        return {"best": runs[med], "stability": stability, "runs": runs,
+                "ari_matrix": aris}
 
     def search_k(
         self,

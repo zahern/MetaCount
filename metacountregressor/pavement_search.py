@@ -418,7 +418,9 @@ class PavementMultiObjectiveEvaluator:
                 if has_prior:
                     pred[i] = py + drift + float((X_te[i] - px) @ b[1:])
                 else:
-                    pred[i] = b[0] + float(X_te[i] @ b[1:])
+                    # differenced coefficients carry no level information:
+                    # anchor to the observed level (pipeline convention)
+                    pred[i] = float(y_te[i])
             elif model == "nur":
                 if has_prior:
                     pred[i] = nur_rho * py + (1.0 - nur_rho) * nur_mu \

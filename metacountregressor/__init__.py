@@ -136,6 +136,7 @@ __all__ = [
     "run_pavement_abc",
     "compare_pavement_coefficients",
     "compare_pavement_outcomes",
+    "make_pavement_bayes_report",
     # Survival / hazard.  AFT_FAMILIES report time ratios (exp(beta));
     # PH_FAMILIES report hazard ratios (exp(beta)).  Not interchangeable.
     "AFTFitter",
@@ -285,6 +286,7 @@ _EXPORTS = {
     "run_pavement_abc": ("pavement_bayes", "run_abc"),
     "compare_pavement_coefficients": ("pavement_bayes", "compare_coefficients"),
     "compare_pavement_outcomes": ("pavement_bayes", "compare_outcomes"),
+    "make_pavement_bayes_report": ("pavement_bayes", "make_bayes_report"),
 }
 
 _LEGACY_EXPORTS = {
