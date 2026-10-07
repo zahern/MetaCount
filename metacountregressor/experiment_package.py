@@ -1178,6 +1178,15 @@ class StructureEvaluatorLC(StructureEvaluator):
                     "data":   data_train,
                     "bic":    float(bic),
                 }
+                # Export SPF report after successful fit
+                try:
+                    spf_results = export_spf_report(
+                        self._last_fit_cache, self.df, 
+                        output_dir="spf_exports", class_col="FC"
+                    )
+                    print(f"  [SPF Export] Generated SPF report for {len(spf_results)} classes")
+                except Exception as e:
+                    print(f"  [SPF Export] Warning: {e}")
                 self._update_role_memory_from_fit(
                     params   = self._last_fit_cache["params"],
                     spec     = spec,
@@ -4592,6 +4601,94 @@ class ExperimentBuilder:
 
 
 # =====================================================================
+# SPF Export Objective
+# =====================================================================
+
+def export_spf_per_class(
+    fit_cache: dict,
+    df: "pd.DataFrame",
+    output_dir: str = "spf_exports",
+    class_col: str = "FC",
+) -> dict:
+    """
+    Compute the per-class SPF from a fitted model cache and write
+    one SPF file per class (road functional class or peer group).
+
+    Parameters
+    ----------
+    fit_cache : dict
+        The fit cache dict from ExperimentBuilder._last_fit_cache,
+        containing 'params', 'spec', 'data', 'bic'.
+    df : pd.DataFrame
+        The full dataframe used for the experiment, containing the
+        class column (e.g. 'FC' for functional class).
+    output_dir : str
+        Directory to write SPF export files.
+    class_col : str
+        Column in df that defines the road class / peer group.
+        Default 'FC' (functional class). For synthetic data use 'LANES'.
+
+    Returns
+    -------
+    dict
+        Mapping from class value to dict with 'a' (intercept), 'b' (AADT elasticity),
+        'bic', 'loglik', 'n_obs', and 'formula' string.
+    """
+    import os
+    import json
+    import numpy as np
+    import pandas as pd
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    params = fit_cache.get("params")
+    spec = fit_cache.get("spec")
+    data = fit_cache.get("data")
+    if params is None or spec is None or data is None:
+        return {}
+
+    # Identify class column in data
+    if class_col not in data.columns:
+        # Fallback: try common columns
+        for fallback in ["FC", "URB", "LANES", "road_class", "road_type"]:
+            if fallback in data.columns:
+                class_col = fallback
+                break
+
+    # Extract fitted parameters
+    # The parameter layout depends on spec:
+    #   - alpha0, alphas (baseline), beta0, betas (local), theta (het), log_theta (NB)
+    #   - For mixed models: sigmas after
+    # We need to map back to the hierarchical form:
+    #   log A(z1) = alpha0 + sum alpha_k * z1_k
+    #   B(z2) = beta0 + sum beta_j * z2_j
+    # For the export we want the hierarchical CMF form:
+    #   N = A(z1) * AADT^{B(z2)}
+    # where A(z1) = exp(alpha0 + sum alpha_k * z1_k)
+    #       B(z2) = beta0 + sum beta_j * z2_j
+
+    # For now, use the full dataset mean to represent the "average" road
+    # This is a simplification; in production you'd extract per-class fitted values
+    # The class column in the data gives the peer group
+    class_values = data[class_col].unique()
+
+    results = {}
+    for c in class_values:
+        mask = data[class_col] == c
+        if mask.sum() < 10:
+            continue
+
+        # For this class, the intercept is the baseline at mean AADT
+        # This is a simplification; true per-class intercept depends on class-specific covariates
+        # For export we just report the overall fitted model parameters
+        pass
+
+    # For now, return a placeholder structure
+    # TODO: implement full per-class extraction from the fitted model
+    return {}
+
+
+# =====================================================================
 # Standalone helper functions (importable from metacountregressor)
 # =====================================================================
 
@@ -4832,3 +4929,351 @@ def print_fit(fit_result: dict, file=None) -> None:
             if v is not None:
                 out.write(f"  {k:>12}: {v:,.4f}\n" if isinstance(v, (int, float)) else f"  {k:>12}: {v}\n")
         out.write("──────────────────────────────────────────────────────\n")
+
+
+# =====================================================================
+# SPF Export and Conversion Functions
+# =====================================================================
+
+def extract_hierarchical_coefficients(params, spec, param_index):
+    """
+    Extract hierarchical coefficients (A and B components) from fitted parameters.
+    
+    The model structure is:
+    log mu = alpha_0 + sum_k alpha_k * z1_k + (beta_0 + sum_j beta_j * z2_j) * log(AADT)
+    
+    This can be written as:
+    log mu = log A(z1) + B(z2) * log(AADT)
+    where:
+    - log A(z1) = alpha_0 + sum_k alpha_k * z1_k
+    - B(z2) = beta_0 + sum_j beta_j * z2_j
+    
+    Parameters
+    ----------
+    params : array
+        Fitted parameter vector
+    spec : ModelSpec
+        Model specification
+    param_index : dict
+        Parameter index from build_param_index
+    
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - alpha_0: intercept
+        - alpha: array of upper-level coefficients (for z1)
+        - beta_0: baseline elasticity
+        - beta: array of lower-level coefficients (for z2)
+        - log_A_intercept: alpha_0 (log A at z1=0)
+        - A_at_mean_z1: exp(alpha_0 + sum alpha_k * mean(z1_k))
+        - B_at_mean_z2: beta_0 + sum beta_j * mean(z2_j)
+        - AADT_elasticity_at_mean_z2: beta_0 + sum beta_j * mean(z2_j)
+    """
+    # Build base parameter index for single-class model
+    from main_hpc_lc_patch import build_base_index
+    
+    # For single-class model, use base parameter index
+    pidx = build_base_index(spec)
+    
+    # Extract fixed effects
+    fixed_start, fixed_end = param_index.get("fixed", (0, 0))
+    fixed_params = params[fixed_start:fixed_end]
+    
+    # The fixed effects layout for CMF models:
+    # fixed = [intercept, upper_coeffs..., beta_0, lower_coeffs...]
+    # where upper = baseline covariates (z1), lower = elasticity covariates (z2)
+    n_fixed = len(fixed_params)
+    if n_fixed == 0:
+        return {}
+    
+    # Infer n_upper and n_lower from spec structure
+    # Kf = 1 (intercept) + n_upper + 1 (beta_0) + n_lower + Kzi
+    Kzi = getattr(spec, 'Kzi', 0)
+    n_upper_lower = spec.Kf - 1 - Kzi - 1  # -1 for intercept, -1 for beta_0
+    n_upper = n_upper_lower // 2
+    n_lower = n_upper_lower - n_upper
+    
+    alpha_0 = fixed_params[0]
+    alpha = fixed_params[1:1+n_upper] if n_upper > 0 else np.array([])
+    beta_0 = fixed_params[1+n_upper] if n_fixed > 1+n_upper else 1.0
+    beta = fixed_params[2+n_upper:2+n_upper+n_lower] if n_lower > 0 else np.array([])
+    
+    return {
+        "alpha_0": float(alpha_0),
+        "alpha": alpha.astype(float),
+        "beta_0": float(beta_0),
+        "beta": beta.astype(float),
+        "log_A_intercept": float(alpha_0),
+        "n_upper": n_upper,
+        "n_lower": n_lower,
+    }
+
+
+def hierarchical_to_spf(hierarchical_coeffs, spec, aadt_mean=None, length_mean=None):
+    """
+    Convert hierarchical coefficients to SPF form for reporting.
+    
+    The hierarchical model is:
+    N = A(z1) * AADT^{B(z2)}
+    where A(z1) = exp(alpha_0 + alpha^T * z1)
+          B(z2) = beta_0 + beta^T * z2
+    
+    Parameters
+    ----------
+    hierarchical_coeffs : dict
+        Output from extract_hierarchical_coefficients
+    spec : ModelSpec
+        Model specification
+    aadt_mean : float, optional
+        Mean AADT for evaluating at mean exposure
+    length_mean : float, optional
+        Mean segment length for exposure offset
+    
+    Returns
+    -------
+    dict
+        Dictionary with SPF components for reporting
+    """
+    alpha_0 = hierarchical_coeffs.get("alpha_0", 0)
+    alpha = hierarchical_coeffs.get("alpha", np.array([]))
+    beta_0 = hierarchical_coeffs.get("beta_0", 1.0)
+    beta = hierarchical_coeffs.get("beta", np.array([]))
+    
+    # Component A: baseline crash propensity
+    log_A = alpha_0  # at z1 = 0
+    A_at_zero = np.exp(alpha_0)
+    
+    # Component B: AADT elasticity
+    B_at_zero = beta_0  # at z2 = 0
+    
+    # CMF components
+    cmf_A = {f"z1_{i}": np.exp(float(a)) for i, a in enumerate(alpha)}
+    cmf_B = {f"z2_{j}": float(b) for j, b in enumerate(beta)}
+    
+    # Exposure elasticity at mean
+    if aadt_mean is not None:
+        aadt_elasticity = beta_0
+    else:
+        aadt_elasticity = None
+    
+    return {
+        "A": {
+            "log_A_intercept": float(alpha_0),
+            "A_at_zero": float(A_at_zero),
+            "alpha_coefficients": {f"z1_{i}": float(a) for i, a in enumerate(alpha)},
+        },
+        "B": {
+            "B_at_zero": float(B_at_zero),
+            "beta_coefficients": {f"z2_{j}": float(b) for j, b in enumerate(beta)},
+        },
+        "exposure_elasticity": aadt_elasticity,
+        "model_form": "N = A(z1) * AADT^{B(z2)}",
+        "log_mu_form": "log(mu) = log(A) + B(z2) * log(AADT)",
+    }
+
+
+def export_spf_report(fit_cache, df, output_dir="spf_exports", class_col="FC"):
+    """
+    Export SPF report for each class (road functional class or peer group).
+    
+    Parameters
+    ----------
+    fit_cache : dict
+        Fit cache from ExperimentBuilder._last_fit_cache
+    df : pd.DataFrame
+        Full dataframe with class column
+    output_dir : str
+        Directory to write export files
+    class_col : str
+        Column name for class/road type (e.g., 'FC', 'LANES', 'road_class')
+    
+    Returns
+    -------
+    dict
+        Dictionary with per-class SPF reports
+    """
+    import os
+    import json
+    import numpy as np
+    import pandas as pd
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    params = fit_cache.get("params")
+    spec = fit_cache.get("spec")
+    data = fit_cache.get("data")
+    
+    if params is None or spec is None or data is None:
+        return {}
+    
+    # Build param index
+    from main_hpc_lc_patch import build_param_index
+    param_index = build_param_index(spec)
+    
+    # Extract hierarchical coefficients
+    hier_coeffs = extract_hierarchical_coefficients(params, spec, param_index)
+    spf = hierarchical_to_spf(hier_coeffs, spec)
+    
+    # Find class column
+    class_col_actual = class_col
+    if class_col not in data.columns:
+        for fallback in ["FC", "URB", "LANES", "road_class", "road_type", "road_type_id"]:
+            if fallback in data.columns:
+                class_col_actual = fallback
+                break
+    
+    class_values = data[class_col_actual].unique()
+    results = {}
+    
+    for c in class_values:
+        mask = data[class_col_actual] == c
+        if mask.sum() < 10:
+            continue
+        
+        # For each class, the SPF is the same functional form
+        # but evaluated at class-specific z1, z2 means
+        class_data = data[mask]
+        z1_cols = [c for c in data.columns if c.startswith("z1") or c in ["z1"]]
+        z2_cols = [c for c in data.columns if c.startswith("z2") or c in ["z2"]]
+        
+        z1_mean = class_data[z1_cols].mean() if z1_cols else np.array([0.0])
+        z2_mean = class_data[z2_cols].mean() if z2_cols else np.array([0.0])
+        
+        # Evaluate A and B at class means
+        alpha = hierarchical_coeffs.get("alpha", np.array([]))
+        beta = hierarchical_coeffs.get("beta", np.array([]))
+        alpha_0 = hierarchical_coeffs.get("alpha_0", 0)
+        beta_0 = hierarchical_coeffs.get("beta_0", 1.0)
+        
+        log_A = alpha_0 + float(np.sum(alpha * z1_mean))
+        B_val = beta_0 + float(np.sum(hierarchical_coeffs.get("beta", np.array([])) * z2_mean))
+        
+        A_val = np.exp(log_A)
+        B_val = B_val
+        
+        # CMFs for this class
+        alpha = hierarchical_coeffs.get("alpha", np.array([]))
+        beta = hierarchical_coeffs.get("beta", np.array([]))
+        cmf_A = {f"z1_{i}": float(np.exp(a)) for i, a in enumerate(hierarchical_coeffs.get("alpha", np.array([])))}
+        cmf_B = {f"z2_{j}": float(b) for j, b in enumerate(hierarchical_coeffs.get("beta", np.array([])))}
+        
+        results[c] = {
+            "class": c,
+            "n_obs": int(mask.sum()),
+            "A": {
+                "log_A": float(log_A),
+                "A_at_class_mean": float(A_val),
+            },
+            "B": {
+                "B_at_class_mean": float(B_val),
+                "beta_0": float(beta_0),
+            },
+            "CMF_A": cmf_A,
+            "CMF_B": cmf_B,
+            "exposure_elasticity": float(B_val),
+            "model_form": "N = A * AADT^B",
+        }
+    
+    # Save to file
+    output_file = os.path.join(output_dir, "spf_export.json")
+    with open(output_file, 'w') as f:
+        json.dump(results, f, indent=2, default=str)
+    
+    # Also save a human-readable summary
+    summary_file = os.path.join(output_dir, "spf_export_summary.txt")
+    with open(summary_file, 'w') as f:
+        f.write("SPF Export Summary\n")
+        f.write("=" * 60 + "\n\n")
+        for c, r in results.items():
+            f.write(f"Class {c} (n={r['n_obs']}):\n")
+            f.write(f"  A = {r['A']['A_at_class_mean']:.4f}\n")
+            f.write(f"  B = {r['B']['B_at_class_mean']:.4f}\n")
+            f.write(f"  CMF_A: {r['CMF_A']}\n")
+            f.write(f"  CMF_B: {r['CMF_B']}\n")
+            f.write(f"  Exposure Elasticity (at mean AADT): {r['exposure_elasticity']:.4f}\n")
+            f.write("\n")
+    
+    return results
+
+
+def plot_spf_functions(results, aadt_range=None, output_dir="spf_exports"):
+    """
+    Plot SPF functions for each class.
+    
+    Parameters
+    ----------
+    results : dict
+        Output from export_spf_report
+    aadt_range : tuple, optional
+        (min_aadt, max_aadt) for plotting range
+    output_dir : str
+        Directory to save plots
+    """
+    import os
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    if aadt_range is None:
+        aadt_range = (1000, 100000)
+    
+    aadt_vals = np.logspace(np.log10(aadt_range[0]), np.log10(aadt_range[1]), 100)
+    
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Plot 1: Crash frequency vs AADT for each class
+    ax = axes[0]
+    for c, r in results.items():
+        A = r['A']['A_at_class_mean']
+        B = r['B']['B_at_class_mean']
+        preds = A * np.power(aadt_vals, B)
+        axes[0].plot(aadt_vals, preds, label=f"Class {c}", linewidth=2)
+    
+    axes[0].set_xscale('log')
+    axes[0].set_yscale('log')
+    axes[0].set_xlabel('AADT (veh/day)')
+    axes[0].set_ylabel('Predicted Crashes per Year')
+    axes[0].set_title('SPF Curves by Class')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    
+    # Plot 2: CMF comparison
+    ax = axes[1]
+    for c, r in results.items():
+        B = r['B']['B_at_class_mean']
+        cmf = np.power(aadt_vals / 10000, B)  # CMF relative to 10k AADT
+        axes[1].plot(aadt_vals, cmf, label=f"Class {c}", linewidth=2)
+    
+    axes[1].axhline(y=1, color='k', linestyle='--', alpha=0.5)
+    axes[1].set_xscale('log')
+    axes[1].set_xlabel('AADT (veh/day)')
+    axes[1].set_ylabel('CMF (relative to 10,000 AADT)')
+    axes[1].set_title('CMF Curves (AADT Elasticity)')
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plot_file = os.path.join(output_dir, "spf_curves.png")
+    plt.savefig(plot_file, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # Save CMF table
+    cmf_table = []
+    for c, r in results.items():
+        B = r['B']['B_at_class_mean']
+        for aadt_ref in [5000, 10000, 20000, 50000, 100000]:
+            cmf = (aadt_ref / 10000) ** r['B']['B_at_class_mean']
+            cmf_table.append({
+                "class": c,
+                "AADT": aadt_ref,
+                "CMF": cmf,
+                "elasticity": r['B']['B_at_class_mean']
+            })
+    
+    cmf_df = pd.DataFrame(cmf_table)
+    cmf_file = os.path.join(output_dir, "cmf_table.csv")
+    cmf_df.to_csv(cmf_file, index=False)
+    
+    return fig

@@ -1170,7 +1170,56 @@ def _variance_barrier(blocks, spec, floor=1e-3, cap=50.0):
 
 
 
+def _validate_role_exclusivity(manual_spec):
+    """Roles of a given variable are mutually exclusive.
+
+    A variable may be fixed (constant across individuals) *or* random
+    (one mean + SD) *or* correlated-random *or* grouped *or* a
+    heterogeneity term, never several at once.  Allowing e.g.
+    ``fixed_terms`` to contain a variable that is also in ``rdm_terms``
+    gives the likelihood two free ways to shift its mean (a fixed
+    coefficient plus a random-parameter mean), which is not identified
+    and shows up as blown-out standard errors.
+
+    Raises
+    ------
+    ValueError
+        If any variable appears under more than one role.
+    """
+    from collections import defaultdict
+
+    def _base(term):
+        return str(term).split(":")[0].strip()
+
+    roles = defaultdict(set)
+    for term in manual_spec.get("fixed_terms", []) or []:
+        roles[_base(term)].add("fixed")
+    for term in manual_spec.get("rdm_terms", []) or []:
+        roles[_base(term)].add("rdm")
+    for term in manual_spec.get("rdm_cor_terms", []) or []:
+        roles[_base(term)].add("rdm_cor")
+    for term in manual_spec.get("grouped_terms", []) or []:
+        roles[_base(term)].add("grouped")
+    for term in manual_spec.get("hetro_in_means", []) or []:
+        roles[_base(term)].add("hetro_in_means")
+    for term in manual_spec.get("hetro_in_variances", []) or []:
+        roles[_base(term)].add("hetro_in_variances")
+    for col in manual_spec.get("gse_cols", []) or []:
+        roles[_base(col)].add("gse")
+
+    clashing = {v: sorted(r) for v, r in roles.items() if len(r) > 1}
+    if clashing:
+        raise ValueError(
+            "Non-identified random-parameter specification: the following "
+            "variable(s) appear under multiple roles (a variable must be "
+            "either fixed or random, not both): "
+            + ", ".join(f"{v!r} -> {rs}" for v, rs in clashing.items())
+        )
+
+
 def parse_manual_spec(manual_spec):
+
+    _validate_role_exclusivity(manual_spec)
 
     fixed_cols = manual_spec.get("fixed_terms", [])
 
@@ -1759,7 +1808,69 @@ def compute_standard_errors(params, objective, return_diagnostics=False):
     diagnostics["status"] = (
         "ok" if not diagnostics["unreliable_indices"] else "curvature_issues"
     )
+    if (
+        diagnostics["status"] != "ok"
+        or diagnostics["hessian_finite_fraction"] < 1.0
+        or diagnostics["n_negative_eigenvalues"] > 0
+        or diagnostics["n_near_zero_eigenvalues"] > 0
+        or not np.isfinite(diagnostics["condition_number"])
+    ):
+        import warnings
+
+        warnings.warn(
+            "compute_standard_errors: the Hessian is not full-rank "
+            f"(status={diagnostics['status']!r}, "
+            f"negative_eigenvalues={diagnostics['n_negative_eigenvalues']}, "
+            f"near_zero_eigenvalues={diagnostics['n_near_zero_eigenvalues']}, "
+            f"condition_number={diagnostics['condition_number']:.3g}). "
+            f"{len(diagnostics['unreliable_indices'])} parameter(s) received "
+            "NaN SEs. A rank-deficient Hessian means the random-parameter "
+            "structure is not identified — treat this as a model/spec "
+            "problem, not evidence that the effect is zero.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return _return(se)
+
+
+def sd_display_with_delta_se(raw, se_raw, transform="exp"):
+    """Display-scale estimate + delta-method SE for a positive SD parameter.
+
+    Random-parameter SDs and Cholesky diagonals are optimised on an
+    unconstrained log scale; the likelihood maps them to a positive SD via
+    ``exp`` (``_positive_scale``), or (for the Gaussian/Tobit-type scale
+    parameter) ``softplus``.  Their z/p-values must be computed on the
+    *displayed* scale, using a delta-method standard error — applying the
+    raw-scale SE to the transformed estimate tests the wrong quantity.
+
+    Parameters
+    ----------
+    raw : array-like
+        Unconstrained optimisation-scale SD parameters.
+    se_raw : array-like
+        Standard errors of ``raw`` (raw scale).
+    transform : {"exp", "softplus"}
+        Which positive transform the likelihood applies.  ``"exp"`` covers
+        independent SDs, Cholesky diagonals and grouped SDs in
+        ``main_hpc[_lc_patch]``; ``"softplus"`` covers the ``sigma`` block.
+
+    Returns
+    -------
+    (display, se_display) : tuple of np.ndarray
+        ``display = g(raw)`` and ``se_display = |g'(raw)| * se_raw``
+        (``g'(x) = exp(clip(x))`` for exp, ``sigmoid(x)`` for softplus).
+    """
+    raw = np.asarray(raw, dtype=float)
+    se_raw = np.asarray(se_raw, dtype=float)
+    if transform == "softplus":
+        clipped = np.clip(raw, -30.0, 30.0)
+        display = np.logaddexp(0.0, clipped)
+        derivative = 1.0 / (1.0 + np.exp(-clipped))
+    else:
+        clipped = np.clip(raw, -12.0, 6.0)
+        display = np.exp(clipped)
+        derivative = display
+    return display, derivative * se_raw
 
 
 def compute_regularized_estimates(

@@ -601,7 +601,60 @@ _hpc.build_jax_data = build_jax_data
 #     Handles "membership_terms" key in the spec dict.
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+def _validate_role_exclusivity(manual_spec: dict):
+    """Roles of a given variable are mutually exclusive (see main_hpc)."""
+    from collections import defaultdict
+
+    def _base(term):
+        return str(term).split(":")[0].strip()
+
+    roles = defaultdict(set)
+    for term in manual_spec.get("fixed_terms", []) or []:
+        roles[_base(term)].add("fixed")
+    for term in manual_spec.get("rdm_terms", []) or []:
+        roles[_base(term)].add("rdm")
+    for term in manual_spec.get("rdm_cor_terms", []) or []:
+        roles[_base(term)].add("rdm_cor")
+    for term in manual_spec.get("grouped_terms", []) or []:
+        roles[_base(term)].add("grouped")
+    for term in manual_spec.get("hetro_in_means", []) or []:
+        roles[_base(term)].add("hetro_in_means")
+    for term in manual_spec.get("hetro_in_variances", []) or []:
+        roles[_base(term)].add("hetro_in_variances")
+    for col in manual_spec.get("gse_cols", []) or []:
+        roles[_base(col)].add("gse")
+
+    clashing = {v: sorted(r) for v, r in roles.items() if len(r) > 1}
+    if clashing:
+        raise ValueError(
+            "Non-identified random-parameter specification: the following "
+            "variable(s) appear under multiple roles (a variable must be "
+            "either fixed or random, not both): "
+            + ", ".join(f"{v!r} -> {rs}" for v, rs in clashing.items())
+        )
+
+    # Per-class lists obey the same rule within each latent class.
+    class_roles = {}
+    for field, role in (("class_fixed", "fixed"), ("class_rdm_ind", "rdm"),
+                        ("class_rdm_cor", "rdm_cor")):
+        per_class = manual_spec.get(field)
+        if not per_class:
+            continue
+        for c, vars_c in enumerate(per_class):
+            for v in vars_c or []:
+                class_roles.setdefault((c, _base(v)), set()).add(role)
+    class_clashes = {f"class {c} var {v!r}": sorted(rs)
+                     for (c, v), rs in class_roles.items() if len(rs) > 1}
+    if class_clashes:
+        raise ValueError(
+            "Non-identified per-class specification (same variable in "
+            "multiple roles within a latent class): "
+            + ", ".join(f"{k} -> {rs}" for k, rs in class_clashes.items())
+        )
+
+
 def parse_manual_spec(manual_spec: dict):
+    _validate_role_exclusivity(manual_spec)
     fixed_cols        = manual_spec.get("fixed_terms", [])
     rdm_terms         = manual_spec.get("rdm_terms", [])
     rdm_cor_terms     = manual_spec.get("rdm_cor_terms", [])
