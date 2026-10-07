@@ -1273,6 +1273,15 @@ class StructureEvaluatorLC(StructureEvaluator):
                     "data":   data_train,
                     "bic":    float(bic),
                 }
+                # Export SPF report after successful fit
+                try:
+                    spf_results = export_spf_report(
+                        self._last_fit_cache, self.df, 
+                        output_dir="spf_exports", class_col="FC"
+                    )
+                    print(f"  [SPF Export] Generated SPF report for {len(spf_results)} classes")
+                except Exception as e:
+                    print(f"  [SPF Export] Warning: {e}")
                 # Adaptive guard on the LC params (per-class fixed effects)
                 self._update_role_memory_from_fit(
                     params   = params_c,
