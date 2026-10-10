@@ -704,7 +704,6 @@ class JAXMLE(ObjectiveFunction):
                 Br = self._transform_rand_betas(br,
                                                 brstd, draws)  # Get random coefficients
                 self.naming_for_printing(betas, dispersion=dispersion, model_nature=model_nature)
-                self.Br = Br.copy()
 
             else:
                 self.naming_for_printing(betas, dispersion=dispersion, model_nature=model_nature)
@@ -713,7 +712,6 @@ class JAXMLE(ObjectiveFunction):
                 self.chol_mat = chol_mat.copy()
                 Br = br[None, :, None] + \
                      jnp.matmul(chol_mat[:len(br), :len(br)], draws)
-                self.Br = Br.copy()
         else:
             if 'draws_hetro' in model_nature:
                 self.naming_for_printing(betas, dispersion=dispersion, model_nature=model_nature)

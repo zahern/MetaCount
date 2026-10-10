@@ -642,6 +642,7 @@ def plot_fitness_progress(iterations, iteration_fitnesses, best_fitnesses, avera
 
     # Show the plot
     plt.show()
+    plt.close()
 
 
 
@@ -649,6 +650,7 @@ def results_printer(results, algorithm='hs', is_multi=1, obj_1='bic', obj_2='MSE
     if algorithm == 'hs':
         plt.scatter([x['bic'] for x in results.harmony_memories], [x['MAE'] for x in results.harmony_memories])
         plt.savefig('bic.svg', format='svg', dpi=1200)
+        plt.close()
         print('Elapsed time: {}\nBest harmony: {}\nBest fitness: {}\nHarmony memories: {}'.format(results.elapsed_time,
                                                                                                   results.best_harmony,
                                                                                                   results.best_fitness,
@@ -660,6 +662,7 @@ def results_printer(results, algorithm='hs', is_multi=1, obj_1='bic', obj_2='MSE
             plt.xlabel(f'{obj_1.upper()}')  # x label
             plt.ylabel(f'{obj_2.upper()}')  # y label
             plt.savefig(f'{obj_1}_vs_{obj_2}.svg', format='svg', dpi=1200)
+            plt.close()
             print('Elapsed time: {}\nPareto Solutions: {} \nPopulation Solutions: {}'.format(results.elapsed_time,
                                                                                              results.best_solutions,
                                                                                              results.population_solutions))

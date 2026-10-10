@@ -139,7 +139,7 @@ class count_model:
             br  = b[p : p + pr]
             brstd = b[p + pr : p + pr + pr]
 
-            draws = np.array(self._get_draws(pr, n))  # (n*R, pr)
+            draws = self._get_draws(pr, n)  # (n*R, pr)
 
             eta      = np.tile(X @ bf, (1, self.Ndraws))        # (n, R)
             beta     = draws * brstd + br                        # (n*R, pr)

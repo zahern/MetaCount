@@ -973,6 +973,24 @@ def _build_mstep_runners(C, class_data, class_base_specs, Z_mats_jnp,
     return theta_objectives, theta_runners, gamma_runners
 
 
+# JAX compilation cache management for static_argnames=("spec",)
+_spec_seen_lc = set()
+_spec_cache_threshold_lc = 50
+
+def _call_loglik_lc(params, data, spec, indivi: bool = False):
+    """Wrapper that bounds JAX compilation cache growth from spec static arg."""
+    sid = id(spec)
+    if sid not in _spec_seen_lc:
+        _spec_seen_lc.add(sid)
+        if len(_spec_seen_lc) >= _spec_cache_threshold_lc:
+            import jax
+            import gc
+            jax.clear_caches()
+            gc.collect()
+            _spec_seen_lc.clear()
+    return mixed_model_loglik(params, data, spec, indivi=indivi)
+
+
 @partial(jax.jit, static_argnames=("spec", "indivi"))
 def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
 

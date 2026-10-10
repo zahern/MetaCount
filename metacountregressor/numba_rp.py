@@ -482,7 +482,9 @@ class NumbaRandomCountEvaluator:
             self.allowed_roles[var] = filt or [0]
         self.cache = {}
         self._array_cache = {}
+        self._array_cache_max = 64
         self._fit_cache = {}
+        self._fit_cache_max = 256
         self._last_fit = None
         self.df_train = df.reset_index(drop=True).copy()
         if group_id_col is not None and group_id_col not in self.df_train.columns:
@@ -762,6 +764,8 @@ class NumbaRandomCountEvaluator:
                np.ascontiguousarray(gid),
                dist_ind, dist_cor, dist_g, spec)
         self._array_cache[key] = out
+        if len(self._array_cache) > self._array_cache_max:
+            self._array_cache.pop(next(iter(self._array_cache)))
         return out
 
     def _init(self, spec):
@@ -853,6 +857,8 @@ class NumbaRandomCountEvaluator:
             return res
         res = self.fit_manual(spec, maxiter=maxiter, ftol=ftol, verbose=verbose)
         self._fit_cache[lay_key] = res
+        if len(self._fit_cache) > self._fit_cache_max:
+            self._fit_cache.pop(next(iter(self._fit_cache)))
         return res
 
     def fitness(self, decision):

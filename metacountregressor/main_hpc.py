@@ -56,6 +56,20 @@ try:
 except ImportError:
     from importlib_resources import files as _resource_files
 
+# JAX compilation cache management: clear periodically to bound memory growth
+# from static_argnames=("spec",) in mixed_model_loglik.
+_speccache_counter = 0
+_SPECCACHE_CLEAR_EVERY = 50
+
+def _maybe_clear_jax_caches():
+    """Call jax.clear_caches() after every N distinct ModelSpec compiles."""
+    global _speccache_counter
+    _speccache_counter += 1
+    if _speccache_counter >= _SPECCACHE_CLEAR_EVERY:
+        jax.clear_caches()
+        gc.collect()
+        _speccache_counter = 0
+
 DIST_MAP = {
     "normal": 0,
     "lognormal": 1,
@@ -1090,6 +1104,28 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
 @partial(jax.jit, static_argnames=("spec",))
 def mixed_model_loglik_individual(params, data, spec: ModelSpec):
     return mixed_model_loglik(params, data, spec, indivi = True)
+
+
+# --- JAX compilation cache management for static_argnames=("spec",) ---
+# Each unique ModelSpec triggers a fresh trace + XLA executable.
+# We track seen specs by id() and clear caches every N new specs.
+_spec_seen = set()
+_spec_cache_threshold = 50
+
+def _call_loglik(params, data, spec: ModelSpec, indivi: bool = False):
+    """Wrapper that bounds JAX compilation cache growth from spec static arg."""
+    sid = id(spec)
+    if sid not in _spec_seen:
+        _spec_seen.add(sid)
+        if len(_spec_seen) >= _spec_cache_threshold:
+            jax.clear_caches()
+            gc.collect()
+            _spec_seen.clear()
+    return mixed_model_loglik(params, data, spec, indivi=indivi)
+
+def _call_loglik_individual(params, data, spec: ModelSpec):
+    """Wrapper for mixed_model_loglik_individual with cache management."""
+    return _call_loglik(params, data, spec, indivi=True)
 
 def nb1_loglik(y, mu, alpha):
 
@@ -3148,7 +3184,7 @@ def estimate_latent_class_mixed_example():
 
     from jaxopt import ScipyMinimize as JaxoptMinimize
 
-    _polish_fn = lambda p: mixed_model_loglik(p, data, spec)
+    _polish_fn = lambda p: _call_loglik(p, data, spec)
     _polish_solver = JaxoptMinimize(fun=_polish_fn, method="SLSQP", tol=1e-8, maxiter=3000)
     result_final = _polish_solver.run(jnp.array(params_em, dtype=jnp.float64))
 
@@ -4121,7 +4157,7 @@ class CountModel:
         self.last_multistart_report = None
 
     def objective(self, params):
-        return mixed_model_loglik(params, self.data, self.spec)
+        return _call_loglik(params, self.data, self.spec)
 
     def _continuous_de_warm_start(
         self,
@@ -6930,7 +6966,7 @@ def fit_em(init_params, data, spec, max_iter=100, tol=1e-6, verbose=True):
     K_base = base_index["total_params"]
 
     params = np.array(init_params)
-    test_ll = mixed_model_loglik(
+    test_ll = _call_loglik(
     params[:K_base],
     data,
     base_spec,
@@ -6958,7 +6994,7 @@ def fit_em(init_params, data, spec, max_iter=100, tol=1e-6, verbose=True):
 
         for c in range(C):
 
-            ll_ind = mixed_model_loglik(
+            ll_ind = _call_loglik(
                 theta_all[c],
                 data,
                 base_spec,
@@ -6992,7 +7028,7 @@ def fit_em(init_params, data, spec, max_iter=100, tol=1e-6, verbose=True):
 
             def weighted_objective(theta_c):
 
-                ll_ind = mixed_model_loglik(
+                ll_ind = _call_loglik(
                     theta_c,
                     data,
                     base_spec,
@@ -7020,7 +7056,7 @@ def fit_em(init_params, data, spec, max_iter=100, tol=1e-6, verbose=True):
         diff = np.max(np.abs(params - params_old))
 
         if verbose:
-            total_ll = mixed_model_loglik(params, data, spec)
+            total_ll = _call_loglik(params, data, spec)
             print(f"EM iter {iteration:3d} | max Δ = {diff:.3e} | LL = {-total_ll:.6f}")
 
         if diff < tol:
@@ -7446,6 +7482,7 @@ def run_lognormal_duration_full_demo(
     plt.title("Actual vs Predicted (Mixed Lognormal)")
     plt.tight_layout()
     plt.show()
+    plt.close()
 
     # ==========================================================
     # 7️⃣ TRUE PARAMS PRINT
