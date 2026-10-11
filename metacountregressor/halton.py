@@ -1,4 +1,6 @@
-﻿import numpy as np
+﻿import math
+
+import numpy as np
 import jax.numpy as jnp
 import jax
 from scipy.optimize import minimize
@@ -103,6 +105,7 @@ class count_model:
         self.distribution = distribution or []
         self.predictor = predictor
         self._draws_cache: jnp.ndarray | None = None
+        self._draws_cache_key: tuple[int, int, int] | None = None
         self._x_data: pd.DataFrame | None = None
         self.observations: int | None = None
 
@@ -111,11 +114,18 @@ class count_model:
     # ------------------------------------------------------------------
 
     def _get_draws(self, dim: int, n_obs: int) -> jnp.ndarray:
-        """Return cached Sobol draws or generate fresh ones."""
-        if self._draws_cache is None:
+        """Return cached Sobol draws, regenerating when the shape changes.
+
+        The cache is keyed on ``(dim, n_obs, Ndraws)``: the draws depend on all
+        three, so serving a cached block built for a different ``dim``/``n_obs``
+        would silently return a wrongly-shaped array.
+        """
+        key = (int(dim), int(n_obs), int(self.Ndraws))
+        if self._draws_cache_key != key:
             self._draws_cache = generate_sobol_draws(
                 dim, n_obs, self.Ndraws, self.distribution
             )
+            self._draws_cache_key = key
         return self._draws_cache
 
     # ------------------------------------------------------------------
@@ -123,7 +133,13 @@ class count_model:
     # ------------------------------------------------------------------
 
     def PoissonNegLogLikelihood(self, lam: np.ndarray, y: np.ndarray) -> float:
-        prob = np.exp(-lam) * np.power(lam, y) / np.vectorize(np.math.factorial)(y.astype(int))
+        if self.observations is None:
+            raise ValueError(
+                "self.observations is unset; call poissonRegressionNegLogLikelihood "
+                "or fitPoissonRegression so the observation count is known."
+            )
+        # np.math was removed in NumPy 2.0 - use the stdlib directly.
+        prob = np.exp(-lam) * np.power(lam, y) / np.vectorize(math.factorial)(y.astype(int))
         prob = prob.reshape(self.observations, -1, order="F")
         log_lik = np.sum(np.log(np.maximum(prob.mean(axis=1), 1e-300)))
         return -log_lik
@@ -135,6 +151,7 @@ class count_model:
             n, p   = X.shape
             _,  pr = Xr.shape
 
+            self.observations = n
             bf  = b[:p]
             br  = b[p : p + pr]
             brstd = b[p + pr : p + pr + pr]

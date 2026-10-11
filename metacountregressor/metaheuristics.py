@@ -70,6 +70,7 @@ def _plot(x, y, z, xlabel=None, ylabel=None, zlabel=None, filename=None):
         plt.savefig('bic.eps', format='eps', dpi=1200)
         plt.savefig('bic.png')
         plt.show()
+    plt.close(fig)
 
 
 # helper function to grab dictionary means
@@ -1655,6 +1656,7 @@ class HarmonySearch(object):
         ax.set(xlabel='Generation', ylabel='BIC')
         ax.grid()
         plt.show()
+        plt.close(fig)
         return x, y, z
 
     def _initialize(self, initial_harmonies=None, model_nature=None):
@@ -2367,105 +2369,105 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
         num_imp = 0
         elapsed_time = 0
         num_processors = np.min((mp.cpu_count(), self._obj_fun._hms))
-        pool = mp.Pool(num_processors)
+        with mp.Pool(num_processors) as pool:
 
-        while (num_imp < self._obj_fun.get_max_imp()) and (
-                elapsed_time <= self._obj_fun.get_max_time()) and (
-                iterations_without_improvement < self._obj_fun.get_termination_iter()):
-            # generate new harmony
-            elapsed_time = (datetime.now() - start_time).total_seconds()
-            harmony_gen = list()
-            for harmony_gen_i in range(self._obj_fun._hms):
-                harmony = list()
+            while (num_imp < self._obj_fun.get_max_imp()) and (
+                    elapsed_time <= self._obj_fun.get_max_time()) and (
+                    iterations_without_improvement < self._obj_fun.get_termination_iter()):
+                # generate new harmony
+                elapsed_time = (datetime.now() - start_time).total_seconds()
+                harmony_gen = list()
+                for harmony_gen_i in range(self._obj_fun._hms):
+                    harmony = list()
 
-                for i in range(0, self._obj_fun.get_num_parameters()):
-                    if random.random() < self._obj_fun.get_hmcr():
-                        self._memory_consideration(harmony, i)
-                        if random.random() < self._obj_fun.get_par():
-                            # print('this is', i)
-                            # print('i am just testing this, change back to tru')
-                            self._pitch_adjustment(harmony, i, True)
-                    else:
-                        self._random_selection(harmony, i)
-                        if random.random() < self._obj_fun.get_par():
-                            # print('this is', i)
-                            # print('i am just testing this, change back to tru')
-                            self._pitch_adjustment(harmony, i, False)
+                    for i in range(0, self._obj_fun.get_num_parameters()):
+                        if random.random() < self._obj_fun.get_hmcr():
+                            self._memory_consideration(harmony, i)
+                            if random.random() < self._obj_fun.get_par():
+                                # print('this is', i)
+                                # print('i am just testing this, change back to tru')
+                                self._pitch_adjustment(harmony, i, True)
+                        else:
+                            self._random_selection(harmony, i)
+                            if random.random() < self._obj_fun.get_par():
+                                # print('this is', i)
+                                # print('i am just testing this, change back to tru')
+                                self._pitch_adjustment(harmony, i, False)
 
-                # check if harmony is in memory
+                    # check if harmony is in memory
 
-                if self.does_it_appear(harmony):
+                    if self.does_it_appear(harmony):
 
-                    rand_idx, rand_inj = self.hard_mutate_index_and_value()
-                    harmony[rand_idx] = rand_inj
-                    appear = self.does_it_appear(harmony)
-                    while appear == 1:
                         rand_idx, rand_inj = self.hard_mutate_index_and_value()
                         harmony[rand_idx] = rand_inj
                         appear = self.does_it_appear(harmony)
-                harmony_gen.append(harmony)
+                        while appear == 1:
+                            rand_idx, rand_inj = self.hard_mutate_index_and_value()
+                            harmony[rand_idx] = rand_inj
+                            appear = self.does_it_appear(harmony)
+                    harmony_gen.append(harmony)
 
-            results_hs = pool.map(self.calculate_fitness, [(i, harmony_gen) for i in range(self._obj_fun._hms)])
-            for hs_i, fitness in enumerate(results_hs):
-                harmony = fitness['layout']
+                results_hs = pool.map(self.calculate_fitness, [(i, harmony_gen) for i in range(self._obj_fun._hms)])
+                for hs_i, fitness in enumerate(results_hs):
+                    harmony = fitness['layout']
 
-                iterations_without_improvement = self._update_harmony_memory(harmony, fitness,
-                                                                             iterations_without_improvement,
-                                                                             self.pf.get_objective_is_multi())
-                num_imp += 1
-                if iterations_without_improvement == 0:  # if there is any kind of improvement updae the logs
-                    if self.pf.get_objective_is_multi():
-                        logger(num_imp, fitness, self._harmony_memory, True, self.get_instance_name(),
-                               1)  # for consistency
-                        logger(num_imp, fitness, self._pareto_harmony_memory, True,
-                               self.instance_name + '/log_for_pareto_harmony_memory.csv', 1)
+                    iterations_without_improvement = self._update_harmony_memory(harmony, fitness,
+                                                                                 iterations_without_improvement,
+                                                                                 self.pf.get_objective_is_multi())
+                    num_imp += 1
+                    if iterations_without_improvement == 0:  # if there is any kind of improvement updae the logs
+                        if self.pf.get_objective_is_multi():
+                            logger(num_imp, fitness, self._harmony_memory, True, self.get_instance_name(),
+                                   1)  # for consistency
+                            logger(num_imp, fitness, self._pareto_harmony_memory, True,
+                                   self.instance_name + '/log_for_pareto_harmony_memory.csv', 1)
 
 
-                    else:
+                        else:
+                            # update generation best
+                            if generation_best is None:
+                                generation_best = fitness
+                            if fitness[self.obj_1] < generation_best[self.obj_1]:
+                                generation_best = fitness
+                                # iterations_without_improvement =0
+                            if fitness[self.obj_1] < improvisation_best[self.obj_1]:
+                                improvisation_best = fitness
+                            # update logs
+                            try:
+                                logger(num_imp, fitness, improvisation_best, name=self.get_instance_name(),
+                                       local_best1=generation_best)
+                            except Exception as e:
+                                print('log broken', e)
+                    elif not self.pf.get_objective_is_multi():
                         # update generation best
                         if generation_best is None:
                             generation_best = fitness
                         if fitness[self.obj_1] < generation_best[self.obj_1]:
                             generation_best = fitness
-                            # iterations_without_improvement =0
-                        if fitness[self.obj_1] < improvisation_best[self.obj_1]:
-                            improvisation_best = fitness
                         # update logs
                         try:
-                            logger(num_imp, fitness, improvisation_best, name=self.get_instance_name(),
-                                   local_best1=generation_best)
+                            logger(num_imp, fitness, improvisation_best, name=self.get_instance_name())
                         except Exception as e:
                             print('log broken', e)
-                elif not self.pf.get_objective_is_multi():
-                    # update generation best
-                    if generation_best is None:
-                        generation_best = fitness
-                    if fitness[self.obj_1] < generation_best[self.obj_1]:
-                        generation_best = fitness
-                    # update logs
-                    try:
-                        logger(num_imp, fitness, improvisation_best, name=self.get_instance_name())
-                    except Exception as e:
-                        print('log broken', e)
-                        # save harmonies every nth improvisations (i.e., one 'generation')
-            if num_imp % self._obj_fun.get_hms() == 0:
+                            # save harmonies every nth improvisations (i.e., one 'generation')
+                if num_imp % self._obj_fun.get_hms() == 0:
 
-                # self._sort_memory()
-                harmony_list = {'gen': generation, 'harmonies': copy.deepcopy(self._harmony_memory)}
-                self._harmony_history.append(harmony_list)
-                if self.pf.get_objective_is_multi() is False:
-                    generation_list = {'gen': generation, 'fitness': generation_best}
-                    generation_incumbent_list = {'gen': generation, 'fitness': improvisation_best}
+                    # self._sort_memory()
+                    harmony_list = {'gen': generation, 'harmonies': copy.deepcopy(self._harmony_memory)}
+                    self._harmony_history.append(harmony_list)
+                    if self.pf.get_objective_is_multi() is False:
+                        generation_list = {'gen': generation, 'fitness': generation_best}
+                        generation_incumbent_list = {'gen': generation, 'fitness': improvisation_best}
 
-                    self._harmony_trace_best.append(generation_list)
-                    self._harmony_trace_incumbent.append(generation_incumbent_list)
-                    generation_best = None
+                        self._harmony_trace_best.append(generation_list)
+                        self._harmony_trace_incumbent.append(generation_incumbent_list)
+                        generation_best = None
 
-                else:
-                    pareto_logger(self._pareto_harmony_memory, num_imp / self._obj_fun.get_hms(),
-                                  self._obj_fun.complexity_level, self._obj_fun.instance_name)
-                generation += 1
-                iterations_without_improvement += 1
+                    else:
+                        pareto_logger(self._pareto_harmony_memory, num_imp / self._obj_fun.get_hms(),
+                                      self._obj_fun.complexity_level, self._obj_fun.instance_name)
+                    generation += 1
+                    iterations_without_improvement += 1
 
             # print('the iterations_without improvement', iterations_without_improvement)
         # find out why it terminated
@@ -2543,9 +2545,6 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
         else:
             if self.pf.get_objective_is_multi():  # TODO deterimine the best solion in the pareto
 
-                num_processors = np.min((mp.cpu_count(), self._STEPS_PER_TEMP))
-                pool = mp.Pool(num_processors)
-
                 current_energy = initial_slns_struct.copy()
                 nbr_energy = initial_slns_struct.copy()  # todo somet
                 # print('does this work')
@@ -2559,66 +2558,66 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
         elapsed_time = 0
 
         num_processors = np.min((mp.cpu_count(), self._STEPS_PER_TEMP))
-        pool = mp.Pool(num_processors)
+        with mp.Pool(num_processors) as pool:
 
-        while (iteration <= self._MAX_ITERATIONS) and (
-                elapsed_time <= self._obj_fun.get_max_time()) and (
-                iterations_without_improvement < self._obj_fun.get_termination_iter()):
-            elapsed_time = (datetime.now() - start_time).total_seconds()
-            for i in range(self._STEPS_PER_TEMP):
-                # Get Neighbouring solution and Energy level
-                # print('the current struct is ' ,self.current_struct)
-                nbr_struct = list()
-                for j in range(self._pop_size):
-                    nbr_struct1 = self._get_neighbour(current_energy[j]['layout'],
-                                                      round(self._crossover_perc * len(current_energy[j]['layout'])))
-                    nbr_struct.append(nbr_struct1)
+            while (iteration <= self._MAX_ITERATIONS) and (
+                    elapsed_time <= self._obj_fun.get_max_time()) and (
+                    iterations_without_improvement < self._obj_fun.get_termination_iter()):
+                elapsed_time = (datetime.now() - start_time).total_seconds()
+                for i in range(self._STEPS_PER_TEMP):
+                    # Get Neighbouring solution and Energy level
+                    # print('the current struct is ' ,self.current_struct)
+                    nbr_struct = list()
+                    for j in range(self._pop_size):
+                        nbr_struct1 = self._get_neighbour(current_energy[j]['layout'],
+                                                          round(self._crossover_perc * len(current_energy[j]['layout'])))
+                        nbr_struct.append(nbr_struct1)
 
-                results_sa = pool.map(self.calculate_fitness, [(i, nbr_struct) for i in range(self._pop_size)])
+                    results_sa = pool.map(self.calculate_fitness, [(i, nbr_struct) for i in range(self._pop_size)])
 
-                for j, nbr_energy in enumerate(results_sa):
+                    for j, nbr_energy in enumerate(results_sa):
 
-                    # Acceptance Criteria
-                    if random.uniform(0, 1) <= self.Energy_Acceptance_Criteria(nbr_energy, current_energy[j],
-                                                                               current_temperature,
-                                                                               self.pf.get_objective_is_multi()):
-                        # print('Accepted New with fitness of', nbr_energy)
-                        didchange = self.pf.did_it_change()
-                        if didchange:
-                            pareto_logger(self.pf.Pareto_F, iteration, self._obj_fun.complexity_level,
-                                          self._obj_fun.instance_name)
-                        current_energy[j] = nbr_energy
+                        # Acceptance Criteria
+                        if random.uniform(0, 1) <= self.Energy_Acceptance_Criteria(nbr_energy, current_energy[j],
+                                                                                   current_temperature,
+                                                                                   self.pf.get_objective_is_multi()):
+                            # print('Accepted New with fitness of', nbr_energy)
+                            didchange = self.pf.did_it_change()
+                            if didchange:
+                                pareto_logger(self.pf.Pareto_F, iteration, self._obj_fun.complexity_level,
+                                              self._obj_fun.instance_name)
+                            current_energy[j] = nbr_energy
 
-                        self.accept += 1
-                        iterations_without_improvement = 0
-                        # Check if neigbouring solution is the best      
-                        if not self.pf.get_objective_is_multi():  # if this is the global best (show) #TODO determine global best for multiobjective
-                            if nbr_energy[j][self._obj_fun._obj_1] < self.best_energy[self._obj_fun._obj_1]:
-                                print('new best at iteration ', iteration, 'with fitness of', nbr_energy)
-                                self.best_energy = nbr_energy
+                            self.accept += 1
+                            iterations_without_improvement = 0
+                            # Check if neigbouring solution is the best      
+                            if not self.pf.get_objective_is_multi():  # if this is the global best (show) #TODO determine global best for multiobjective
+                                if nbr_energy[j][self._obj_fun._obj_1] < self.best_energy[self._obj_fun._obj_1]:
+                                    print('new best at iteration ', iteration, 'with fitness of', nbr_energy)
+                                    self.best_energy = nbr_energy
 
-                                iterations_without_improvement = 0
+                                    iterations_without_improvement = 0
+                            else:
+                                if nbr_energy[j] in self.pf.Pareto_F:
+                                    print('new pareto at iteration ', iteration, 'with fitness of', nbr_energy[j])
+
+                                    iterations_without_improvement = 0
+                            # log data
+                            iteration += 1
+
                         else:
-                            if nbr_energy[j] in self.pf.Pareto_F:
-                                print('new pareto at iteration ', iteration, 'with fitness of', nbr_energy[j])
 
-                                iterations_without_improvement = 0
-                        # log data
-                        iteration += 1
+                            iteration += 1
 
-                    else:
-
-                        iteration += 1
-
-                    try:
-                        logger(iteration, nbr_energy, self.best_energy, name=self.get_instance_name(),
-                               local_best1=self.current_energy)
-                    except Exception as e:
-                        print('THEREE IS AN ERRPR OM TJE ;PGGER', e)
-                        # update temperature
-            temperature_iteration += 1
-            current_temperature = self.update_t(temperature_iteration)
-            iterations_without_improvement += 1
+                        try:
+                            logger(iteration, nbr_energy, self.best_energy, name=self.get_instance_name(),
+                                   local_best1=self.current_energy)
+                        except Exception as e:
+                            print('THEREE IS AN ERRPR OM TJE ;PGGER', e)
+                            # update temperature
+                temperature_iteration += 1
+                current_temperature = self.update_t(temperature_iteration)
+                iterations_without_improvement += 1
         acceptance_rate = self.accept / iteration
         print('the acceptance rate is', acceptance_rate * 100, '%')
         self._obj_fun.get_fitness(self.best_struct, multi=self.pf.get_objective_is_multi(), verbose=True)
@@ -2668,25 +2667,26 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
         # mp.set_start_method('fork')
         num_processors = np.min((mp.cpu_count(), self._pop_size))
 
-        pool = mp.Pool(num_processors)
-        # fitness = zip(*)
-        results = pool.map(self.calculate_fitness, [(i, initial_slns) for i in range(self._pop_size)])
+        with mp.Pool(num_processors) as pool:
 
-        for i, fitness in enumerate(results):
+            # fitness = zip(*)
+            results = pool.map(self.calculate_fitness, [(i, initial_slns) for i in range(self._pop_size)])
 
-            if i % 10 == 10:
-                print('evaluating initial sln', i)
-                print('the final fitness is', fitness)
-            if self.pf.get_objective_is_multi():
-                initial_list.append(fitness)
-                logger(i, fitness, None, True, self.get_instance_name(), self.pf.get_objective_is_multi())
-            else:
-                if isinstance(fitness, dict):
+            for i, fitness in enumerate(results):
+
+                if i % 10 == 10:
+                    print('evaluating initial sln', i)
+                    print('the final fitness is', fitness)
+                if self.pf.get_objective_is_multi():
                     initial_list.append(fitness)
-
-
+                    logger(i, fitness, None, True, self.get_instance_name(), self.pf.get_objective_is_multi())
                 else:
-                    raise Exception('should not be possible')
+                    if isinstance(fitness, dict):
+                        initial_list.append(fitness)
+
+
+                    else:
+                        raise Exception('should not be possible')
 
         return initial_list
 
@@ -2728,114 +2728,115 @@ class Mutlithreaded_Meta(DifferentialEvolution, SimulatedAnnealing, HarmonySearc
 
         print('The maximum run time of this algorithm is ', self._obj_fun.get_max_time())
         num_processors = np.min((mp.cpu_count(), self._pop_size))
-        pool = mp.Pool(num_processors)
-        # fitness = zip(*)
-        # results = pool.map(self.calculate_fitness, [(i, initial_slns) for i in range(self._pop_size)])
-        while (i <= self.iter + 1) and (time_elapsed <= self._obj_fun.get_max_time()) and (
-                iterations_without_improvement < self._obj_fun.get_termination_iter()):
-            time_elapsed = (datetime.now() - start_time).total_seconds()
-            print('current time elapsed is', time_elapsed)
+        with mp.Pool(num_processors) as pool:
 
-            # iterate over population
-            storage_pop = list()
-            for j in range(self._pop_size):
-                pop_a, pop_b, pop_c = self.choose(j)
-                # perform mutation
-                mutated = self.mutation(pop_a, pop_b, pop_c)
-                if self._obj_fun.is_multi:
-                    trial = self.crossover(mutated, self._population[j]['layout'], len(self._population[j]['layout']),
-                                           self.cr)
-                else:
-                    trial = self.crossover(mutated, self._population[j]['layout'], len(self._population[j]['layout']),
-                                           self.cr)
+            # fitness = zip(*)
+            # results = pool.map(self.calculate_fitness, [(i, initial_slns) for i in range(self._pop_size)])
+            while (i <= self.iter + 1) and (time_elapsed <= self._obj_fun.get_max_time()) and (
+                    iterations_without_improvement < self._obj_fun.get_termination_iter()):
+                time_elapsed = (datetime.now() - start_time).total_seconds()
+                print('current time elapsed is', time_elapsed)
 
-                storage_pop.append(trial)
-            results_population = pool.map(self.calculate_fitness, [(i, storage_pop) for i in range(self._pop_size)])
-
-            for j, obj_trial in enumerate(results_population):
-
-                try:
-
-                    # obj_trial = self._obj_fun.get_fitness(trial, self.pf.get_objective_is_multi())
-                    if not self.pf.get_objective_is_multi():
-                        average_iteration += obj_trial[self._obj_fun._obj_1]
-                        logger(i, obj_trial, None, True, self.get_instance_name(), 1)
+                # iterate over population
+                storage_pop = list()
+                for j in range(self._pop_size):
+                    pop_a, pop_b, pop_c = self.choose(j)
+                    # perform mutation
+                    mutated = self.mutation(pop_a, pop_b, pop_c)
+                    if self._obj_fun.is_multi:
+                        trial = self.crossover(mutated, self._population[j]['layout'], len(self._population[j]['layout']),
+                                               self.cr)
                     else:
-                        logger(i, obj_trial, None, True, self.get_instance_name(), self.pf.get_objective_is_multi())
+                        trial = self.crossover(mutated, self._population[j]['layout'], len(self._population[j]['layout']),
+                                               self.cr)
 
-                except Exception as e:
-                    print('why is there an exception')
-                    print(e)
-                    continue
+                    storage_pop.append(trial)
+                results_population = pool.map(self.calculate_fitness, [(i, storage_pop) for i in range(self._pop_size)])
 
-                i += 1
-                if self.pf.get_objective_is_multi():
-                    is_updated, self._pareto_population = self.pf.check_if_dominance(self._pareto_population, obj_trial,
-                                                                                     1)
+                for j, obj_trial in enumerate(results_population):
 
-                    if len(self._pareto_population) == 1:
-                        print('the size of the population is only 1')
-                    if self.pf.check_dominance([obj_trial[self.pf.obj_key_1], obj_trial[self.pf.obj_key_2]],
-                                               [self._population[j][self.pf.obj_key_1], self._population[j][
-                                                   self.pf.obj_key_2]]):  # if solution dominates existing #FIXME some error here true but not entering
+                    try:
 
-                        iterations_without_improvement = 0
-                        self._population[j] = obj_trial
+                        # obj_trial = self._obj_fun.get_fitness(trial, self.pf.get_objective_is_multi())
+                        if not self.pf.get_objective_is_multi():
+                            average_iteration += obj_trial[self._obj_fun._obj_1]
+                            logger(i, obj_trial, None, True, self.get_instance_name(), 1)
+                        else:
+                            logger(i, obj_trial, None, True, self.get_instance_name(), self.pf.get_objective_is_multi())
 
-                        logger(self.it_process, obj_trial, self._population, True,
-                               self.instance_name + '/population_logger_strict_non_pareto.csv', 1)
-                        logger(self.it_process, obj_trial, self._pareto_population, True,
-                               self.instance_name + '/population_logger_pareto.csv', 1)
-                    else:
-                        if self.pf.calculate_difference(obj_trial, self._population[j]):
+                    except Exception as e:
+                        print('why is there an exception')
+                        print(e)
+                        continue
+
+                    i += 1
+                    if self.pf.get_objective_is_multi():
+                        is_updated, self._pareto_population = self.pf.check_if_dominance(self._pareto_population, obj_trial,
+                                                                                         1)
+
+                        if len(self._pareto_population) == 1:
+                            print('the size of the population is only 1')
+                        if self.pf.check_dominance([obj_trial[self.pf.obj_key_1], obj_trial[self.pf.obj_key_2]],
+                                                   [self._population[j][self.pf.obj_key_1], self._population[j][
+                                                       self.pf.obj_key_2]]):  # if solution dominates existing #FIXME some error here true but not entering
+
                             iterations_without_improvement = 0
                             self._population[j] = obj_trial
-                            self._pareto_population = self.pf.Pareto_F
+
                             logger(self.it_process, obj_trial, self._population, True,
                                    self.instance_name + '/population_logger_strict_non_pareto.csv', 1)
                             logger(self.it_process, obj_trial, self._pareto_population, True,
                                    self.instance_name + '/population_logger_pareto.csv', 1)
+                        else:
+                            if self.pf.calculate_difference(obj_trial, self._population[j]):
+                                iterations_without_improvement = 0
+                                self._population[j] = obj_trial
+                                self._pareto_population = self.pf.Pareto_F
+                                logger(self.it_process, obj_trial, self._population, True,
+                                       self.instance_name + '/population_logger_strict_non_pareto.csv', 1)
+                                logger(self.it_process, obj_trial, self._pareto_population, True,
+                                       self.instance_name + '/population_logger_pareto.csv', 1)
 
-                    if it_best is None:
-                        it_best = obj_trial
-                    else:
-                        if self.pf.weighted_obj(obj_trial) < self.pf.weighted_obj(it_best):
+                        if it_best is None:
                             it_best = obj_trial
+                        else:
+                            if self.pf.weighted_obj(obj_trial) < self.pf.weighted_obj(it_best):
+                                it_best = obj_trial
 
 
 
 
-                else:
-                    if obj_trial[self._obj_fun._obj_1] < self._population[j][self._obj_fun._obj_1]:
-                        iterations_without_improvement = 0
-                        self._population[j] = obj_trial
-
-                    if it_best is None:
-                        it_best = obj_trial
                     else:
-                        if obj_trial[self._obj_fun._obj_1] < it_best[self.obj_1]:
+                        if obj_trial[self._obj_fun._obj_1] < self._population[j][self._obj_fun._obj_1]:
                             iterations_without_improvement = 0
+                            self._population[j] = obj_trial
+
+                        if it_best is None:
                             it_best = obj_trial
-                    if obj_trial[self._obj_fun._obj_1] < best_solution[self.obj_1]:
-                        best_solution = obj_trial
+                        else:
+                            if obj_trial[self._obj_fun._obj_1] < it_best[self.obj_1]:
+                                iterations_without_improvement = 0
+                                it_best = obj_trial
+                        if obj_trial[self._obj_fun._obj_1] < best_solution[self.obj_1]:
+                            best_solution = obj_trial
 
-                    logger(self.it_process, obj_trial, best_solution, name=self.get_instance_name(),
-                           local_best1=it_best)
+                        logger(self.it_process, obj_trial, best_solution, name=self.get_instance_name(),
+                               local_best1=it_best)
 
-                self.it_process += 1
+                    self.it_process += 1
 
-                # self._sort_memory()  # should I sort
-            self._sort_memory()
-            best_solution = self._population[0]
-            best_struct = self._population[0]['layout']
+                    # self._sort_memory()  # should I sort
+                self._sort_memory()
+                best_solution = self._population[0]
+                best_struct = self._population[0]['layout']
 
-            iterations_without_improvement += 1
+                iterations_without_improvement += 1
 
-            obj_iter.append((i, it_best[self.obj_1], best_solution[self.obj_1], average_iteration / self._pop_size))
-            average_iteration = 0
-            # print('Iteration: ', i, ' with best objective: ', best_solution)
-            # print("Iterations without improvement currently", iterations_without_improvement)
-            it_best = Solution()
+                obj_iter.append((i, it_best[self.obj_1], best_solution[self.obj_1], average_iteration / self._pop_size))
+                average_iteration = 0
+                # print('Iteration: ', i, ' with best objective: ', best_solution)
+                # print("Iterations without improvement currently", iterations_without_improvement)
+                it_best = Solution()
         if self._obj_fun.is_multi:
             self._pareto_population = self.pf.pareto_run(self._pareto_population)
             return self._pareto_population, self._population
