@@ -47,7 +47,7 @@ except ImportError as exc:  # pragma: no cover
         "engine='numba-rp' requires: pip install 'metacountregressor[numba]'"
     ) from exc
 
-DIST_CODES = {"normal": 0, "lognormal": 1, "triangular": 2, "uniform": 3}
+DIST_CODES = {"normal": 0, "lognormal": 1, "triangular": 2, "uniform": 3, "neglognormal": 4}
 CODE_DISTS = {v: k for k, v in DIST_CODES.items()}
 _SQRT2 = math.sqrt(2.0)
 _LN2 = 0.6931471805599453  # softplus(0): correlated-path fixed scale (JAX convention)
@@ -202,6 +202,8 @@ def _rp_ll_ind_core(params, Xf, Xi, Xc, Xg, Xh_m, Xhv_m, Gm, Xzi,
                     code = dist_c[k]
                     if code == 1:
                         b = math.exp(m + _LN2 * z)
+                    elif code == 4:  # neglognormal (strictly negative site effects)
+                        b = -math.exp(m + _LN2 * z)
                     elif code == 2 or code == 3:
                         u = _norm_cdf(z)
                         b = m + _LN2 * (2.0 * u - 1.0)
@@ -223,6 +225,8 @@ def _rp_ll_ind_core(params, Xf, Xi, Xc, Xg, Xh_m, Xhv_m, Gm, Xzi,
                     code = dist_i[k]
                     if code == 1:
                         b = math.exp(m + s * z)
+                    elif code == 4:  # neglognormal (strictly negative site effects)
+                        b = -math.exp(m + s * z)
                     elif code == 2 or code == 3:
                         u = _norm_cdf(z)
                         b = m + s * (2.0 * u - 1.0)
@@ -238,6 +242,8 @@ def _rp_ll_ind_core(params, Xf, Xi, Xc, Xg, Xh_m, Xhv_m, Gm, Xzi,
                         code = dist_g[k]
                         if code == 1:
                             b = math.exp(m + s * z)
+                        elif code == 4:  # neglognormal (strictly negative site effects)
+                            b = -math.exp(m + s * z)
                         elif code == 2 or code == 3:
                             u = _norm_cdf(z)
                             b = m + s * (2.0 * u - 1.0)

@@ -38,7 +38,7 @@ Notation
               parameter (``gamma_var`` blocks).
 ``v``         base simulation draws, standard normal, shape (N, K, R).
 ``T``         distribution transform per coefficient: normal, lognormal,
-              triangular, uniform (codes mirror ``DIST_MAP`` in main_hpc).
+               triangular, uniform, neglognormal (codes mirror ``DIST_MAP`` in main_hpc).
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ from typing import Sequence
 
 import numpy as np
 
-DIST_CODES = {"normal": 0, "lognormal": 1, "triangular": 2, "uniform": 3}
+DIST_CODES = {"normal": 0, "lognormal": 1, "triangular": 2, "uniform": 3, "neglognormal": 4}
 CODE_DISTS = {v: k for k, v in DIST_CODES.items()}
 
 STRUCTURAL_EQUATION_LATEX = (
@@ -162,6 +162,9 @@ def rp_draws_independent(
         z = v[:, k, :]
         if code == 1:  # lognormal
             out[:, k, :] = np.exp(m + s * z)
+        elif code == 4:  # neglognormal (strictly negative site effects)
+            # b[n,k,r] = -exp(mu + s * z), s = exp(logsd)
+            out[:, k, :] = -np.exp(m + s * z)
         elif code == 2:  # triangular
             u = _norm_cdf(z)
             out[:, k, :] = m + s * (2.0 * u - 1.0)
@@ -212,6 +215,8 @@ def _correlated_via_independent(mu, v, zcorr, dists):
         z = zcorr[:, k, :]
         if code == 1:
             out[:, k, :] = _np.exp(m + z)
+        elif code == 4:  # neglognormal (strictly negative)
+            out[:, k, :] = -_np.exp(m + z)
         elif code == 2:
             u = _norm_cdf(z)
             out[:, k, :] = m + (2.0 * u - 1.0)

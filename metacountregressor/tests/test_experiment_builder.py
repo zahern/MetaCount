@@ -115,7 +115,15 @@ def test_build_spec_covers_heterogeneity_roles():
     assert spec["latent_classes"] == 2
 
 
-def test_membership_roles_collapse_when_single_class():
+def test_single_class_builder_strips_membership_roles():
+    """Roles 7/8 are latent-class constructs and are not offered at C == 1.
+
+    With ``max_latent_classes == 1`` there is no membership equation, so
+    ``build_evaluator`` strips codes 7 and 8 from every variable's allowed
+    role set (see the "Single-class searches must not offer membership
+    roles" block in ``experiment_package.py``).  Genes that encode 7/8 are
+    therefore rejected by ``build_spec`` rather than silently collapsed.
+    """
     df = make_panel_df()
     builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
     evaluator = builder.build_evaluator(
@@ -126,9 +134,38 @@ def test_membership_roles_collapse_when_single_class():
         default_roles=[0, 1, 7, 8],
     )
 
+    assert evaluator.allowed_roles["x_member"] == [0, 1]
+    assert evaluator.allowed_roles["x_member_fixed"] == [0, 1]
+
+    decision = np.array([7, 8, 0, 0, 0, 0])
+    assert evaluator.build_spec(decision) is None
+
+
+def test_membership_roles_collapse_when_single_class():
+    """``build_spec`` still decodes 7/8 degenerately at C == 1.
+
+    Role 7 is membership-only, so at C == 1 it drops the variable entirely;
+    role 8 is membership + outcome, so it falls back to a plain fixed term.
+    ``build_evaluator`` strips both codes for single-class searches, so this
+    restores them to exercise the decode path itself.
+    """
+    df = make_panel_df()
+    builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
+    evaluator = builder.build_evaluator(
+        variables=["x_member", "x_member_fixed"],
+        mode="single",
+        max_latent_classes=1,
+        R=8,
+        default_roles=[0, 1, 7, 8],
+    )
+
+    for var in evaluator.allowed_roles:
+        evaluator.allowed_roles[var] = [0, 1, 7, 8]
+
     decision = np.array([7, 8, 0, 0, 0, 0])
     spec = evaluator.build_spec(decision)
 
+    assert spec is not None
     assert spec["membership_terms"] == []
     assert spec["fixed_terms"] == ["x_member_fixed"]
     assert spec["latent_classes"] == 1

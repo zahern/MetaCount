@@ -75,7 +75,7 @@ DIST_MAP = {
     "lognormal": 1,
     "triangular": 2,
     'uniform':3,
-    
+    'neglognormal': 4,
 }
 
 def lognormal_loglik(y, eta, sigma):
@@ -886,6 +886,8 @@ def transform_draws(draws, mean, scale, dist_codes):
         0 = normal
         1 = lognormal
         2 = triangular
+        3 = uniform
+        4 = neglognormal (strictly negative site effects)
     """
 
     scale = _positive_scale(scale)
@@ -909,6 +911,9 @@ def transform_draws(draws, mean, scale, dist_codes):
     # Lognormal
     beta_lognormal = jnp.exp(mean + scale * z)
 
+    # Neglognormal (strictly negative site effects for treatments that only reduce)
+    beta_neglognormal = -jnp.exp(mean + scale * z)
+
     # Triangular (using inverse CDF of symmetric triangular)
     # Assume draws are uniform in (-1,1)
     u = jsp.stats.norm.cdf(z)
@@ -919,12 +924,12 @@ def transform_draws(draws, mean, scale, dist_codes):
     beta_uniform = mean + scale * u
 
     # Stack and select
-    betas = jnp.stack([beta_normal, beta_lognormal, beta_tri, beta_uniform], axis=-1)
+    betas = jnp.stack([beta_normal, beta_lognormal, beta_tri, beta_uniform, beta_neglognormal], axis=-1)
 
     # dist_codes shape (K,)
-    selector = jax.nn.one_hot(dist_codes, 4)  # (K,4)
+    selector = jax.nn.one_hot(dist_codes, 5)  # (K,5)
 
-    selector = selector[None, :, None, :]  # (1,K,1,4)
+    selector = selector[None, :, None, :]  # (1,K,1,5)
 
     beta = jnp.sum(betas * selector, axis=-1)
 
@@ -5548,7 +5553,7 @@ def populate_allowed_distributions(all_variables,
                                    default_dist=None):
 
     if default_dist is None:
-        default_dist = ["normal", 'uniform', 'lognormal', 'triangular']
+        default_dist = ["normal", 'uniform', 'lognormal', 'triangular', 'neglognormal']
 
     full = {}
 
