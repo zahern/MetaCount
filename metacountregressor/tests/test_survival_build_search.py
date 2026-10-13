@@ -7,6 +7,7 @@ search without event_col must fail loudly rather than silently dropping the
 censoring indicator.
 """
 
+import random
 import warnings
 
 import numpy as np
@@ -41,7 +42,14 @@ def _quiet():
     # pre-existing test_membership_roles_collapse_when_single_class is
     # order-dependent.  Pin the global seed here so this file is not a
     # second victim of the same known fragility.
+    #
+    # The SA also draws from the *stdlib* `random` stream (43 call sites in
+    # metaheuristics.py: random.random/randint/choice/uniform).  Seeding numpy
+    # alone leaves that stream carrying state across tests, which is what made
+    # the SA outcome -- and therefore this test -- vary between otherwise
+    # identical runs.  Pin both generators.
     np.random.seed(20260930)
+    random.seed(20260930)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         yield

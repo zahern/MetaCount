@@ -5382,7 +5382,9 @@ def decode_best_solution(best_solution, evaluator):
             allowed = evaluator.allowed_distributions[var]
             dist = allowed[dists[i] % len(allowed)]
 
-        print(f"{var:12} → {role_name:22} | Dist: {dist}")
+        # ASCII arrow: a cp1252 console cannot encode U+2192 and would raise
+        # UnicodeEncodeError here, turning a successful search into a crash.
+        print(f"{var:12} -> {role_name:22} | Dist: {dist}")
 
     print("\n======================================================\n")
 

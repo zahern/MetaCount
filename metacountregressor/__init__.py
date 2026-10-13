@@ -1,9 +1,36 @@
 from importlib import import_module
+import sys
 import warnings
 try:
     from ._version import __version__
 except ImportError:
     from _version import __version__
+
+
+def _relax_stream_encoding() -> None:
+    """Stop decorative output from crashing on narrow-encoding consoles.
+
+    The library prints box-drawing rules, arrows and check marks in its
+    progress/summary output.  On a Windows console (and in many CI log
+    readers) stdout is cp1252, which cannot encode those code points, so a
+    perfectly good run dies with ``UnicodeEncodeError`` from deep inside a
+    ``print`` call.
+
+    Only the *error handler* is relaxed - the encoding itself is untouched,
+    so a UTF-8 terminal still renders every glyph exactly as intended and a
+    cp1252 terminal falls back to escaped forms instead of raising.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):  # pragma: no cover
+            pass
+
+
+_relax_stream_encoding()
 
 __all__ = [
     "__version__",
