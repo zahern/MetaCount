@@ -52,6 +52,7 @@ py-modules = [
   "bivariate_copula",
   "duration_main",
   "family_search",
+  "genetic_algorithm",
   "multivariate_count_regressor",
   "_jax_config",
   "cmf_package",

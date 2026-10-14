@@ -446,6 +446,7 @@ try:
         _seed_classes_from_clusters,
         _tobit_ols_init,
     )
+    from .genetic_algorithm import MultiStartGA
 except ImportError:
     from family_search import (
         CMFFamilySearchProblem,
@@ -489,6 +490,7 @@ except ImportError:
         _seed_classes_from_clusters,
         _tobit_ols_init,
     )
+    from genetic_algorithm import MultiStartGA
 try:
     from .output_config import (
         SearchOutputConfig,
@@ -4448,6 +4450,119 @@ class ExperimentBuilder:
                 # AdvancedSimulatedAnnealing.save_search_stats_csv().
                 "search_stats":  [r.get("search_stats") for r in solver.results],
                 "stats_csv":     [r.get("stats_csv") for r in solver.results],
+            }
+            if output_config is not None:
+                result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo, metadata=metadata))
+            return result
+
+        elif algo == "ga":
+            # Genetic algorithm over the same decision vector the SA walks.
+            # Population + crossover explores variable *combinations* that a
+            # single-walk neighbourhood search tends to miss, which is what
+            # you want when the question is "which set of variables, each
+            # with its own coefficient, fits best" rather than "which single
+            # term matters".
+            ga_def = dict(
+                population_size=60,
+                max_iter=max_iter,
+                crossover_rate=0.9,
+                mutation_rate=0.15,
+                elite_size=4,
+                tournament_size=3,
+                n_starts=1,
+            )
+            ga_def.update(algo_kwargs)
+
+            n_starts = int(ga_def.pop("n_starts", 1))
+            max_time = ga_def.pop("max_time", None)
+            warm_start = ga_def.pop("warm_start_cache", True)
+            init_solutions = None
+            if warm_start:
+                # Same resume behaviour as the SA branch: reuse the best
+                # structure already in the evaluator cache (e.g. restored
+                # from a checkpoint after a walltime kill).
+                want = dim
+                best_v = None
+                for k, v in getattr(evaluator, "cache", {}).items():
+                    if isinstance(k, (tuple, list)) and len(k) == want:
+                        try:
+                            val = float(np.min(v))
+                        except Exception:
+                            continue
+                        if np.isfinite(val) and val < 1e12 and (
+                            best_v is None or val < best_v
+                        ):
+                            init_solutions, best_v = [np.asarray(k, dtype=float)], val
+                if init_solutions is not None:
+                    print(f"  [resume] seeding GA from cached best (score={best_v:.4f})")
+
+            metadata = {
+                "variables": [str(v) for v in evaluator.vars],
+                "n_variables": len(evaluator.vars),
+                "algorithm": algo,
+                "max_iter": max_iter,
+                "seed": seed,
+                "hyperparameters": dict(ga_def),
+                "objective": "bic",
+                "max_time": None if max_time is None else float(max_time),
+                "refit": bool(refit),
+            }
+
+            solver = MultiStartGA(
+                evaluator=evaluator,
+                dimension=dim,
+                n_starts=n_starts,
+                n_jobs=n_jobs,
+                init_solutions=init_solutions,
+                max_time=max_time,
+                **ga_def,
+            )
+            solutions, scores = solver.optimize()
+            solutions = np.array(solutions)
+            scores    = np.array(scores)
+
+            best_idx      = int(np.argmin(scores))
+            best_solution = solutions[best_idx]
+            best_score    = float(scores[best_idx])
+            model_spec = evaluator.build_spec(best_solution)
+            if model_spec is not None and getattr(evaluator, "cmf_metadata", None):
+                model_spec = {
+                    **model_spec,
+                    "family": "cmf",
+                    "metadata": dict(evaluator.cmf_metadata),
+                }
+
+            D2  = len(evaluator.vars)
+            if has_lc and len(best_solution) > 2 * D2 + 1:
+                lc = int(best_solution[2*D2+1]) % evaluator.max_latent_classes + 1
+            else:
+                lc = 1
+            n_mem_7 = sum(1 for i in range(D2) if int(best_solution[i]) == 7)
+            n_mem_8 = sum(1 for i in range(D2) if int(best_solution[i]) == 8)
+
+            print("\n  Best structure:")
+            decode_best_solution(best_solution, evaluator)
+            print(f"  Best BIC              : {best_score:.4f}")
+            print(f"  Latent classes        : {lc}")
+            print(f"  Membership-only vars  : {n_mem_7}  (role 7)")
+            print(f"  Membership+fixed vars : {n_mem_8}  (role 8)")
+
+            if refit:
+                refit_and_print(evaluator, best_solution)
+                save_run_summary_to_txt(evaluator, best_solution,
+                                        algo, seed, config_id)
+
+            metadata["elapsed_seconds"] = _time.time() - _t0
+            result = {
+                "algorithm":     algo,
+                "seed":          seed,
+                "solutions":     solutions,
+                "scores":        scores,
+                "best_solution": best_solution,
+                "best_score":    best_score,
+                "model_spec":    model_spec,
+                "search_stats":  [r.get("search_stats") for r in solver.results],
+                "stats_csv":     [None for _ in solver.results],
             }
             if output_config is not None:
                 result["saved_to"] = str(save_search_result(result, output_config, family="count", algorithm=algo, metadata=metadata))
