@@ -48,6 +48,10 @@ def main() -> None:
     ap.add_argument("--lower", nargs="*", default=LOWER_POOL)
     ap.add_argument("--R-search", type=int, default=120)
     ap.add_argument("--R-final", type=int, default=500)
+    ap.add_argument("--min-upper", type=int, default=2)
+    ap.add_argument("--min-lower", type=int, default=1)
+    ap.add_argument("--max-upper", type=int, default=None)
+    ap.add_argument("--max-lower", type=int, default=None)
     args = ap.parse_args()
 
     df = load()
@@ -59,13 +63,17 @@ def main() -> None:
     print("=" * 88)
     print("upper-tier candidates (direct CMFs) :", upper)
     print("lower-tier candidates (AADT elasticity):", lower)
+    print("constraints  K_U: %d .. %s   |   K_L: %d .. %s"
+          % (args.min_upper, args.max_upper, args.min_lower, args.max_lower))
     print("decision space = 2*%d + %d = %d binary choices per candidate"
           % (len(upper) + len(lower), len(upper) + len(lower),
              2 * (len(upper) + len(lower))))
 
     t0 = time.time()
     sel_b, sel_l, rand_b, rand_l, use_halton, model, fitness = run_ga(
-        df, upper, lower, R=args.R_search, corr_threshold=0.8)
+        df, upper, lower, R=args.R_search, corr_threshold=0.8,
+        min_baseline=args.min_upper, min_local=args.min_lower,
+        max_baseline=args.max_upper, max_local=args.max_lower)
     el = time.time() - t0
 
     print("\nsearch finished in %.1f s   (fitness = %.4f, family = %s)"
@@ -91,12 +99,11 @@ def main() -> None:
                       AADT_mean=float(np.mean(df["AADT"])), model=model)
 
     if not sel_l:
-        print("!! WARNING: the search returned an EMPTY lower tier.")
-        print("   run_ga imposes no K_L^min constraint, so the elasticity-modifier")
-        print("   mechanism the paper requires can be dropped entirely.  Use the")
-        print("   higher-level search (metacountregressor/adaptive_search.py or the")
-        print("   generator scripts) which enforces K_L^min >= 1 and the significance")
-        print("   gate, or add the constraint to the decision encoding.")
+        print("!! WARNING: an EMPTY lower tier; K_L^min >= 1 is not being")
+        print("   enforced by run_ga with these arguments.")
+    else:
+        print("tier sizes: K_U = %d, K_L = %d  (both within constraints)." % (
+            len(sel_b), len(sel_l)))
 
     print("\nThe upper tier supplies exp(delta*dx) CMFs; the lower tier supplies")
     print("gamma coefficients on the AADT elasticity, so the site-specific")

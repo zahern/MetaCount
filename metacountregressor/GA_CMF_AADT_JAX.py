@@ -805,6 +805,19 @@ def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8,
             if not _check_corr_constraint(selected_baseline):
                 return 1e12  # Large penalty for correlation constraint violation
 
+            # Hard dimension bounds (C3) and hierarchical integrity (K_L^min >= 1).
+            # Enforced here, not only in build_spec, because the optimiser
+            # minimises this fitness function directly: without the check it
+            # would happily return an empty lower tier, which silently drops
+            # the two-tier interpretation.  Rejected candidates are never
+            # scored, so no elastic miss-specification can become the incumbent.
+            local_mask = full[k_base:k_base + k_loc].astype(bool)
+            if not (min_baseline <= len(selected_baseline) <= max_baseline):
+                return 1e12  # upper-tier size out of bounds
+            n_loc = int(local_mask.sum())
+            if not (min_local <= n_loc <= max_local):
+                return 1e12  # lower-tier size out of bounds (e.g. K_L^min = 1)
+
             rand_baseline_all = [bool(full[offset_rf + i]) for i in range(k_base)]
             rand_local_all = [bool(full[offset_rf + k_base + i]) for i in range(k_loc)]
             return evaluate_model(
