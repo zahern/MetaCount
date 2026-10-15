@@ -1,0 +1,166 @@
+#!/bin/bash -l
+# =============================================================================
+#  run_wa_hierarchical_search.pbs
+#  Hierarchical CMF structure search on WA Ex-16-3 dataset
+#
+#  Submission:
+#    qsub -v RUN_TAG=wa_ex16_3,GA_PROFILE=1,GA_BUDGET=standard,NEW_POP=1 \
+#         run_wa_hierarchical_search.pbs
+#
+#  Environment variables
+#  ─────────────────────
+#    RUN_TAG    : label appended to output files (e.g. wa_ex16_3, test)
+#    GA_PROFILE : 1=SA/standard, 2=HS/standard, 3=DE/standard
+#    GA_BUDGET  : resource budget tier  (short | standard | large)
+#    NEW_POP    : 1 → fresh population, 0 → warm-start
+# =============================================================================
+
+# ── Defaults (overridden by -v at submission) ─────────────────────────────
+RUN_TAG=${RUN_TAG:-wa_ex16_3}
+GA_PROFILE=${GA_PROFILE:-1}
+GA_BUDGET=${GA_BUDGET:-standard}
+NEW_POP=${NEW_POP:-1}
+
+# ── Resource selection based on GA_BUDGET ────────────────────────────────
+case "$GA_BUDGET" in
+  short)
+    WALLTIME="02:00:00"
+    MEM="20GB"
+    NCPUS=4
+    ;;
+  large)
+    WALLTIME="48:00:00"
+    MEM="100GB"
+    NCPUS=16
+    ;;
+  *)    # standard (default)
+    WALLTIME="23:59:00"
+    MEM="60GB"
+    NCPUS=8
+    ;;
+esac
+
+# ── PBS directives ──────────────────────────────────────────────────────
+#PBS -N metacount_wa_${RUN_TAG}
+#PBS -l walltime=${WALLTIME}
+#PBS -l mem=${MEM}
+#PBS -l ncpus=${NCPUS}
+#PBS -l ngpus=0
+#PBS -j eo
+#PBS -m abe
+#PBS -r y
+
+# ── Map GA_PROFILE → algorithm ───────────────────────────────────────────
+case "$GA_PROFILE" in
+  2) ALGO="hs" ;;
+  3) ALGO="de" ;;
+  *)  ALGO="sa" ;;
+esac
+
+echo "=========================================="
+echo "  MetaCount WA Ex-16-3 Hierarchical CMF Search"
+echo "  RUN_TAG    : $RUN_TAG"
+echo "  GA_PROFILE : $GA_PROFILE  →  algo=$ALGO"
+echo "  GA_BUDGET  : $GA_BUDGET"
+echo "  NEW_POP    : $NEW_POP"
+echo "  PBS Job ID : $PBS_JOBID"
+echo "  Start time : $(date)"
+echo "=========================================="
+
+cd $PBS_O_WORKDIR
+
+module purge
+module load anaconda3/2019.10
+conda activate zigenv
+
+# Upgrade package to latest from PyPI
+echo "Upgrading metacountregressor from PyPI..."
+pip install --upgrade --index-url https://pypi.org/simple metacountregressor 2>&1 | tail -5
+
+# ── Run the WA Ex-16-3 hierarchical CMF search ──────────────────────────
+# Uses the package's cmf_search_demo.py with WA-specific candidate pools
+python -u - <<'PYEOF' 2>&1
+import sys, os, time, warnings
+import numpy as np
+import pandas as pd
+
+warnings.filterwarnings("ignore")
+
+REPO = os.environ.get("PBS_O_WORKDIR", ".")
+if REPO not in sys.path:
+    sys.path.insert(0, REPO)
+
+from metacountregressor.GA_CMF_AADT_JAX import (
+    run_ga, fit_final_model, compute_se, build_summary_table,
+    print_summary_table, print_cmf_results
+)
+
+# Load WA Ex-16-3 data
+DATA = os.path.join(REPO, "metacountregressor", "data", "Ex-16-3.csv")
+df = pd.read_csv(DATA)
+df["_log_len"] = np.log(df["LENGTH"].astype(float).clip(lower=1e-6))
+
+# WA candidate pools from the generator script
+UPPER_POOL = ["WIDTH", "CURVES", "GRADEBR", "FRICTION", "EXPOSE", "MXMEDSH", "URB"]
+LOWER_POOL = ["SLOPE", "TANGENT", "MIMEDSH", "MXGRDIFF", "AVEPRE"]
+
+upper = [v for v in UPPER_POOL if v in df.columns]
+lower = [v for v in LOWER_POOL if v in df.columns]
+
+print("=" * 80)
+print("WA EX-16-3 HIERARCHICAL CMF STRUCTURE SEARCH")
+print("=" * 80)
+print(f"Upper-tier candidates: {upper}")
+print(f"Lower-tier candidates: {lower}")
+print(f"Observations: {len(df)}, Mean AADT: {df['AADT'].mean():.0f}")
+print()
+
+# Search parameters
+R_search = 120
+R_final = 300
+min_upper, min_lower = 2, 1
+max_upper, max_lower = 5, 3
+
+t0 = time.time()
+sel_b, sel_l, rand_b, rand_l, use_halton, model, fitness = run_ga(
+    df, upper, lower, R=R_search, corr_threshold=0.8,
+    min_baseline=min_upper, min_local=min_lower,
+    max_baseline=max_upper, max_local=max_lower)
+el = time.time() - t0
+
+print(f"\nSearch finished in {el:.1f} s (fitness = {fitness:.4f}, family = {model})")
+print("\nSEARCH OUTCOME")
+print(f"  UPPER tier (conventional CMFs) : {sel_b}")
+print(f"  LOWER tier (elasticity mods)  : {sel_l}")
+print(f"  Random upper coefficients     : {[v for v, r in zip(sel_b, rand_b) if r]}")
+print(f"  Random lower coefficients     : {[v for v, r in zip(sel_l, rand_l) if r]}")
+
+print(f"\nRefitting selected structure at R = {R_final} ...")
+res, y_jax, aadt_jax, b_jax, l_jax, draws, std_info, offset_jax = fit_final_model(
+    df, sel_b, sel_l, rand_b, rand_l, model=model, use_halton=use_halton, R=R_final)
+se, cov = compute_se(res, y_jax, aadt_jax, b_jax, l_jax,
+                     rand_b, rand_l, draws, R_final, model, offset_jax)
+table = build_summary_table(res, sel_b, sel_l, rand_b, rand_l, model, se)
+print_summary_table(table)
+
+print("\nHIERARCHICAL READING OF THE SEARCH RESULT")
+AADT_mean = float(np.mean(df["AADT"]))
+print_cmf_results(res, sel_b, sel_l, rand_b, rand_l,
+                  AADT_mean=AADT_mean, model=model)
+
+if not sel_l:
+    print("\n!! WARNING: EMPTY lower tier!")
+else:
+    print(f"\nTier sizes: K_U = {len(sel_b)}, K_L = {len(sel_l)} (within constraints).")
+
+print("\nDone.")
+PYEOF
+
+EXIT_CODE=$?
+
+echo "=========================================="
+echo "  Job finished at $(date)"
+echo "  Exit code: $EXIT_CODE"
+echo "=========================================="
+
+exit $EXIT_CODE
