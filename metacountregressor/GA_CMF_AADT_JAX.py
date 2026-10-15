@@ -656,11 +656,43 @@ def _param_labels(selected_baseline, selected_local, rand_baseline, rand_local, 
 # SOLVER-BASED SEARCH (MultiStartSA)
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8):
+def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8,
+           min_baseline=2, min_local=1,
+           max_baseline=None, max_local=None):
+    """Search for a two-tier CMF specification.
+
+    Dimension bounds (the programme's constraint C3, and the hierarchical
+    integrity requirement ``K_L^min >= 1``) are enforced as hard rejections:
+    a candidate that violates them is never scored, so it can neither enter
+    the incumbent nor be reported.
+
+    ``min_local >= 1`` guarantees that the selected model always retains at
+    least one AADT-elasticity modifier, i.e. that the site-specific elasticity
+    ``eta_i = beta + sum_k gamma_k z_k`` remains context-dependent.  Without it
+    the search will happily return an empty lower tier, which silently discards
+    the two-tier interpretation entirely.
+    """
     k_base = len(baseline_vars)
     k_loc = len(local_vars)
     D = k_base + k_loc
     offset_rf = D + 2
+
+    if max_baseline is None:
+        max_baseline = k_base
+    if max_local is None:
+        max_local = k_loc
+
+    min_baseline = max(0, int(min_baseline))
+    min_local = max(0, int(min_local))
+    max_baseline = min(int(max_baseline), k_base)
+    max_local = min(int(max_local), k_loc)
+    if min_local > k_loc:
+        raise ValueError(
+            f"min_local={min_local} exceeds the number of lower-tier "
+            f"candidates ({k_loc}); the lower tier cannot be populated."
+        )
+    if min_baseline > max_baseline:
+        raise ValueError("min_baseline exceeds max_baseline.")
 
     # ── Correlation constraint (Eq. 291): |corr(Z_k, Z_k')| <= c for baseline (upper-level) pairs
     # Compute pairwise correlations among baseline candidates from data
@@ -879,7 +911,7 @@ def build_summary_table(result,
     labels = _param_labels(selected_baseline, selected_local, rand_baseline, rand_local, model)
 
     rows = list(zip(labels, params, se, z, p))
-    return pd.DataFrame(rows, columns=["Parameter", "Estimate", "Std.Err", "z", "p-value"])
+    return pd.DataFrame(rows, columns=["Parameter", "Estimate", "Std.Err", "z-value", "p-value"])
 
 
 def print_summary_table(df):
