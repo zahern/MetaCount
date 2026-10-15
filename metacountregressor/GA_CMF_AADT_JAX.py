@@ -129,10 +129,12 @@ def count_params(rand_baseline, rand_local, model):
 
 @partial(jax.jit, static_argnames=('rand_baseline', 'rand_local', 'model'))
 def _fixed_ll(params, y, AADT, baseline_mat, locals_mat,
-              rand_baseline, rand_local, model):
+              rand_baseline, rand_local, model, offset=None):
     """
-    Closed-form log-likelihood â€” called when all random flags are False.
+    Closed-form log-likelihood — called when all random flags are False.
     JIT-compiled: ~2-5x faster than NumPy on CPU for moderate N.
+
+    offset: optional (N,) array of log(exposure) e.g. log(segment length).
     """
     k_base = baseline_mat.shape[1]
     k_loc  = locals_mat.shape[1]
@@ -140,7 +142,6 @@ def _fixed_ll(params, y, AADT, baseline_mat, locals_mat,
     idx = 0
     alpha0 = params[idx]; idx += 1
 
-    # Unpack alpha (all fixed here, no sigma entries)
     alphas = []
     for k in range(k_base):
         alphas.append(params[idx]); idx += 1
@@ -156,7 +157,10 @@ def _fixed_ll(params, y, AADT, baseline_mat, locals_mat,
     log_A  = alpha0 + (baseline_mat @ alpha if k_base > 0 else 0.0)
     log_A  = jnp.clip(log_A, -20.0, 20.0)
     B      = beta0  + (locals_mat  @ beta  if k_loc  > 0 else 0.0)
-    log_mu = jnp.clip(log_A + B * jnp.log(AADT), -30.0, 30.0)
+    log_mu = log_A + B * jnp.log(AADT)
+    if offset is not None:
+        log_mu = log_mu + offset
+    log_mu = jnp.clip(log_mu, -30.0, 30.0)
     mu     = jnp.exp(log_mu)
 
     if model == 'poisson':
@@ -170,19 +174,19 @@ def _fixed_ll(params, y, AADT, baseline_mat, locals_mat,
 
 @partial(jax.jit, static_argnames=('rand_baseline', 'rand_local', 'model'))
 def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
-              rand_baseline, rand_local, draws, model):
+              rand_baseline, rand_local, draws, model, offset=None):
     """
     Simulation-based log-likelihood with per-variable random effects.
     JIT-compiled: the loop over variables unrolls at trace time.
 
     draws : (R, N, n_rand)  standard-normal, pre-generated
+    offset: optional (N,) array of log(exposure) e.g. log(segment length).
     """
     R      = draws.shape[0]
     N      = len(y)
     k_base = baseline_mat.shape[1]
     k_loc  = locals_mat.shape[1]
 
-    # â”€â”€ Unpack parameters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     idx       = 0
     alpha0    = params[idx]; idx += 1
 
@@ -208,7 +212,7 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
 
     log_AADT = jnp.log(AADT)   # (N,)
 
-    # â”€â”€ Component A  â€”  shape (R, N) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # — Component A — shape (R, N) —
     log_A    = jnp.full((R, N), alpha0)
     draw_col = 0
     for k in range(k_base):
@@ -221,7 +225,7 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
             log_A = log_A + alpha[k] * xk
     log_A = jnp.clip(log_A, -20.0, 20.0)
 
-    # â”€â”€ Component B  â€”  shape (R, N) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # — Component B — shape (R, N) —
     B = jnp.full((R, N), beta0)
     for k in range(k_loc):
         xk = locals_mat[:, k][None, :]
@@ -232,7 +236,10 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
         else:
             B = B + beta[k] * xk
 
-    log_mu = jnp.clip(log_A + B * log_AADT[None, :], -30.0, 30.0)
+    log_mu = log_A + B * log_AADT[None, :]
+    if offset is not None:
+        log_mu = log_mu + offset[None, :]
+    log_mu = jnp.clip(log_mu, -30.0, 30.0)
     mu     = jnp.exp(log_mu)
 
     if model == 'poisson':
@@ -283,7 +290,7 @@ def _param_labels_exp(selected_baseline, selected_local,
 
 @partial(jax.jit, static_argnames=('rand_baseline', 'rand_local', 'model'))
 def _fixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
-                  rand_baseline, rand_local, model):
+                  rand_baseline, rand_local, model, offset=None):
     """Closed-form log-likelihood for the exp-elasticity form (all fixed)."""
     k_base = baseline_mat.shape[1]
     k_loc  = locals_mat.shape[1]
@@ -306,7 +313,10 @@ def _fixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
     log_A = jnp.clip(log_A, -20.0, 20.0)
     expo  = locals_mat @ beta if k_loc > 0 else 0.0
     B     = beta0 * jnp.exp(expo)
-    log_mu = jnp.clip(log_A + B * jnp.log(AADT), -30.0, 30.0)
+    log_mu = log_A + B * jnp.log(AADT)
+    if offset is not None:
+        log_mu = log_mu + offset
+    log_mu = jnp.clip(log_mu, -30.0, 30.0)
     mu     = jnp.exp(log_mu)
 
     if model == 'poisson':
@@ -320,11 +330,12 @@ def _fixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
 
 @partial(jax.jit, static_argnames=('rand_baseline', 'rand_local', 'model'))
 def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
-                  rand_baseline, rand_local, draws, model):
+                  rand_baseline, rand_local, draws, model, offset=None):
     """
     Simulation-based log-likelihood for the exp-elasticity form with
     per-variable random effects (hierarchical, MSL).
     draws : (R, N, n_rand) standard normal, pre-generated.
+    offset: optional (N,) array of log(exposure) e.g. log(segment length).
     """
     R      = draws.shape[0]
     N      = len(y)
@@ -355,7 +366,7 @@ def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
 
     log_AADT = jnp.log(AADT)            # (N,)
 
-    # â”€â”€ Component A  â€”  shape (R, N) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # — Component A — shape (R, N) —
     log_A    = jnp.full((R, N), alpha0)
     draw_col = 0
     for k in range(k_base):
@@ -368,7 +379,7 @@ def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
             log_A = log_A + alpha[k] * xk
     log_A = jnp.clip(log_A, -20.0, 20.0)
 
-    # â”€â”€ Component B  â€”  exponential elasticity, shape (R, N) â”€
+    # — Component B — exponential elasticity, shape (R, N) —
     expo    = jnp.zeros((R, N))
     for k in range(k_loc):
         xk = locals_mat[:, k][None, :]
@@ -380,7 +391,10 @@ def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
             expo = expo + beta[k] * xk
     B = beta0 * jnp.exp(expo)
 
-    log_mu = jnp.clip(log_A + B * log_AADT[None, :], -30.0, 30.0)
+    log_mu = log_A + B * log_AADT[None, :]
+    if offset is not None:
+        log_mu = log_mu + offset[None, :]
+    log_mu = jnp.clip(log_mu, -30.0, 30.0)
     mu     = jnp.exp(log_mu)
 
     if model == 'poisson':
@@ -393,7 +407,8 @@ def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
 
 
 def make_objective_exp(y_jax, AADT_jax, baseline_jax, locals_jax,
-                       rand_baseline, rand_local, draws, R, model):
+                       rand_baseline, rand_local, draws, R, model,
+                       offset=None):
     """Return the JAX objective for the exp-elasticity form."""
     rand_baseline_t = tuple(rand_baseline)
     rand_local_t    = tuple(rand_local)
@@ -401,17 +416,20 @@ def make_objective_exp(y_jax, AADT_jax, baseline_jax, locals_jax,
     if not simulate:
         return lambda p: _fixed_ll_exp(
             p, y_jax, AADT_jax, baseline_jax, locals_jax,
-            rand_baseline_t, rand_local_t, model)
+            rand_baseline_t, rand_local_t, model, offset)
     return lambda p: _mixed_ll_exp(
         p, y_jax, AADT_jax, baseline_jax, locals_jax,
-        rand_baseline_t, rand_local_t, draws, model)
+        rand_baseline_t, rand_local_t, draws, model, offset)
 
 
 def spf_loglike(params, y, AADT, baseline_mat, locals_mat,
-                rand_baseline, rand_local, draws=None, R=200, model='poisson'):
+                rand_baseline, rand_local, draws=None, R=200, model='poisson',
+                offset=None):
     """
     Dispatcher: routes to fixed or mixed JIT kernel.
     rand_baseline / rand_local must be tuples (hashable for JIT caching).
+
+    offset: optional (N,) array of log(exposure) e.g. log(segment length).
     """
     rand_baseline = tuple(rand_baseline)
     rand_local    = tuple(rand_local)
@@ -420,10 +438,10 @@ def spf_loglike(params, y, AADT, baseline_mat, locals_mat,
 
     if not simulate:
         return _fixed_ll(params, y, AADT, baseline_mat, locals_mat,
-                         rand_baseline, rand_local, model)
+                         rand_baseline, rand_local, model, offset)
     else:
         return _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
-                         rand_baseline, rand_local, draws, model)
+                         rand_baseline, rand_local, draws, model, offset)
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -435,10 +453,13 @@ def spf_loglike(params, y, AADT, baseline_mat, locals_mat,
 # with zero extra cost over evaluating the loss alone.
 
 def make_objective(y_jax, AADT_jax, baseline_jax, locals_jax,
-                   rand_baseline, rand_local, draws, R, model):
+                   rand_baseline, rand_local, draws, R, model,
+                   offset=None):
     """
     Returns the raw JAX objective function for use with jaxopt.
     Autodiff (gradients) is handled internally by jaxopt.ScipyMinimize.
+
+    offset: optional (N,) array of log(exposure) e.g. log(segment length).
     """
     rand_baseline_t = tuple(rand_baseline)
     rand_local_t    = tuple(rand_local)
@@ -447,11 +468,11 @@ def make_objective(y_jax, AADT_jax, baseline_jax, locals_jax,
     if not simulate:
         raw_fn = lambda p: _fixed_ll(
             p, y_jax, AADT_jax, baseline_jax, locals_jax,
-            rand_baseline_t, rand_local_t, model)
+            rand_baseline_t, rand_local_t, model, offset)
     else:
         raw_fn = lambda p: _mixed_ll(
             p, y_jax, AADT_jax, baseline_jax, locals_jax,
-            rand_baseline_t, rand_local_t, draws, model)
+            rand_baseline_t, rand_local_t, draws, model, offset)
 
     return raw_fn
 
@@ -476,12 +497,14 @@ def run_optimizer(objective, p0, method="SLSQP", maxiter=2000, disp=False):
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
-               rand_baseline, rand_local, draws, R, model):
+               rand_baseline, rand_local, draws, R, model, offset=None):
     """
     Compute standard errors from the observed information matrix.
 
     Uses jax.hessian (exact second derivatives) at the MLE, which is
     far more accurate than the L-BFGS-B inverse-Hessian approximation.
+
+    offset: optional (N,) array of log(exposure) e.g. log(segment length).
 
     Returns (se, cov) as numpy arrays.
     """
@@ -492,11 +515,11 @@ def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
     if not simulate:
         raw_fn = lambda p: _fixed_ll(
             p, y_jax, AADT_jax, baseline_jax, locals_jax,
-            rand_baseline_t, rand_local_t, model)
+            rand_baseline_t, rand_local_t, model, offset)
     else:
         raw_fn = lambda p: _mixed_ll(
             p, y_jax, AADT_jax, baseline_jax, locals_jax,
-            rand_baseline_t, rand_local_t, draws, model)
+            rand_baseline_t, rand_local_t, draws, model, offset)
 
     hess_fn = jax.jit(jax.hessian(raw_fn))
     # support both jaxopt result (.params) and scipy result (.x)
@@ -579,16 +602,57 @@ def evaluate_model(solution,
 
     y_np    = np.asarray(data["FREQ"],  dtype=np.float64)
     AADT_np = np.asarray(data["AADT"],  dtype=np.float64)
+    # Exposure offset: log(segment length) — matches paper's offset formulation
+    if "LENGTH" in data.columns:
+        offset_np = np.log(np.asarray(data["LENGTH"], dtype=np.float64))
+    else:
+        offset_np = None
     N       = len(y_np)
 
-    bmat_np = data[active_baseline].values.astype(np.float64) if k_base_act > 0 else np.zeros((N, 0))
-    lmat_np = data[active_local].values.astype(np.float64)    if k_loc_act  > 0 else np.zeros((N, 0))
+    # Standardize continuous predictors (non-binary) to mean=0, std=1
+    # This is critical for numerical stability with variables on different scales
+    # (e.g., MCV 0-2000 vs binary indicators 0/1). Binary vars left as 0/1.
+    def _standardize_col(col):
+        vals = np.asarray(data[col], dtype=np.float64)
+        uniq = np.unique(vals[~np.isnan(vals)])
+        if len(uniq) == 2 and set(uniq).issubset({0, 1}):
+            return vals, 0.0, 1.0, True  # binary, don't standardize
+        mean = np.nanmean(vals)
+        std = np.nanstd(vals)
+        if std > 0:
+            return (vals - mean) / std, mean, std, False
+        return vals, mean, 1.0, False
 
-    # Convert to JAX arrays once â€” reused across optimizer iterations
+    bmat_cols = []
+    bmat_means = []
+    bmat_stds = []
+    bmat_is_binary = []
+    for col in active_baseline:
+        std_col, mean, std, is_bin = _standardize_col(col)
+        bmat_cols.append(std_col)
+        bmat_means.append(mean)
+        bmat_stds.append(std)
+        bmat_is_binary.append(is_bin)
+    bmat_np = np.column_stack(bmat_cols) if k_base_act > 0 else np.zeros((N, 0))
+
+    lmat_cols = []
+    lmat_means = []
+    lmat_stds = []
+    lmat_is_binary = []
+    for col in active_local:
+        std_col, mean, std, is_bin = _standardize_col(col)
+        lmat_cols.append(std_col)
+        lmat_means.append(mean)
+        lmat_stds.append(std)
+        lmat_is_binary.append(is_bin)
+    lmat_np = np.column_stack(lmat_cols) if k_loc_act > 0 else np.zeros((N, 0))
+
+    # Convert to JAX arrays once — reused across optimizer iterations
     y_jax       = jnp.array(y_np)
     AADT_jax    = jnp.array(AADT_np)
     baseline_jax = jnp.array(bmat_np)
     locals_jax   = jnp.array(lmat_np)
+    offset_jax   = jnp.array(offset_np) if offset_np is not None else None
 
     n_rand = sum(rand_baseline) + sum(rand_local)
     draws  = generate_draws(N, R, n_rand, use_halton)
@@ -597,7 +661,18 @@ def evaluate_model(solution,
     p0       = np.zeros(n_params)
 
     objective = make_objective(y_jax, AADT_jax, baseline_jax, locals_jax,
-                               rand_baseline, rand_local, draws, R, model)
+                               rand_baseline, rand_local, draws, R, model,
+                               offset_jax)
+
+    # Return standardization info for unstandardizing coefficients later
+    std_info = {
+        "baseline_means": np.array(bmat_means) if k_base_act > 0 else np.array([]),
+        "baseline_stds": np.array(bmat_stds) if k_base_act > 0 else np.array([]),
+        "baseline_is_binary": np.array(bmat_is_binary) if k_base_act > 0 else np.array([]),
+        "local_means": np.array(lmat_means) if k_loc_act > 0 else np.array([]),
+        "local_stds": np.array(lmat_stds) if k_loc_act > 0 else np.array([]),
+        "local_is_binary": np.array(lmat_is_binary) if k_loc_act > 0 else np.array([]),
+    }
 
     res = run_optimizer(objective, p0, method="SLSQP", maxiter=1000)
 
@@ -632,7 +707,7 @@ def evaluate_model(solution,
           f"A=[{', '.join(fmt_b) if fmt_b else '-'}]  "
           f"B=[{', '.join(fmt_l) if fmt_l else '-'}]")
 
-    return bic + penalty
+    return bic + penalty, std_info
 
 
 def _param_labels(selected_baseline, selected_local, rand_baseline, rand_local, model):
@@ -820,7 +895,7 @@ def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8,
 
             rand_baseline_all = [bool(full[offset_rf + i]) for i in range(k_base)]
             rand_local_all = [bool(full[offset_rf + k_base + i]) for i in range(k_loc)]
-            return evaluate_model(
+            fitness_val, _ = evaluate_model(
                 full,
                 data,
                 baseline_vars,
@@ -831,6 +906,7 @@ def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8,
                 rand_local_all=rand_local_all,
                 R=R,
             )
+            return fitness_val
 
     evaluator = _CMFSearchEvaluator()
     dim = 2 * D + 1
@@ -881,7 +957,7 @@ def fit_final_model(data,
                     model='poisson', use_halton=True, R=500):
     """
     Re-estimates the GA-selected model at higher R for final inference.
-    Returns (result, y_jax, AADT_jax, baseline_jax, locals_jax, draws)
+    Returns (result, y_jax, AADT_jax, baseline_jax, locals_jax, draws, std_info, offset_jax)
     so the caller can compute exact Hessian SE without re-building arrays.
     """
     y_np    = np.asarray(data["FREQ"],  dtype=np.float64)
@@ -891,13 +967,53 @@ def fit_final_model(data,
     k_base = len(selected_baseline)
     k_loc  = len(selected_local)
 
-    bmat_np = data[selected_baseline].values.astype(np.float64) if k_base > 0 else np.zeros((N, 0))
-    lmat_np = data[selected_local].values.astype(np.float64)    if k_loc  > 0 else np.zeros((N, 0))
+    # Standardize continuous predictors (same as evaluate_model)
+    def _standardize_col(col):
+        vals = np.asarray(data[col], dtype=np.float64)
+        uniq = np.unique(vals[~np.isnan(vals)])
+        if len(uniq) == 2 and set(uniq).issubset({0, 1}):
+            return vals, 0.0, 1.0, True
+        mean = np.nanmean(vals)
+        std = np.nanstd(vals)
+        if std > 0:
+            return (vals - mean) / std, mean, std, False
+        return vals, mean, 1.0, False
+
+    bmat_cols = []
+    bmat_means = []
+    bmat_stds = []
+    bmat_is_binary = []
+    for col in selected_baseline:
+        std_col, mean, std, is_bin = _standardize_col(col)
+        bmat_cols.append(std_col)
+        bmat_means.append(mean)
+        bmat_stds.append(std)
+        bmat_is_binary.append(is_bin)
+    bmat_np = np.column_stack(bmat_cols) if k_base > 0 else np.zeros((N, 0))
+
+    lmat_cols = []
+    lmat_means = []
+    lmat_stds = []
+    lmat_is_binary = []
+    for col in selected_local:
+        std_col, mean, std, is_bin = _standardize_col(col)
+        lmat_cols.append(std_col)
+        lmat_means.append(mean)
+        lmat_stds.append(std)
+        lmat_is_binary.append(is_bin)
+    lmat_np = np.column_stack(lmat_cols) if k_loc > 0 else np.zeros((N, 0))
+
+    # Exposure offset
+    if "LENGTH" in data.columns:
+        offset_np = np.log(np.asarray(data["LENGTH"], dtype=np.float64))
+    else:
+        offset_np = None
 
     y_jax        = jnp.array(y_np)
     AADT_jax     = jnp.array(AADT_np)
     baseline_jax = jnp.array(bmat_np)
     locals_jax   = jnp.array(lmat_np)
+    offset_jax   = jnp.array(offset_np) if offset_np is not None else None
 
     n_rand = sum(rand_baseline) + sum(rand_local)
     draws  = generate_draws(N, R, n_rand, use_halton)
@@ -905,12 +1021,22 @@ def fit_final_model(data,
     p0 = np.zeros(count_params(rand_baseline, rand_local, model))
 
     objective = make_objective(y_jax, AADT_jax, baseline_jax, locals_jax,
-                               rand_baseline, rand_local, draws, R, model)
+                               rand_baseline, rand_local, draws, R, model,
+                               offset_jax)
 
-    print("  Compiling JAX kernel (first call) â€¦")
+    print("  Compiling JAX kernel (first call) …")
     res = run_optimizer(objective, p0, method="SLSQP", maxiter=2000)
 
-    return res, y_jax, AADT_jax, baseline_jax, locals_jax, draws
+    std_info = {
+        "baseline_means": np.array(bmat_means) if k_base > 0 else np.array([]),
+        "baseline_stds": np.array(bmat_stds) if k_base > 0 else np.array([]),
+        "baseline_is_binary": np.array(bmat_is_binary) if k_base > 0 else np.array([]),
+        "local_means": np.array(lmat_means) if k_loc > 0 else np.array([]),
+        "local_stds": np.array(lmat_stds) if k_loc > 0 else np.array([]),
+        "local_is_binary": np.array(lmat_is_binary) if k_loc > 0 else np.array([]),
+    }
+
+    return res, y_jax, AADT_jax, baseline_jax, locals_jax, draws, std_info, offset_jax
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -926,11 +1052,18 @@ def build_summary_table(result,
     se : numpy array of standard errors (from exact Hessian or fallback).
     """
     params = np.array(result.params if hasattr(result, "params") else result.x)
-    z      = np.where(se > 1e-12, params / se, 0.0)
-    p      = 2 * (1 - norm.cdf(np.abs(z)))
     labels = _param_labels(selected_baseline, selected_local, rand_baseline, rand_local, model)
 
-    rows = list(zip(labels, params, se, z, p))
+    # Display sigma parameters as absolute values (|sigma| is the identified quantity)
+    display_params = params.copy()
+    for i, lbl in enumerate(labels):
+        if lbl.startswith('sigma_'):
+            display_params[i] = abs(params[i])
+
+    z      = np.where(se > 1e-12, display_params / se, 0.0)
+    p      = 2 * (1 - norm.cdf(np.abs(z)))
+
+    rows = list(zip(labels, display_params, se, z, p))
     return pd.DataFrame(rows, columns=["Parameter", "Estimate", "Std.Err", "z-value", "p-value"])
 
 
@@ -1030,9 +1163,10 @@ def print_cmf_results(result,
         print(f"  {v:<{col_w}}  {tag:>3}  {a:>+8.4f}  {cmf:>8.4f}  {pct:>+13.2f}%")
         if rand_baseline[k]:
             sig = params[idx]; idx += 1
-            lo  = np.exp(a - 1.96 * sig)
-            hi  = np.exp(a + 1.96 * sig)
-            print(f"  {'':>{col_w}}       sigma = {sig:.4f}  ->  95% CMF range: [{lo:.4f}, {hi:.4f}]")
+            sig_abs = abs(sig)
+            lo  = np.exp(a - 1.96 * sig_abs)
+            hi  = np.exp(a + 1.96 * sig_abs)
+            print(f"  {'':>{col_w}}       sigma = {sig_abs:.4f}  ->  95% CMF range: [{lo:.4f}, {hi:.4f}]")
             print(f"  {'':>{col_w}}       Mean CMF = {cmf:.4f}  "
                   f"(sites range {(lo-1)*100:+.1f}% to {(hi-1)*100:+.1f}%)")
 
@@ -1066,11 +1200,12 @@ def print_cmf_results(result,
                   f"{elasticity:>12.4f}  {cmf:>11.4f}  {pct:>+13.2f}%")
             if rand_local[k]:
                 sig    = params[idx]; idx += 1
-                e_lo   = elasticity - 1.96 * sig
-                e_hi   = elasticity + 1.96 * sig
-                cmf_lo = float(AADT_mean) ** (b - 1.96 * sig)
-                cmf_hi = float(AADT_mean) ** (b + 1.96 * sig)
-                print(f"  {'':>{col_w}}       sigma = {sig:.4f}  ->  "
+                sig_abs = abs(sig)
+                e_lo   = elasticity - 1.96 * sig_abs
+                e_hi   = elasticity + 1.96 * sig_abs
+                cmf_lo = float(AADT_mean) ** (b - 1.96 * sig_abs)
+                cmf_hi = float(AADT_mean) ** (b + 1.96 * sig_abs)
+                print(f"  {'':>{col_w}}       sigma = {sig_abs:.4f}  ->  "
                       f"95% elast. range: [{e_lo:.4f}, {e_hi:.4f}]")
                 print(f"  {'':>{col_w}}       95% CMF @ mean AADT:  [{cmf_lo:.4f}, {cmf_hi:.4f}]")
 
@@ -1103,8 +1238,9 @@ def print_cmf_results(result,
             a = params[p2]; p2 += 1
             if rand_baseline[k]:
                 sig = params[p2]; p2 += 1
-                lo, hi = np.exp(a - 1.96*sig), np.exp(a + 1.96*sig)
-                print(f"  {v:<{col_w}}  {'A':>5}  {a:>+10.4f}  {sig:>8.4f}  "
+                sig_abs = abs(sig)
+                lo, hi = np.exp(a - 1.96*sig_abs), np.exp(a + 1.96*sig_abs)
+                print(f"  {v:<{col_w}}  {'A':>5}  {a:>+10.4f}  {sig_abs:>8.4f}  "
                       f"CMF in [{lo:.4f}, {hi:.4f}]")
 
         p2 += 1  # skip beta0
@@ -1112,10 +1248,11 @@ def print_cmf_results(result,
             b = params[p2]; p2 += 1
             if rand_local[k]:
                 sig  = params[p2]; p2 += 1
+                sig_abs = abs(sig)
                 eff  = beta0 + b
-                e_lo = eff - 1.96*sig
-                e_hi = eff + 1.96*sig
-                print(f"  {v:<{col_w}}  {'B':>5}  {b:>+10.4f}  {sig:>8.4f}  "
+                e_lo = eff - 1.96*sig_abs
+                e_hi = eff + 1.96*sig_abs
+                print(f"  {v:<{col_w}}  {'B':>5}  {b:>+10.4f}  {sig_abs:>8.4f}  "
                       f"elast. in [{e_lo:.4f}, {e_hi:.4f}]")
 
     print("\n" + "=" * W + "\n")
