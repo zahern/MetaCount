@@ -772,6 +772,13 @@ def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8,
             if not _check_corr_constraint(selected_baseline):
                 return None  # Invalid spec - correlation constraint violated
 
+            # Check dimension bounds (C3) and hierarchical integrity (K_L^min >= 1)
+            n_base, n_loc = len(baseline_terms), len(local_terms)
+            if not (min_baseline <= n_base <= max_baseline):
+                return None  # Invalid spec - upper-tier size out of bounds
+            if not (min_local <= n_loc <= max_local):
+                return None  # Invalid spec - lower-tier size out of bounds
+
             return {
                 "baseline_terms": tuple(sorted(baseline_terms)),
                 "local_terms": tuple(sorted(local_terms)),
