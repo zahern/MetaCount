@@ -1971,6 +1971,16 @@ class SparseEA_AGDS(object):
 
         self._sa_memory = list()
         self._history = list()
+        # Cap the per-generation history.  _history appends a deepcopy of the
+        # entire population every generation and is returned to the caller, so
+        # it cannot be dropped -- but it must be bounded or a long many-objective
+        # run grows without limit.  Keep the most recent N (env
+        # MC_MAX_GEN_HISTORY, <=0 disables).
+        try:
+            _hist_cap = int(os.environ.get("MC_MAX_GEN_HISTORY", "2000"))
+        except (TypeError, ValueError):
+            _hist_cap = 2000
+        self._hist_cap = _hist_cap if _hist_cap > 0 else None
         if objective_function.is_multi:
             self.obj_1 = objective_function._get_obj1()
             self.obj_2 = objective_function._get_obj2()
@@ -2300,6 +2310,8 @@ class SparseEA_AGDS(object):
             best_collection.append(self._obj_vector(gen_best)[0])
             incumbent_collection.append(self._obj_vector(incumbent)[0])
             self._history.append({'gen': gen, 'pop': copy.deepcopy(population)})
+            if self._hist_cap is not None and len(self._history) > self._hist_cap:
+                del self._history[: len(self._history) - self._hist_cap]
 
             try:
                 logger(gen, gen_best, incumbent, name=self.get_instance_name(),

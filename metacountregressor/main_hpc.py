@@ -4887,6 +4887,22 @@ class StructureEvaluator:
             )
 
         self.cache = {}
+        # Bounded result cache.  cache memoises every distinct decision vector
+        # ever scored; over a multi-hour chunked search the key space is
+        # unbounded, so this plain dict was the dominant long-run RSS growth.
+        # We cap it (env MC_MAX_CACHE, default 250000) and evict oldest-first
+        # on overflow, always protecting the best-so-far entry so chunked warm
+        # starts and callers that scan evaluator.cache for the incumbent still
+        # find it.  Eviction only costs recomputation -- fitness() is
+        # deterministic in the decision vector -- so a high cap never changes
+        # the search result, it only bounds memory.
+        self._cache_best_key = None
+        self._cache_best_val = None
+        try:
+            _cap = int(os.environ.get("MC_MAX_CACHE", "250000"))
+        except (TypeError, ValueError):
+            _cap = 250000
+        self._cache_max = _cap if _cap > 0 else None
         self.structure_cache = set()
         self._failed_structures = set()  # structural signatures that failed to converge
         self._last_successful_decision = None   # for progressive variable-ban
@@ -5077,6 +5093,57 @@ class StructureEvaluator:
         return data, spec
 
     # ----------------------------------------
+    # Bounded result cache
+    # ----------------------------------------
+
+    @staticmethod
+    def _cache_scalar(value):
+        """Reduce a cached fitness value to the scalar used for ranking.
+
+        Single-objective entries are floats; multi-objective entries are
+        (bic, rmse) arrays and rank on BIC.  Returns None when the value
+        carries no usable ranking (NaN/inf).
+        """
+        try:
+            v = float(np.min(value)) if hasattr(value, "__len__") else float(value)
+        except (TypeError, ValueError):
+            return None
+        return v if np.isfinite(v) else None
+
+    def _cache_put(self, key, value):
+        """Store a result, tracking the best-so-far and evicting on overflow.
+
+        The best entry is never evicted so warm starts and callers that scan
+        ``evaluator.cache`` for the incumbent keep working across chunks.
+        """
+        self.cache[key] = value
+        v = self._cache_scalar(value)
+        if v is not None and v < 1e12:
+            if self._cache_best_val is None or v < self._cache_best_val:
+                self._cache_best_val = v
+                self._cache_best_key = key
+        if self._cache_max is not None and len(self.cache) > self._cache_max:
+            self._cache_evict()
+
+    def _cache_evict(self):
+        """Evict oldest entries down to 90% of the cap (batched, O(batch))."""
+        target = int(self._cache_max * 0.9)
+        excess = len(self.cache) - target
+        if excess <= 0:
+            return
+        protected = self._cache_best_key
+        doomed = []
+        for k in self.cache:
+            if excess <= 0:
+                break
+            if k == protected:
+                continue
+            doomed.append(k)
+            excess -= 1
+        for k in doomed:
+            del self.cache[k]
+
+    # ----------------------------------------
     # Fitness
     # ----------------------------------------
 
@@ -5146,7 +5213,7 @@ class StructureEvaluator:
 
             if self.mode == "single":
                 value = float(bic)
-                self.cache[key] = value
+                self._cache_put(key, value)
                 self._last_successful_decision = decision.copy()
                 return value
 
@@ -5166,7 +5233,7 @@ class StructureEvaluator:
 
             value = np.array([float(bic), float(rmse)])
 
-            self.cache[key] = value
+            self._cache_put(key, value)
             self._last_successful_decision = decision.copy()
             return value
 
@@ -5211,7 +5278,7 @@ class StructureEvaluator:
                 if len(self._failed_structures) > 2000:
                     self._failed_structures.clear()
             _note("fit_exception", detail=f"{type(e).__name__}: {e}"[:200])
-            self.cache[key] = _fail
+            self._cache_put(key, _fail)
             return _fail
 
     def reject_summary(self):

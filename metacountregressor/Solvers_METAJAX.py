@@ -1373,8 +1373,28 @@ class NSGA2Engine:
         self.hypervolume_history = []
         self.population_history = []
         self.pareto_history = []
+        # Bound per-generation history memory.  A long many-objective run kept
+        # a full population copy (and a full Pareto front) per generation with
+        # no cap, which grows without bound and OOMs the node.  Only the most
+        # recent entries are ever read (plots use [-1] / iterate; the pickle
+        # is for resume), so truncate to the most recent N.  population_history
+        # is the heavy one (whole population per gen) and is not returned in the
+        # result dict, so it gets a much smaller cap.  Override with
+        # MC_MAX_GEN_HISTORY (<=0 disables the cap).
+        try:
+            _hist_cap = int(os.environ.get("MC_MAX_GEN_HISTORY", "2000"))
+        except (TypeError, ValueError):
+            _hist_cap = 2000
+        self._hist_cap = _hist_cap if _hist_cap > 0 else None
+        self._pop_hist_cap = min(200, _hist_cap) if _hist_cap > 0 else None
         # ---- generation statistics ----
         self.search_stats = []
+
+    @staticmethod
+    def _trim_history(lst, cap):
+        """Drop the oldest entries of a per-generation history list."""
+        if cap is not None and len(lst) > cap:
+            del lst[: len(lst) - cap]
 
     
     def finalize_plots(self, algo="nsga2", seed=0, folder="results"):
@@ -1648,6 +1668,7 @@ class NSGA2Engine:
 
                 best = np.min(scores)
                 self.fitness_history.append(best)
+                self._trim_history(self.fitness_history, self._hist_cap)
 
             else:
 
@@ -1671,10 +1692,13 @@ class NSGA2Engine:
                 #hv = self.compute_hypervolume(front_scores, ref)
 
                 self.hypervolume_history.append(hv)
+                self._trim_history(self.hypervolume_history, self._hist_cap)
                 self.pareto_history.append(front_scores.copy())
+                self._trim_history(self.pareto_history, self._hist_cap)
 
             if self.save_history:
                 self.population_history.append(pop.copy())
+                self._trim_history(self.population_history, self._pop_hist_cap)
 
             
             
@@ -1723,6 +1747,11 @@ class NSGA2Engine:
                 )
                 print_memory_usage(f"end gen before gc {gen}")
                 force_gc()
+                # Mirror the single-objective branch: every new structure
+                # JIT-compiles fresh XLA executables (static_argnames=("spec",)),
+                # so without clearing here RSS grows for the whole multi-objective
+                # search (observed OOM on long many-objective runs).
+                jax.clear_caches()
                 print_memory_usage(f"end gen {gen}")
                 print('cool')
 

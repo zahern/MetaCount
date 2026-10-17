@@ -1130,8 +1130,9 @@ class StructureEvaluatorLC(StructureEvaluator):
 
         spec_dict = self.build_spec(decision)
         if spec_dict is None:
-            self.cache[key] = np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
-            return np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+            _rej = np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
+            self._cache_put(key, _rej)
+            return _rej
 
         sig = self.structural_signature(spec_dict)
         if sig is None:
@@ -1298,7 +1299,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             # ── Single-objective return ────────────────────────────
             if self.mode == "single":
                 value = float(bic)
-                self.cache[key] = value
+                self._cache_put(key, value)
                 self._last_successful_decision = decision.copy()
                 return value
 
@@ -1313,7 +1314,7 @@ class StructureEvaluatorLC(StructureEvaluator):
             rmse    = np.sqrt(np.mean((preds - y_true) ** 2))
 
             value = np.array([float(bic), float(rmse)])
-            self.cache[key] = value
+            self._cache_put(key, value)
             self._last_successful_decision = decision.copy()
             return value
 
@@ -1375,7 +1376,7 @@ class StructureEvaluatorLC(StructureEvaluator):
                     print("  [ban] cleared variable-ban cache (50+ variables);"
                           " will re-test previously banned variables.")
             fail_val = np.array([1e12, 1e12]) if self.mode == "multi" else 1e12
-            self.cache[key] = fail_val
+            self._cache_put(key, fail_val)
             if _is_oom_error(e):
                 # A GPU OOM here means the device is at/near capacity. Free
                 # whatever JAX can free immediately so the *next* candidate

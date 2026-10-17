@@ -52,6 +52,7 @@ py-modules = [
   "bivariate_copula",
   "duration_main",
   "family_search",
+  "functional_forms",
   "genetic_algorithm",
   "multivariate_count_regressor",
   "_jax_config",
@@ -72,6 +73,7 @@ py-modules = [
   "pareto_file",
   "pavement_clr",
   "pavement_forms",
+  "pavement_gp",
   "pavement_hazard",
   "pavement_pipeline",
   "regularization",
@@ -79,6 +81,7 @@ py-modules = [
   "solution",
   "solvers_meta",
   "survival_models",
+  "system_dynamics",
   "temporal_models",
 ]
 
