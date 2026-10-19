@@ -41,7 +41,7 @@ def generate_sobol_draws(
         n_obs:        Number of observations.
         n_draws:      Number of simulation draws per observation.
         distribution: List of length `dim` with distribution names:
-                      'normal', 'lognormal', 'gamma', 'triangular', 'uniform'.
+                      'normal', 'lognormal', 'negative_lognormal', 'gamma', 'triangular', 'uniform'.
         scramble:     Use Owen scrambling for better uniformity (default True).
         as_jax:       Return a jnp.ndarray instead of np.ndarray (default True).
 
@@ -68,6 +68,8 @@ def generate_sobol_draws(
             sample[:, i] = norm.ppf(u)
         elif dist == "lognormal":
             sample[:, i] = np.exp(norm.ppf(u))
+        elif dist in ("negative_lognormal", "neglognormal"):
+            sample[:, i] = -np.exp(norm.ppf(u))
         elif dist == "gamma":
             sample[:, i] = gamma.ppf(u, a=1.0)
         elif dist in ("triangular", "triang"):

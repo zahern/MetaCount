@@ -866,7 +866,7 @@ class BanditGuidedSA:
                 ]
                 for v in self.evaluator.vars
             ])
-            dists  = np.random.randint(0, 6, D)
+            dists  = np.random.randint(0, 5, D)
             tail   = np.random.randint(0, 2, dim - 2 * D)
             sol    = np.concatenate([roles, dists, tail]).astype(int)
             if np.sum(roles != 0) >= 2:

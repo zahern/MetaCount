@@ -404,8 +404,8 @@ def decode_distribution(dist_code, allowed_list):
 
 def random_decision(D, rng):
 
-    # 0 to 5 inclusive
-    return rng.integers(0, 7, size=D)
+    # 0 to 4 inclusive (5 distributions: normal, lognormal, triangular, uniform, neglognormal)
+    return rng.integers(0, 5, size=D)
 
 def pareto_front(solutions):
 

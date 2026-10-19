@@ -776,7 +776,7 @@ class AdvancedSimulatedAnnealing:
 
                 # Randomise distribution genes (D … 2D-1)
                 for j in range(D, 2 * D):
-                    solution[j] = np.random.randint(0, 4)  # 4 distributions: normal, lognormal, triangular, uniform
+                    solution[j] = np.random.randint(0, 5)  # 5 distributions: normal, lognormal, triangular, uniform, neglognormal
 
                 # Dispersion bit (2D): randomise 0 or 1
                 if self.dim > 2 * D:
@@ -1990,7 +1990,7 @@ class DynamicHarmony:
                     child[j] = np.random.choice(roles)
                 elif j < 2 * n_vars:
                     # Distribution gene (0-3)
-                    child[j] = np.random.randint(0, 4)
+                    child[j] = np.random.randint(0, 5)
                 else:
                     # Tail genes (dispersion, LC, masks) - step with bounds
                     child[j] = int(np.clip(child[j] + step, 0, 9))
@@ -2038,7 +2038,7 @@ class AdaptiveDE:
                         roles = allowed_roles[j] if isinstance(allowed_roles, list) and j < len(allowed_roles) else list(range(10))
                         mutant[j] = np.random.choice(roles)
                     elif j < 2 * n_vars:
-                        mutant[j] = np.random.randint(0, 4)
+                        mutant[j] = np.random.randint(0, 5)
                     else:
                         mutant[j] = np.random.randint(0, 10)
 
@@ -2059,7 +2059,7 @@ class AdaptiveDE:
                 roles = allowed_roles[idx] if isinstance(allowed_roles, list) and idx < len(allowed_roles) else list(range(10))
                 possible = [v for v in roles if v != trial[idx]]
             elif idx < 2 * n_vars:
-                possible = [v for v in range(4) if v != trial[idx]]
+                possible = [v for v in range(5) if v != trial[idx]]
             else:
                 possible = [v for v in range(10) if v != trial[idx]]
             trial[idx] = np.random.choice(possible) if possible else 0

@@ -334,6 +334,8 @@ def _random_draw(pm, pt, name, mean, sd, distribution, size):
     latent = pm.Normal(f"{name}_latent", mu=0.0, sigma=1.0, shape=size)
     if distribution == "lognormal":
         return pm.Deterministic(name, pt.exp(mean + sd * latent))
+    if distribution in {"negative_lognormal", "neglognormal"}:
+        return pm.Deterministic(name, -pt.exp(mean + sd * latent))
     if distribution in {"triangular", "uniform"}:
         return pm.Deterministic(name, mean + sd * (2.0 * pm.math.invprobit(latent) - 1.0))
     raise BayesianModelError(

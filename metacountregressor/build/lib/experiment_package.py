@@ -1220,7 +1220,7 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
                 i = np.random.choice(rdm_idx)
                 dist_idx = D + i  # distribution genes offset by D
                 old_dist = int(neighbor[dist_idx])
-                possible = [d for d in range(4) if d != old_dist]
+                possible = [d for d in range(5) if d != old_dist]
                 neighbor[dist_idx] = np.random.choice(possible) if possible else 0
 
         # ── DISPERSION FLIP ───────────────────────────────────────
@@ -1296,7 +1296,7 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
                         neighbor[idx] = self.sample_allowed_role(idx)
                     elif idx < 2 * D:
                         # Distribution genes: 4 distributions (0-3)
-                        neighbor[idx] = np.random.randint(0, 4)
+                        neighbor[idx] = np.random.randint(0, 5)
                     else:
                         tail_pos = idx - 2 * D
                         if tail_pos == 0:
