@@ -185,7 +185,13 @@ def _aghq_conditional_modes(params, y, AADT, baseline_mat, locals_mat,
         mu  = jnp.exp(jnp.clip(eta, -30.0, 30.0))
         c   = _curv(mu)
         H = jnp.eye(q)[None, :, :] + c[:, None, None] * (a[:, :, None] * a[:, None, :])
-        g = (y - mu)[:, None] * a - u
+        if model == 'nb':
+            # For NB2, d log p(y | eta) / d eta is
+            # (y - mu) / (1 + alpha * mu), not the Poisson score.
+            score = (y - mu) / (1.0 + alpha * mu)
+        else:
+            score = y - mu
+        g = score[:, None] * a - u
         step = jnp.linalg.solve(H, g[:, :, None])[:, :, 0]
         nrm = jnp.sqrt(jnp.sum(step * step, axis=1))
         scale = jnp.minimum(1.0, max_step / (nrm + 1e-12))

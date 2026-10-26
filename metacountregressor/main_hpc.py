@@ -831,6 +831,21 @@ def build_eta(params, data, spec: ModelSpec):
 
         mean_g = blocks["mean_g"]
         sd_g = blocks["sd_g"]
+        g_start = spec.Kr_cor + spec.Kr_ind
+        g_end = g_start + spec.Kg
+
+        # Heterogeneity in the MEANS of grouped coefficients:
+        # E[gamma_g] = Gamma a_g. This is what lets a future fixture's
+        # functional form depend on its game-day attributes (crowd,
+        # kickoff, competition codes) instead of being a draw around a
+        # common mean whose expectation is identical for every fixture.
+        if spec.Kh > 0 and spec.Kg > 0:
+            _Xh_group = data.get("Xh_group")
+            _gamma_g = blocks.get("gamma_g")
+            if (_Xh_group is not None and _gamma_g is not None
+                    and getattr(_Xh_group, "shape", (0, 0))[1] > 0):
+                _shift_g = jnp.einsum("gk,km->gm", _Xh_group, _gamma_g)
+                mean_g = mean_g[None, :] + _shift_g
 
         if shift_var is not None:
             # Apply variance heterogeneity shift to grouped log-SDs
@@ -1525,6 +1540,26 @@ def build_jax_data(
     Xgse = extract(gse_cols)
     Xzi = extract(zi_cols)
 
+    # Group-level means of the heterogeneity-in-means covariates. A grouped
+    # random coefficient is constant WITHIN a group, so its mean must be
+    # shifted by that group's attributes, not by each row's. Without this,
+    # the coefficient for an unseen group (e.g. a future fixture) is a fresh
+    # draw around a common mean, and averaging over draws erases the very
+    # between-group signal the hierarchical term is meant to carry. With it,
+    # E[gamma_g] = Gamma a_g and a future fixture's coefficients are
+    # predicted from its own game-day attributes.
+    if group_codes is not None and G > 0 and len(hetro_cols) > 0:
+        # Build from df_sorted with the SAME category codes used for
+        # group_ids, so the rows cannot drift out of alignment if
+        # balance_panel_dataframe drops an id.
+        _tmp = df_sorted[list(hetro_cols)].copy()
+        _tmp["__group_code__"] = group_codes
+        _Xh_group = (_tmp.groupby("__group_code__", observed=True)
+                     [list(hetro_cols)].mean()
+                     .reindex(range(G)).fillna(0.0).to_numpy(dtype=float))
+    else:
+        _Xh_group = np.zeros((max(G, 0), Xh.shape[2]), dtype=float)
+
     # Auto-generate simulation draws when random blocks are present but no
     # draws were supplied (mirrors main_hpc_lc_patch; without draws the
     # random blocks are silently dead weight).
@@ -1581,6 +1616,7 @@ def build_jax_data(
         "Xg": jnp.array(Xg),
         "Xh": jnp.array(Xh),
         "Xh_var": jnp.array(Xh_var),
+        "Xh_group": jnp.array(_Xh_group),
         "G": jnp.array(G),
         "Xzi": jnp.array(Xzi),
         "y": jnp.array(y),
@@ -1685,6 +1721,15 @@ def build_base_index(spec, model=None):
         Khet_var = spec.Kv * spec.K_random_total
         index["hetro_var"] = (idx, idx + Khet_var)
         idx += Khet_var
+
+    # Heterogeneity in MEANS of GROUPED random coefficients:
+    # E[gamma_g] = Gamma_g a_g, shape (Kh, Kg). Kept separate from the
+    # id-level gamma block because K_random_total deliberately excludes the
+    # grouped dimension, so the two shift matrices have different widths.
+    if spec.Kh > 0 and spec.Kg > 0:
+        Khet_g = spec.Kh * spec.Kg
+        index["hetro_group"] = (idx, idx + Khet_g)
+        idx += Khet_g
 
     # GSE gradient-score loadings: one gamma per random coefficient.
     # G columns align with the random-coefficient order (cor, then ind).
@@ -3289,6 +3334,12 @@ def print_summary(result, objective, data, spec, param_index):
             for z in spec.hetro_var_names:
                 names.append(f"hetro_var({rnd}|{z})")
 
+    # Heterogeneity in MEANS of grouped coefficients
+    if spec.Kh > 0 and spec.Kg > 0:
+        for rnd in spec.grouped_names:
+            for z in spec.hetro_names:
+                names.append(f"hetro_group({rnd}|{z})")
+
     # GSE gradient-score loadings
     if getattr(spec, "Kgse", 0) > 0:
         for rnd in spec.random_cor_names + spec.random_ind_names:
@@ -3604,6 +3655,11 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
         for rnd in spec.random_cor_names + spec.random_ind_names + spec.grouped_names:
             for z in spec.hetro_var_names:
                 names.append(f"hetro_var({rnd}|{z})")
+
+    if spec.Kh > 0 and spec.Kg > 0:
+        for rnd in spec.grouped_names:
+            for z in spec.hetro_names:
+                names.append(f"hetro_group({rnd}|{z})")
 
     if getattr(spec, "Kgse", 0) > 0:
         for rnd in spec.random_cor_names + spec.random_ind_names:
@@ -5389,6 +5445,15 @@ def unpack_params(params, spec: ModelSpec, model=None):
             out["gamma_var"] = gamma_var.reshape(spec.Kv, spec.K_random_total)
         else:
             out["gamma_var"] = None
+
+        # HETEROGENEITY (MEANS OF GROUPED COEFFICIENTS)
+        if spec.Kh > 0 and spec.Kg > 0:
+            Khet_g = spec.Kh * spec.Kg
+            gamma_g = params[idx:idx + Khet_g]
+            idx += Khet_g
+            out["gamma_g"] = gamma_g.reshape(spec.Kh, spec.Kg)
+        else:
+            out["gamma_g"] = None
 
         # GSE GRADIENT-SCORE LOADINGS (one gamma per random coefficient)
         if getattr(spec, "Kgse", 0) > 0 and spec.K_random_total > 0:

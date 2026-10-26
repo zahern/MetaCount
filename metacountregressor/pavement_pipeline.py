@@ -295,31 +295,51 @@ class PavementDeteriorationEvaluator:
 class MetacountRegressorBridge:
     """Adapt an MCR-fitted latent-class structure into our decision vector.
 
-    metacountregressor fits a *count* outcome (round(psi*10)) with Poisson/NB
-    and discovers K latent classes + per-class variable roles. We reuse its
-    CLASS ASSIGNMENTS and per-class ACTIVE VARIABLES as a warm start for the
-    continuous pavement program, then let the SA search refine forms / lambda /
-    Markov / hazard on top. This keeps MCR as the cluster discoverer and adds
-    the pavement-specific layers without forking MCR internals.
+    A legacy external workflow used ``round(PSI * 10)`` as a proxy count for
+    MCR's class-discovery step. This bridge does not create that response and
+    does not pass it to the continuous pavement model: the downstream
+    evaluator uses the caller's raw PSI column (and its log-PSI specification
+    where applicable). We reuse only MCR's class assignments and per-class
+    active variables as a warm start, then let the pavement search refine
+    forms, lambda, Markov, and hazard layers.
     """
     @staticmethod
     def from_mcr(mcr_class_assignment, mcr_active_vars_per_class,
                  cont_vars, defaults=None):
         """Build a starting ``structure`` dict from MCR outputs.
 
-        mcr_class_assignment : (n_seg,) int cluster id (0-based)
+        mcr_class_assignment : (n_seg,) int cluster id (0-based, contiguous)
         mcr_active_vars_per_class : list (K,) of list of active var names
         """
-        K = int(np.max(mcr_class_assignment)) + 1
+        assignments = np.asarray(mcr_class_assignment, dtype=int)
+        if assignments.ndim != 1 or assignments.size == 0:
+            raise ValueError("mcr_class_assignment must be a non-empty 1-D array.")
+        if np.any(assignments < 0):
+            raise ValueError("Cluster assignments must be non-negative.")
+        labels = np.unique(assignments)
+        K = int(labels[-1]) + 1
+        if not np.array_equal(labels, np.arange(K)):
+            raise ValueError(
+                "Cluster assignments must use contiguous 0-based labels "
+                f"0..{K - 1}; got {labels.tolist()}."
+            )
+        if len(mcr_active_vars_per_class) != K:
+            raise ValueError(
+                "mcr_active_vars_per_class must contain one entry per cluster "
+                f"({K}); got {len(mcr_active_vars_per_class)}."
+            )
         p = len(cont_vars)
         var_mask = np.zeros((K, p), bool)
         for k in range(K):
             for v in mcr_active_vars_per_class[k]:
-                if v in cont_vars:
-                    var_mask[k, cont_vars.index(v)] = True
+                if v not in cont_vars:
+                    raise ValueError(
+                        f"Cluster {k} refers to unknown continuous variable {v!r}."
+                    )
+                var_mask[k, cont_vars.index(v)] = True
         structure = {
             "K": K,
-            "membership": np.asarray(mcr_class_assignment, int),
+            "membership": assignments,
             "var_mask": var_mask,
             "form": np.zeros(K, int),             # start at power (form 0)
             "lam": np.ones((K, p)),
