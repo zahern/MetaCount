@@ -164,6 +164,26 @@ include = [
     "metacountregressor",
     "metacountregressor.*",
 ]
+# Keep stale build artefacts and the legacy nested mirror out of the wheel.
+# `metacountregressor/build/lib/...` and `metacountregressor/metacountregressor/...`
+# are outdated copies of the package (they shadow nothing at import time but
+# ship old modules and bloat the distribution).
+# Keep the stale `metacountregressor/build/` artefact out of the wheel.  It is
+# an old copy of the package (it shadows nothing at import time but ships old
+# modules and bloats the distribution).  The nested
+# `metacountregressor/metacountregressor/` tree is NOT excluded: those files
+# are deliberate compatibility shims plus required data/templates.
+exclude = [
+    "metacountregressor.build*",
+]
+
+# `include-package-data = true` copies any file living under a package
+# directory, so the stale build .py copies are also excluded as data.
+[tool.setuptools.exclude-package-data]
+metacountregressor = [
+    "build/*",
+    "build/**/*",
+]
 
 [tool.ruff]
 line-length = 100

@@ -333,11 +333,11 @@ def main() -> None:
     print("  selection criterion           : BIC + %s * n_insig" % 5.0)
 
     print("\nrefitting the selected structure at R = %d ..." % args.R_final)
-    res, y_jax, aadt_jax, b_jax, l_jax, draws = fit_final_model(
+    res, y_jax, aadt_jax, b_jax, l_jax, draws, std_info, offset_jax = fit_final_model(
         df, sel_b, sel_l, rand_b, rand_l, model=model, use_halton=use_halton,
         R=args.R_final)
     se, cov = compute_se(res, y_jax, aadt_jax, b_jax, l_jax,
-                         rand_b, rand_l, draws, args.R_final, model)
+                         rand_b, rand_l, draws, args.R_final, model, offset_jax)
     table = build_summary_table(res, sel_b, sel_l, rand_b, rand_l, model, se)
     print_summary_table(table)
 

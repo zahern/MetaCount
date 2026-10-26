@@ -22,16 +22,10 @@ try:
     import jax
     import jax.numpy as jnp
     from jaxopt import LBFGS as _LBFGS
-    try:
-        from main_hpc_lc_patch import (
-            mixed_model_loglik as _jax_loglik,
-            ModelSpec as _ModelSpec,
-        )
-    except ImportError:  # pragma: no cover
-        from metacountregressor.main_hpc_lc_patch import (
-            mixed_model_loglik as _jax_loglik,
-            ModelSpec as _ModelSpec,
-        )
+    from main_hpc_lc_patch import (
+        mixed_model_loglik as _jax_loglik,
+        ModelSpec as _ModelSpec,
+    )
     jax.config.update("jax_enable_x64", True)
     _JAX_OK = True
 except Exception:
@@ -3729,12 +3723,7 @@ def _jax_random_params_refit(
             offset_col=offset_col,
         )
 
-        try:
-            from main_hpc import build_model_from_manual_spec as _build, CountModel
-        except ImportError:
-            from metacountregressor.main_hpc import build_model_from_manual_spec as _build, CountModel
-    except ImportError:
-        from metacountregressor.main_hpc import build_model_from_manual_spec as _build, CountModel
+        from main_hpc import build_model_from_manual_spec as _build, CountModel
         data_rp, spec_rp = _build(
             df=df,
             manual_spec={
@@ -3751,12 +3740,7 @@ def _jax_random_params_refit(
         model_rp = CountModel(spec_rp, data_rp)
 
         # Build initial parameter vector from FE fit
-        try:
-            from main_hpc import build_base_index as _bbi
-        except ImportError:
-            from metacountregressor.main_hpc import build_base_index as _bbi
-    except ImportError:
-        from metacountregressor.main_hpc import build_base_index as _bbi
+        from main_hpc import build_base_index as _bbi
         _pindex = _bbi(spec_rp, model="nb")
         n_total = int(_pindex["total_params"])
         init_rp = np.zeros(n_total)
@@ -3805,12 +3789,7 @@ def _jax_random_params_refit(
                 return None
         params_vec = np.asarray(result_rp.params, dtype=float)
 
-        try:
-            from main_hpc import mixed_model_loglik as _mml, compute_standard_errors as _compute_se, compute_regularized_estimates as _parte_cre
-        except ImportError:
-            from metacountregressor.main_hpc import mixed_model_loglik as _mml, compute_standard_errors as _compute_se, compute_regularized_estimates as _parte_cre
-    except ImportError:
-        from metacountregressor.main_hpc import mixed_model_loglik as _mml, compute_standard_errors as _compute_se, compute_regularized_estimates as _parte_cre
+        from main_hpc import mixed_model_loglik as _mml, compute_standard_errors as _compute_se, compute_regularized_estimates as _parte_cre
 
         _objective = lambda p: _mml(p, data_rp, spec_rp)
 
@@ -3849,11 +3828,179 @@ def _jax_random_params_refit(
         def _positive_scale(x):
             return float(np.exp(np.clip(float(x), -12.0, 6.0)))
 
-    try:
-                    from main_hpc import unpack_params as _unpack
-    except ImportError:
-        from metacountregressor.main_hpc import unpack_params as _unpack
+        from main_hpc import unpack_params
+        blocks = unpack_params(params_vec, spec_rp)
+
+        rows_param: list[dict[str, Any]] = []
+        param_idx = 0
+
+        for k, name in enumerate(spec_rp.fixed_names):
+            b = float(np.array(blocks["beta_f"])[k])
+            s = float(se_beta_f[k]) if se_beta_f is not None and k < len(se_beta_f) else np.nan
+            z = b / s if (np.isfinite(s) and s > 1e-15) else 0.0
+            p = float(2.0 * (1.0 - _norm_cdf(abs(z))))
+            rows_param.append({
+                "Parameter": VARIABLE_LABELS.get(name, name),
+                "Role": "Fixed",
+                "Estimate": b,
+                "Std.Err": s,
+                "z-value": z,
+                "p-value": p,
+            })
+            param_idx += 1
+
+        if spec_rp.Kr_ind > 0 and blocks.get("mean_ind") is not None:
+            means = np.array(blocks["mean_ind"])
+            sds_raw = np.array(blocks["sd_ind"])
+            for j, rname in enumerate(spec_rp.random_ind_names):
+                display_name = VARIABLE_LABELS.get(rname, rname)
+                mj = float(means[j])
+                mse = float(se_ind_m[j]) if se_ind_m is not None and j < len(se_ind_m) else np.nan
+                mz = mj / mse if (np.isfinite(mse) and mse > 1e-15) else 0.0
+                mp = float(2.0 * (1.0 - _norm_cdf(abs(mz))))
+                rows_param.append({
+                    "Parameter": f"{display_name} [mean]",
+                    "Role": "Random-Ind mean",
+                    "Estimate": mj,
+                    "Std.Err": mse,
+                    "z-value": mz,
+                    "p-value": mp,
+                })
+
+                sd_raw = float(sds_raw[j])
+                sd_trans = _positive_scale(sd_raw)
+                sse_raw = float(se_ind_s[j]) if se_ind_s is not None and j < len(se_ind_s) else np.nan
+                sse_trans = sse_raw * sd_trans if np.isfinite(sse_raw) else np.nan
+                sz = sd_trans / sse_trans if (np.isfinite(sse_trans) and sse_trans > 1e-15) else 0.0
+                sp = float(2.0 * (1.0 - _norm_cdf(abs(sz))))
+                rows_param.append({
+                    "Parameter": f"{display_name} [sd]",
+                    "Role": "Random-Ind sd",
+                    "Estimate": sd_trans,
+                    "Std.Err": sse_trans,
+                    "z-value": sz,
+                    "p-value": sp,
+                })
+
+        if blocks.get("alpha") is not None:
+            a_raw = float(blocks["alpha"])
+            a_trans = float(np.exp(np.clip(a_raw, -12.0, 12.0)))
+            ase_raw = float(se_alpha) if se_alpha is not None else np.nan
+            ase_trans = ase_raw * a_trans if np.isfinite(ase_raw) else np.nan
+            az = a_trans / ase_trans if (np.isfinite(ase_trans) and ase_trans > 1e-15) else 0.0
+            ap = float(2.0 * (1.0 - _norm_cdf(abs(az))))
+            rows_param.append({
+                "Parameter": "NB2 Dispersion (alpha)",
+                "Role": "Dispersion",
+                "Estimate": a_trans,
+                "Std.Err": ase_trans,
+                "z-value": az,
+                "p-value": ap,
+            })
+
+        coef_df = pd.DataFrame(rows_param)
+        coef_str = _format_coef_table_journal(coef_df, title="RANDOM-PARAMETERS NB2 — FINAL COEFFICIENTS")
+
+        corr_matrix_str = ""
+        if spec_rp.Kr_cor > 0 and blocks.get("mean_cor") is not None:
+            means = np.asarray(blocks["mean_cor"])
+            for j, rname in enumerate(spec_rp.random_cor_names):
+                display_name = VARIABLE_LABELS.get(rname, rname)
+                mj = float(means[j])
+                mse = float(se_cor_m[j]) if se_cor_m is not None and j < len(se_cor_m) else np.nan
+                mz = mj / mse if (np.isfinite(mse) and mse > 1e-15) else 0.0
+                mp = float(2.0 * (1.0 - _norm_cdf(abs(mz))))
+                rows_param.append({
+                    "Parameter": f"{display_name} [mean]",
+                    "Role": "Random-Cor mean",
+                    "Estimate": mj,
+                    "Std.Err": mse,
+                    "z-value": mz,
+                    "p-value": mp,
+                })
+
+            chol = np.asarray(blocks.get("chol"), dtype=float)
+            K = int(spec_rp.Kr_cor)
+            L = np.zeros((K, K), dtype=float)
+            chol_idx = 0
+            for i in range(K):
+                for j in range(i + 1):
+                    raw = float(chol[chol_idx])
+                    estimate = float(np.exp(raw)) if i == j else raw
+                    raw_se = float(se_chol[chol_idx]) if se_chol is not None and chol_idx < len(se_chol) else np.nan
+                    estimate_se = raw_se * estimate if i == j and np.isfinite(raw_se) else raw_se
+                    z = estimate / estimate_se if (np.isfinite(estimate_se) and estimate_se > 1e-15) else 0.0
+                    p = float(2.0 * (1.0 - _norm_cdf(abs(z))))
+                    L[i, j] = estimate
+                    rows_param.append({
+                        "Parameter": f"L[{i},{j}]",
+                        "Role": "Random-Cor Cholesky",
+                        "Estimate": estimate,
+                        "Std.Err": estimate_se,
+                        "z-value": z,
+                        "p-value": p,
+                    })
+                    chol_idx += 1
+
+            covariance = L @ L.T
+            std = np.sqrt(np.clip(np.diag(covariance), 1e-30, None))
+            correlation = covariance / np.outer(std, std)
+            names = [VARIABLE_LABELS.get(name, name) for name in spec_rp.random_cor_names]
+            corr_lines = ["CORRELATED RANDOM VAR-COV", "  Variables: " + ", ".join(names)]
+            corr_lines.append("  Covariance matrix:")
+            corr_lines.extend("    " + " ".join(f"{value:+.6f}" for value in row) for row in covariance)
+            corr_lines.append("  Correlation matrix:")
+            corr_lines.extend("    " + " ".join(f"{value:+.6f}" for value in row) for row in correlation)
+            corr_matrix_str = "\n".join(corr_lines)
+
+            coef_df = pd.DataFrame(rows_param)
+            coef_str = _format_coef_table_journal(coef_df, title="RANDOM-PARAMETERS NB2 — FINAL COEFFICIENTS")
+
+        ll  = float(-model_rp.objective(params_vec))
+        n   = data_rp["y"].size
+        k   = int(_pindex["total_params"])
+        bic = float(k * np.log(max(n, 1)) - 2.0 * ll)
+        aic = float(2.0 * k - 2.0 * ll)
+
+        return {
+            "coef_str": coef_str,
+            "coef_df": coef_df,
+            "corr_matrix_str": corr_matrix_str,
+            "loglik": ll,
+            "bic": bic,
+            "aic": aic,
+            "fit": None,
+            "fixed_terms": fixed_terms,
+            "rdm_terms": rdm_terms,
+        }
+    except Exception:
         return None
+
+
+def _fit_literature_benchmark_with_metacount(
+    df_trainval_raw: pd.DataFrame,
+    y_col: str,
+    aadt_col: str,
+    offset_col: str | None,
+    rp_draws: int,
+) -> dict[str, Any] | None:
+    """Fit Behara's Ex16-3 specification using MetaCount's NB2 random-parameters
+    engine.  Uses the same variable lists as the literature model but estimates
+    all coefficients from scratch via ExperimentBuilder so the BIC and SEs
+    are on a comparable footing with the search-selected specifications."""
+    import sys as _sys
+
+    _pkg_root = str(Path(__file__).resolve().parent.parent)
+    if _pkg_root not in _sys.path:
+        _sys.path.insert(0, _pkg_root)
+
+    try:
+        from experiment_package import ExperimentBuilder  # type: ignore
+    except ImportError:
+        try:
+            from ..experiment_package import ExperimentBuilder  # type: ignore
+        except ImportError:
+            return None
     except Exception:
         return None
 
@@ -3887,15 +4034,8 @@ def _jax_random_params_refit(
             R=max(200, int(rp_draws)),
             use_slsqp=True,
         )
-        try:
-            from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
-        except ImportError:
-            from metacountregressor.main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
-        try:
-            from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
-        except ImportError:
-            from metacountregressor.main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
-            from metacountregressor.main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
+
+        from main_hpc import unpack_params as _unpack, compute_standard_errors as _compute_se, build_base_index as _build_base_index, compute_regularized_estimates as _parte_cre, mixed_model_loglik as _mml  # type: ignore
 
         fitted_spec = fit.get("spec", spec)
         params_vec = np.asarray(fit["result"].params, dtype=float)
@@ -4166,64 +4306,60 @@ def _jax_random_params_refit(
             params = np.array(fit["result"].params)
             try:
                 from main_hpc_lc_patch import build_base_index as _bidx
-            except ImportError:
-                from metacountregressor.main_hpc_lc_patch import build_base_index as _bidx
-            try:
                 from main_hpc import unpack_params as _unpack
-            except ImportError:
-                from metacountregressor.main_hpc import unpack_params as _unpack
-            import jax as _jax
-            idx    = _bidx(spec)
-            blocks = _unpack(params, spec)
-            rows   = []
+                import jax as _jax
+                idx    = _bidx(spec)
+                blocks = _unpack(params, spec)
+                rows   = []
 
-            try:
                 # Fixed params
-                    for k, name in enumerate(spec.fixed_names):
-                        lbl = VARIABLE_LABELS.get(
+                for k, name in enumerate(spec.fixed_names):
+                    lbl = VARIABLE_LABELS.get(
                         name.replace("_Z","").replace("__INTERCEPT__","").strip("_"),
                         name.replace("__INTERCEPT__","Intercept"))
                     rows.append({"Parameter": lbl, "Type": "Fixed",
-                        "Mean": round(float(np.array(blocks["beta_f"])[k]), 5), "SD": ""})
-                    # Independent random params — include distribution name in label
-                    if spec.Kr_ind > 0 and blocks.get("mean_ind") is not None:
-                        means = np.array(blocks["mean_ind"])
-                        sds   = np.abs(np.array(blocks["sd_ind"]))
-                        # Infer distribution from spec.random_ind_dists if available
-                        ind_dists = list(getattr(spec, "random_ind_dists", []))
-                        for j, rname in enumerate(spec.random_ind_names):
-                            lbl  = VARIABLE_LABELS.get(rname.replace("_Z",""), rname)
-                            dist = ind_dists[j] if j < len(ind_dists) else "normal"
-                            rows.append({
+                                 "Mean": round(float(np.array(blocks["beta_f"])[k]), 5), "SD": ""})
+
+                # Independent random params — include distribution name in label
+                if spec.Kr_ind > 0 and blocks.get("mean_ind") is not None:
+                    means = np.array(blocks["mean_ind"])
+                    sds   = np.abs(np.array(blocks["sd_ind"]))
+                    # Infer distribution from spec.random_ind_dists if available
+                    ind_dists = list(getattr(spec, "random_ind_dists", []))
+                    for j, rname in enumerate(spec.random_ind_names):
+                        lbl  = VARIABLE_LABELS.get(rname.replace("_Z",""), rname)
+                        dist = ind_dists[j] if j < len(ind_dists) else "normal"
+                        rows.append({
                             "Parameter": f"{lbl} [random, {dist}]",
                             "Type":  f"Random ({dist})",
                             "Mean":  round(float(means[j]), 5),
                             "SD":    round(float(sds[j]),   5),
-                            })
-                        # Correlated random params
-                    corr_matrix_str = ""
-                    if spec.Kr_cor > 0 and blocks.get("mean_cor") is not None:
-                        means_c = np.array(blocks["mean_cor"])
-                        chol_v  = np.array(blocks["chol"])
-                        K       = spec.Kr_cor
-                        L       = np.zeros((K, K))
-                        i = 0
-                        for r in range(K):
-                            for c in range(r + 1):
-                                L[r, c] = chol_v[i]; i += 1
-                                L[np.diag_indices(K)] = np.abs(np.diag(L))
-                        Sigma = L @ L.T
-                        sds_c = np.sqrt(np.diag(Sigma))
-                        corr  = Sigma / (sds_c[:, None] * sds_c[None, :] + 1e-12)
-                        for j, rname in enumerate(spec.random_cor_names):
-                            lbl = VARIABLE_LABELS.get(rname.replace("_Z",""), rname)
-                            rows.append({"Parameter": f"{lbl} [random, correlated]",
-                            "Type": "Random-Cor",
-                        "Mean": round(float(means_c[j]), 5),
-                        "SD":   round(float(sds_c[j]),   5)})
+                        })
+
+                # Correlated random params
+                corr_matrix_str = ""
+                if spec.Kr_cor > 0 and blocks.get("mean_cor") is not None:
+                    means_c = np.array(blocks["mean_cor"])
+                    chol_v  = np.array(blocks["chol"])
+                    K       = spec.Kr_cor
+                    L       = np.zeros((K, K))
+                    i = 0
+                    for r in range(K):
+                        for c in range(r + 1):
+                            L[r, c] = chol_v[i]; i += 1
+                    L[np.diag_indices(K)] = np.abs(np.diag(L))
+                    Sigma = L @ L.T
+                    sds_c = np.sqrt(np.diag(Sigma))
+                    corr  = Sigma / (sds_c[:, None] * sds_c[None, :] + 1e-12)
+                    for j, rname in enumerate(spec.random_cor_names):
+                        lbl = VARIABLE_LABELS.get(rname.replace("_Z",""), rname)
+                        rows.append({"Parameter": f"{lbl} [random, correlated]",
+                                     "Type": "Random-Cor",
+                                     "Mean": round(float(means_c[j]), 5),
+                                     "SD":   round(float(sds_c[j]),   5)})
                     # Format correlation matrix as text
                     cor_lbls = [VARIABLE_LABELS.get(n.replace("_Z",""), n)
-                        for n in spec.random_cor_names]
+                                for n in spec.random_cor_names]
                     corr_lines = ["  Correlation matrix of correlated random parameters:"]
                     header = "    " + "  ".join(f"{l[:14]:>14}" for l in cor_lbls)
                     corr_lines.append(header)
@@ -4231,36 +4367,33 @@ def _jax_random_params_refit(
                         row_s = "  ".join(f"{corr[r,c]:+14.4f}" for c in range(K))
                         corr_lines.append(f"  {rl[:20]:20}  {row_s}")
                     corr_matrix_str = "\n".join(corr_lines)
-                    # NB2 dispersion
-                    if blocks.get("alpha") is not None:
-                        rows.append({"Parameter": "NB2 Dispersion (alpha)",
-                        "Type": "Fixed",
-                        "Mean": round(float(_jax.numpy.exp(
-                        _jax.numpy.clip(blocks["alpha"], -12.0, 12.0)
-                        )), 5),
-                        "SD": ""})
-                        coef_df = pd.DataFrame(rows)
-                        summary_d = fit.get("summary", {})
-                        ll  = summary_d.get("loglik", float("nan")) if isinstance(summary_d, dict) else float("nan")
-                    return {
-                    "fit": fit,
-                    "coef_df": coef_df,
-                    "coef_str": coef_df.to_string(index=False),
-                    "corr_matrix_str": corr_matrix_str,
-                    "loglik": ll, "bic": bic,
-                }
+
+                # NB2 dispersion
+                if blocks.get("alpha") is not None:
+                    rows.append({"Parameter": "NB2 Dispersion (alpha)",
+                                 "Type": "Fixed",
+                                 "Mean": round(float(_jax.numpy.exp(
+                                     _jax.numpy.clip(blocks["alpha"], -12.0, 12.0)
+                                 )), 5),
+                                 "SD": ""})
+
+                coef_df = pd.DataFrame(rows)
+                summary_d = fit.get("summary", {})
+                ll  = summary_d.get("loglik", float("nan")) if isinstance(summary_d, dict) else float("nan")
+                bic = summary_d.get("bic",    float("nan")) if isinstance(summary_d, dict) else float("nan")
+                return {"fit": fit, "coef_df": coef_df,
+                        "coef_str": coef_df.to_string(index=False),
+                        "corr_matrix_str": corr_matrix_str,
+                        "loglik": ll, "bic": bic,
+                        "summary": str(fit.get("summary", {}))}
             except Exception as exc:
                 summary_d = fit.get("summary", {})
                 ll  = summary_d.get("loglik", float("nan")) if isinstance(summary_d, dict) else float("nan")
-                bic = summary_d.get("bic", float("nan")) if isinstance(summary_d, dict) else float("nan")
-                return {
-                "fit": fit,
-                "coef_df": pd.DataFrame(),
-                "coef_str": f"(extraction failed: {exc})",
-                "corr_matrix_str": "",
-                "loglik": ll, "bic": bic, "summary": ""
-            }
-
+                bic = summary_d.get("bic",    float("nan")) if isinstance(summary_d, dict) else float("nan")
+                return {"fit": fit, "coef_df": pd.DataFrame(),
+                        "coef_str": f"(extraction failed: {exc})",
+                        "corr_matrix_str": "",
+                        "loglik": ll, "bic": bic, "summary": ""}
 
         # Halton draws for simulation-based integration (configurable).
         _R = int(rp_draws)
@@ -4280,45 +4413,45 @@ def _jax_random_params_refit(
             for dist in _DISTS:
                 try:
                     spec_ind = builder.make_manual_spec(
-                    fixed_terms = fixed_terms,
-                    rdm_terms   = [f"{n}:{dist}" for n in rdm_names],
-                    dispersion  = 1,
-                )
-                fit_ind = builder.fit_manual_model(
-                    spec_ind, model="nb", print_report=False, R=_R)
-                res_ind = _extract_result(fit_ind)
-                res_ind["dist"] = dist   # record which distribution won
-                if np.isfinite(res_ind["bic"]):
-                    marker = " *" if best_result is None or res_ind["bic"] < best_result["bic"] else ""
-                    print(f"    [RP] Indep {dist:12s} BIC: {res_ind['bic']:.2f}{marker}")
-                    if best_result is None or res_ind["bic"] < best_result["bic"]:
-                        best_result = res_ind
+                        fixed_terms = fixed_terms,
+                        rdm_terms   = [f"{n}:{dist}" for n in rdm_names],
+                        dispersion  = 1,
+                    )
+                    fit_ind = builder.fit_manual_model(
+                        spec_ind, model="nb", print_report=False, R=_R)
+                    res_ind = _extract_result(fit_ind)
+                    res_ind["dist"] = dist   # record which distribution won
+                    if np.isfinite(res_ind["bic"]):
+                        marker = " *" if best_result is None or res_ind["bic"] < best_result["bic"] else ""
+                        print(f"    [RP] Indep {dist:12s} BIC: {res_ind['bic']:.2f}{marker}")
+                        if best_result is None or res_ind["bic"] < best_result["bic"]:
+                            best_result = res_ind
                 except Exception:
-                pass
+                    pass
 
         # ── Try top-2 as CORRELATED with best independent distribution ───
         if len(rdm_names) >= 2:
             best_dist = best_result.get("dist", "normal") if best_result else "normal"
             try:
-            cor_names = rdm_names[:2]
-            ind_rest  = rdm_names[2:]
-            spec_cor  = builder.make_manual_spec(
-                fixed_terms   = fixed_terms,
-                rdm_cor_terms = [f"{n}:{best_dist}" for n in cor_names],
-                rdm_terms     = [f"{n}:{best_dist}" for n in ind_rest],
-                dispersion    = 1,
-            )
-            fit_cor = builder.fit_manual_model(
-                spec_cor, model="nb", print_report=False, R=_R)
-            res_cor = _extract_result(fit_cor, cor_names=cor_names)
-            res_cor["dist"] = best_dist
-            if np.isfinite(res_cor["bic"]):
-                marker = " *" if best_result is None or res_cor["bic"] < best_result["bic"] else ""
-                print(f"    [RP] Correlated ({best_dist}) BIC: {res_cor['bic']:.2f}{marker}")
-                if best_result is None or res_cor["bic"] < best_result["bic"]:
-                    best_result = res_cor
+                cor_names = rdm_names[:2]
+                ind_rest  = rdm_names[2:]
+                spec_cor  = builder.make_manual_spec(
+                    fixed_terms   = fixed_terms,
+                    rdm_cor_terms = [f"{n}:{best_dist}" for n in cor_names],
+                    rdm_terms     = [f"{n}:{best_dist}" for n in ind_rest],
+                    dispersion    = 1,
+                )
+                fit_cor = builder.fit_manual_model(
+                    spec_cor, model="nb", print_report=False, R=_R)
+                res_cor = _extract_result(fit_cor, cor_names=cor_names)
+                res_cor["dist"] = best_dist
+                if np.isfinite(res_cor["bic"]):
+                    marker = " *" if best_result is None or res_cor["bic"] < best_result["bic"] else ""
+                    print(f"    [RP] Correlated ({best_dist}) BIC: {res_cor['bic']:.2f}{marker}")
+                    if best_result is None or res_cor["bic"] < best_result["bic"]:
+                        best_result = res_cor
             except Exception:
-            pass
+                pass
 
         if best_result is None:
             return None
@@ -4423,14 +4556,14 @@ def _print_readable_model(
             coef, se, z, p = _pval_stats(pname)
             unit_tag = " (per SD)" if is_std else ""
             lines.append(
-            f"  {lbl:<30} {_est_fmt(coef)} {_se_fmt(se)} {_z_fmt(z)} {_pval_fmt(p)} {_sig(p)}"
-            f"  CMF={cmf:.4f}{unit_tag}"
+                f"  {lbl:<30} {_est_fmt(coef)} {_se_fmt(se)} {_z_fmt(z)} {_pval_fmt(p)} {_sig(p)}"
+                f"  CMF={cmf:.4f}{unit_tag}"
             )
         lines.append("")
 
     # ── Lower terms ──────────────────────────────────────────────
     lower_rows = [(n, v) for n, v in params.items()
-              if str(n).startswith("lower::") and str(n).endswith("*log_aadt")]
+                  if str(n).startswith("lower::") and str(n).endswith("*log_aadt")]
     beta_aadt = float(params.get("log_aadt", params.get("log(AADT)", 0.0)))
 
     if lower_rows:
@@ -4536,8 +4669,8 @@ def _save_model_equation_md(
             continue
         if not upper_added:
             rows.append({"Term": "---", "Coefficient": "---",
-                     "Variable / Formula": "**UPPER TERMS — direct effect, same CMF at any AADT**",
-                     "Interpretation": ""})
+                         "Variable / Formula": "**UPPER TERMS — direct effect, same CMF at any AADT**",
+                         "Interpretation": ""})
             upper_added = True
         raw = pname.replace("upper::", "")
         is_std = raw.endswith("_Z")
@@ -4553,9 +4686,9 @@ def _save_model_equation_md(
             "Coefficient": _rnd(coef_f),
             "Variable / Formula": f"$\\beta \\times \\text{{{lbl}}}${unit_note}",
             "Interpretation": (
-            f"CMF = $e^{{{coef_f:.4f}}} = {cmf_1sd:.4f}$ "
-            f"({'safer' if cmf_1sd < 1 else 'higher risk'}, "
-            f"{abs(cmf_1sd - 1)*100:.1f}%{' reduction' if cmf_1sd < 1 else ' increase'})"
+                f"CMF = $e^{{{coef_f:.4f}}} = {cmf_1sd:.4f}$ "
+                f"({'safer' if cmf_1sd < 1 else 'higher risk'}, "
+                f"{abs(cmf_1sd - 1)*100:.1f}%{' reduction' if cmf_1sd < 1 else ' increase'})"
             ),
         })
 
@@ -4567,8 +4700,8 @@ def _save_model_equation_md(
             continue
         if not lower_added:
             rows.append({"Term": "---", "Coefficient": "---",
-                     "Variable / Formula": "**LOWER TERMS — modify AADT elasticity (traffic interaction)**",
-                     "Interpretation": ""})
+                         "Variable / Formula": "**LOWER TERMS — modify AADT elasticity (traffic interaction)**",
+                         "Interpretation": ""})
             lower_added = True
         raw  = pname.replace("lower::", "").replace("*log_aadt", "")
         is_std = raw.endswith("_Z")
@@ -4583,17 +4716,17 @@ def _save_model_equation_md(
             "Term": f"$\\gamma_{{{base}}}$",
             "Coefficient": _rnd(coef_f),
             "Variable / Formula": (
-            f"$\\gamma \\times \\text{{{lbl}}} \\times \\log(\\text{{AADT}})${unit_note}"
+                f"$\\gamma \\times \\text{{{lbl}}} \\times \\log(\\text{{AADT}})${unit_note}"
             ),
             "Interpretation": (
-            f"{direction.capitalize()} AADT elasticity by {abs(coef_f):.4f}{unit_note}. "
-            f"{'Higher values make crash rate grow faster with AADT.' if coef_f > 0 else 'Higher values reduce how fast crash rate grows with AADT.'}"
+                f"{direction.capitalize()} AADT elasticity by {abs(coef_f):.4f}{unit_note}. "
+                f"{'Higher values make crash rate grow faster with AADT.' if coef_f > 0 else 'Higher values reduce how fast crash rate grows with AADT.'}"
             ),
         })
 
     # Offset
     rows.append({"Term": "---", "Coefficient": "---",
-             "Variable / Formula": "**OFFSET — exposure correction**", "Interpretation": ""})
+                 "Variable / Formula": "**OFFSET — exposure correction**", "Interpretation": ""})
     rows.append({
         "Term": "**Offset**",
         "Coefficient": "1.000 (fixed)",
@@ -4858,10 +4991,10 @@ def _build_literature_vs_proposed_coef_table(
             param_name = str(row["Parameter"]).replace(" [mean]", "")
             base_name  = param_name
             random_rows.append({
-            "label": base_name,
-            "dist": "normal",
-            "mean": row.get("Estimate", np.nan),
-            "sd": sd_map.get(param_name, np.nan),
+                "label": base_name,
+                "dist": "normal",
+                "mean": row.get("Estimate", np.nan),
+                "sd": sd_map.get(param_name, np.nan),
             })
 
     rows: list[dict[str, Any]] = []
@@ -4873,13 +5006,13 @@ def _build_literature_vs_proposed_coef_table(
         literature_coef = bench_params.get(param_name, np.nan)
         rows.append(
             {
-            "Parameter": label,
-            "Model term": param_name,
-            "Literature benchmark coefficient": float(literature_coef) if np.isfinite(literature_coef) else np.nan,
-            "Proposed fixed coefficient": float(row.get("Estimate (original variable scale)", np.nan)),
-            "Proposed random distribution": "",
-            "Proposed random mean": np.nan,
-            "Proposed random sd": np.nan,
+                "Parameter": label,
+                "Model term": param_name,
+                "Literature benchmark coefficient": float(literature_coef) if np.isfinite(literature_coef) else np.nan,
+                "Proposed fixed coefficient": float(row.get("Estimate (original variable scale)", np.nan)),
+                "Proposed random distribution": "",
+                "Proposed random mean": np.nan,
+                "Proposed random sd": np.nan,
             }
         )
 
@@ -4888,13 +5021,13 @@ def _build_literature_vs_proposed_coef_table(
             continue
         rows.append(
             {
-            "Parameter": _parameter_label_from_name(str(param_name)),
-            "Model term": str(param_name),
-            "Literature benchmark coefficient": float(value),
-            "Proposed fixed coefficient": np.nan,
-            "Proposed random distribution": "",
-            "Proposed random mean": np.nan,
-            "Proposed random sd": np.nan,
+                "Parameter": _parameter_label_from_name(str(param_name)),
+                "Model term": str(param_name),
+                "Literature benchmark coefficient": float(value),
+                "Proposed fixed coefficient": np.nan,
+                "Proposed random distribution": "",
+                "Proposed random mean": np.nan,
+                "Proposed random sd": np.nan,
             }
         )
 
@@ -4906,13 +5039,13 @@ def _build_literature_vs_proposed_coef_table(
             continue
         rows.append(
             {
-            "Parameter": f"{random_label} (random)",
-            "Model term": f"random::{random_label}",
-            "Literature benchmark coefficient": np.nan,
-            "Proposed fixed coefficient": np.nan,
-            "Proposed random distribution": info["dist"],
-            "Proposed random mean": float(info["mean"]) if pd.notna(info["mean"]) else np.nan,
-            "Proposed random sd": float(info["sd"]) if pd.notna(info["sd"]) else np.nan,
+                "Parameter": f"{random_label} (random)",
+                "Model term": f"random::{random_label}",
+                "Literature benchmark coefficient": np.nan,
+                "Proposed fixed coefficient": np.nan,
+                "Proposed random distribution": info["dist"],
+                "Proposed random mean": float(info["mean"]) if pd.notna(info["mean"]) else np.nan,
+                "Proposed random sd": float(info["sd"]) if pd.notna(info["sd"]) else np.nan,
             }
         )
 
@@ -5105,8 +5238,18 @@ def _resolve_default_candidates(df: pd.DataFrame, profile: str = "core") -> tupl
 def _save_convergence_png(path: Path, history_df: pd.DataFrame, dataset_label: str) -> None:
     """Matplotlib version of the convergence plot for embedding in PPTX."""
     df = history_df.copy()
-    n  = len(df)
-    iters     = list(range(1, n + 1))
+
+    # Chronological order is required for a meaningful running-minimum trace.
+    # If the archive was stored sorted by objective, row order is not search
+    # order and the trace would appear flat from iteration 1.
+    if "Iteration" in df.columns:
+        df = df.assign(_iter=pd.to_numeric(df["Iteration"], errors="coerce"))
+        df = df.sort_values("_iter", kind="mergesort").reset_index(drop=True)
+    else:
+        df = df.reset_index(drop=True)
+    n         = len(df)
+    iters     = (df["_iter"].tolist() if "_iter" in df.columns
+                 else list(range(1, n + 1)))
     bic_vals  = df["BIC"].tolist()
     val_dev   = df["Val Poisson Dev"].tolist()
     mono_ok   = [str(v).lower() == "yes" for v in df.get("Monotonic AADT (e>0 all segs)", ["yes"] * n)]
@@ -5121,6 +5264,13 @@ def _save_convergence_png(path: Path, history_df: pd.DataFrame, dataset_label: s
 
     ax1.scatter(iters, bic_vals, c=colors, s=22, alpha=0.65, zorder=3)
     ax1.plot(iters, run_min_bic, color="#0a6c74", lw=2.5, label="Running min")
+    try:
+        _best_i = int(np.nanargmin(np.asarray(bic_vals, dtype=float)))
+        ax1.axvline(iters[_best_i], color="#d96f32", ls="--", lw=1.1, alpha=0.8)
+        ax1.scatter([iters[_best_i]], [bic_vals[_best_i]], s=45, marker="*",
+                    color="#d96f32", zorder=6, label="Selected (best BIC)")
+    except (ValueError, TypeError):
+        pass
     ax1.set_title("BIC over Search Iterations", fontsize=11, fontweight="bold")
     ax1.set_xlabel("Iteration"); ax1.set_ylabel("BIC")
     if bic_window is not None:
@@ -5128,7 +5278,7 @@ def _save_convergence_png(path: Path, history_df: pd.DataFrame, dataset_label: s
     ax1.legend(fontsize=8); ax1.grid(alpha=0.2)
 
     ax2.scatter(iters, val_dev, c=colors, s=22, alpha=0.65, zorder=3,
-            label="Green = monotonic AADT")
+                label="Green = monotonic AADT")
     ax2.plot(iters, run_min_dev, color="#d96f32", lw=2.5, label="Running min")
     ax2.set_title("Validation Deviance over Iterations", fontsize=11, fontweight="bold")
     ax2.set_xlabel("Iteration"); ax2.set_ylabel("Val Poisson Deviance")
@@ -5355,12 +5505,12 @@ def _save_obs_pred_aadt_png(
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), dpi=150)
         color_map = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32",
-                 "test": "#7a3c8c", "all": "#1f5f8b"}
+                     "test": "#7a3c8c", "all": "#1f5f8b"}
 
         for lbl in sorted(set(labels)):
             mask = np.array([l == lbl for l in labels])
             ax1.scatter(log_a[mask], y[mask], s=18, alpha=0.55,
-                    color=color_map.get(lbl, "#4a6785"), label=f"Observed ({lbl})", zorder=3)
+                        color=color_map.get(lbl, "#4a6785"), label=f"Observed ({lbl})", zorder=3)
         try:
             coeffs      = np.polyfit(log_a, p_clip, deg=3)
             log_a_fine  = np.linspace(log_a.min(), log_a.max(), 200)
@@ -5425,12 +5575,12 @@ def _save_model_comparison_html(
 
         def _psmooth(loga, pred, deg=3):
             try:
-            c  = np.polyfit(loga, pred, deg=deg)
-            xf = np.linspace(loga.min(), loga.max(), 200)
-            return xf.tolist(), np.maximum(np.polyval(c, xf), 0.0).tolist()
+                c  = np.polyfit(loga, pred, deg=deg)
+                xf = np.linspace(loga.min(), loga.max(), 200)
+                return xf.tolist(), np.maximum(np.polyval(c, xf), 0.0).tolist()
             except Exception:
-            si = np.argsort(loga)
-            return loga[si].tolist(), pred[si].tolist()
+                si = np.argsort(loga)
+                return loga[si].tolist(), pred[si].tolist()
 
         sla_b, sp_b = _psmooth(log_a, pb)
         sla_h, sp_h = _psmooth(log_a, ph)
@@ -5439,7 +5589,7 @@ def _save_model_comparison_html(
         y_max = float(max(y.max(), pb.max(), ph.max())) * 1.05
 
         color_map  = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32",
-                  "test": "#7a3c8c", "all": "#4a6785"}
+                      "test": "#7a3c8c", "all": "#4a6785"}
         obs_colors = [color_map.get(str(l).lower(), "#4a6785") for l in labels]
 
         hover_b = [f"log(AADT):{log_a[i]:.3f}<br>Obs:{y[i]:.0f}<br>Benchmark:{pb[i]:.2f}<br>Split:{labels[i]}" for i in range(n)]
@@ -5571,19 +5721,19 @@ def _save_model_comparison_png(
         def _smooth_log(log_aadt, pred):
             """Return (log_aadt_fine, pred_fine) on log(AADT) linear axis."""
             try:
-            coeffs     = np.polyfit(log_aadt, pred, deg=3)
-            la_fine    = np.linspace(log_aadt.min(), log_aadt.max(), 200)
-            p_fine     = np.maximum(np.polyval(coeffs, la_fine), 0.0)
-            return la_fine, p_fine
+                coeffs     = np.polyfit(log_aadt, pred, deg=3)
+                la_fine    = np.linspace(log_aadt.min(), log_aadt.max(), 200)
+                p_fine     = np.maximum(np.polyval(coeffs, la_fine), 0.0)
+                return la_fine, p_fine
             except Exception:
-            si = np.argsort(log_aadt)
-            return log_aadt[si], pred[si]
+                si = np.argsort(log_aadt)
+                return log_aadt[si], pred[si]
 
         sla_b, sp_b = _smooth_log(log_a, pb)
         sla_h, sp_h = _smooth_log(log_a, ph)
 
         color_map = {"train": "#0a6c74", "val": "#d96f32", "validation": "#d96f32",
-                 "test": "#7a3c8c", "all": "#4a6785"}
+                     "test": "#7a3c8c", "all": "#4a6785"}
         obs_c = [color_map.get(str(l).lower(), "#4a6785") for l in split_labels]
 
         rb     = (pb - y) / np.maximum(y, 1.0)
@@ -5610,13 +5760,13 @@ def _save_model_comparison_png(
         ax_hr.legend(fontsize=7); ax_hr.grid(alpha=0.18)
 
         ax_br.scatter(log_a, rb, c=["#1f6bb5" if r > 0 else "#93c5e8" for r in rb],
-                  s=12, alpha=0.55)
+                      s=12, alpha=0.55)
         ax_br.axhline(0, color="#555", lw=1.2)
         ax_br.set_xlabel("log(AADT)"); ax_br.set_ylabel("(pred-obs)/max(obs,1)")
         ax_br.set_title("Benchmark residuals", fontsize=9); ax_br.grid(alpha=0.18)
 
         ax_hrr.scatter(log_a, rh, c=["#d96f32" if r > 0 else "#0a6c74" for r in rh],
-                   s=12, alpha=0.55)
+                       s=12, alpha=0.55)
         ax_hrr.axhline(0, color="#555", lw=1.2)
         ax_hrr.set_xlabel("log(AADT)"); ax_hrr.set_ylabel("(pred-obs)/max(obs,1)")
         ax_hrr.set_title("Hierarchical residuals", fontsize=9); ax_hrr.grid(alpha=0.18)
@@ -5692,12 +5842,12 @@ def _save_readable_coef_csv(
         pname = str(pname)
         if pname == "const":
             rows.append({"Component": "Core", "Variable": "Intercept",
-                     "Full Name": "Intercept",
-                     "Coefficient": round(float(coef), 5), "CMF": ""})
+                         "Full Name": "Intercept",
+                         "Coefficient": round(float(coef), 5), "CMF": ""})
         elif pname == "log_aadt":
             rows.append({"Component": "Core", "Variable": "log(AADT)",
-                     "Full Name": "log(AADT) Elasticity",
-                     "Coefficient": round(float(coef), 5), "CMF": ""})
+                         "Full Name": "log(AADT) Elasticity",
+                         "Coefficient": round(float(coef), 5), "CMF": ""})
         elif pname.startswith("upper::"):
             raw     = pname.replace("upper::", "")
             is_std  = raw.endswith("_Z")
@@ -5705,9 +5855,9 @@ def _save_readable_coef_csv(
             sd      = scaler_stats.get(base, (0.0, 1.0))[1]
             orig    = float(coef) / sd if is_std and sd > 0 else float(coef)
             rows.append({"Component": "Upper (AADT-independent)",
-                     "Variable": base, "Full Name": _label(base),
-                     "Coefficient": round(float(coef), 5),
-                     "CMF": round(float(np.exp(orig)), 4)})
+                         "Variable": base, "Full Name": _label(base),
+                         "Coefficient": round(float(coef), 5),
+                         "CMF": round(float(np.exp(orig)), 4)})
         elif pname.startswith("lower::") and pname.endswith("*log_aadt"):
             raw    = pname.replace("lower::", "").replace("*log_aadt", "")
             is_std = raw.endswith("_Z")
@@ -5715,9 +5865,9 @@ def _save_readable_coef_csv(
             sd     = scaler_stats.get(base, (0.0, 1.0))[1]
             orig   = float(coef) / sd if is_std and sd > 0 else float(coef)
             rows.append({"Component": "Lower (AADT interaction)",
-                     "Variable": base, "Full Name": _label(base),
-                     "Coefficient": round(float(coef), 5),
-                     "CMF": "varies with AADT"})
+                         "Variable": base, "Full Name": _label(base),
+                         "Coefficient": round(float(coef), 5),
+                         "CMF": "varies with AADT"})
 
     df = pd.DataFrame(rows)
     path.write_text(df.to_csv(index=False), encoding="utf-8")
@@ -5731,8 +5881,8 @@ def _save_readable_coef_csv(
         # Format numeric columns
         for c in cols:
             sub[c] = sub[c].apply(
-            lambda x: (f"{x:+.4f}" if isinstance(x, float) and np.isfinite(x)
-                       else str(x) if not (isinstance(x, float)) else str(x))
+                lambda x: (f"{x:+.4f}" if isinstance(x, float) and np.isfinite(x)
+                           else str(x) if not (isinstance(x, float)) else str(x))
             )
         widths = {c: max(len(c), sub[c].str.len().max()) for c in cols}
         header  = "| " + " | ".join(c.ljust(widths[c]) for c in cols) + " |"
@@ -5744,7 +5894,7 @@ def _save_readable_coef_csv(
         return "\n".join([header, divider] + data_rows)
 
     upper_df = df[df["Component"].str.startswith("Core") |
-              df["Component"].str.startswith("Upper")].copy()
+                  df["Component"].str.startswith("Upper")].copy()
     upper_df["CMF"] = upper_df["CMF"].apply(
         lambda x: f"{x:.4f}" if isinstance(x, float) else str(x)
     )
@@ -5778,18 +5928,18 @@ def main() -> None:
     parser.add_argument("--offset-col", default="OFFSET", help="Offset column name to use if available.")
     parser.add_argument("--disable-offset", action="store_true", help="Disable offset during fitting.")
     parser.add_argument("--family", choices=["nb", "poisson"], default="nb",
-                    help="Count family for final refit (default: nb).")
+                        help="Count family for final refit (default: nb).")
     parser.add_argument("--families", default=None,
-                    help="Comma-separated families to search over, or 'both'/'all' "
-                         "for nb+poisson. Overrides --family for the search phase. "
-                         "Example: --families both  or  --families nb,poisson")
+                        help="Comma-separated families to search over, or 'both'/'all' "
+                             "for nb+poisson. Overrides --family for the search phase. "
+                             "Example: --families both  or  --families nb,poisson")
 
     parser.add_argument("--train-frac", type=float, default=0.60, help="Training split fraction.")
     parser.add_argument("--val-frac", type=float, default=0.20, help="Validation split fraction.")
     parser.add_argument("--seed", type=int, default=17, help="Random seed.")
 
     parser.add_argument("--search-iter", type=int, default=300,
-                    help="Random search iterations (default 300 — more = better BIC exploration).")
+                        help="Random search iterations (default 300 — more = better BIC exploration).")
     parser.add_argument(
         "--search-method",
         choices=["random-sa", "harmony", "ga-adaptive"],
@@ -5801,9 +5951,9 @@ def main() -> None:
     parser.add_argument("--harmony-hmcr", type=float, default=0.90, help="Harmony memory consideration rate (HMCR).")
     parser.add_argument("--harmony-par", type=float, default=0.35, help="Harmony pitch adjustment rate (PAR).")
     parser.add_argument("--max-upper-terms", type=int, default=6,
-                    help="Max upper-level terms per candidate (default 6).")
+                        help="Max upper-level terms per candidate (default 6).")
     parser.add_argument("--max-lower-terms", type=int, default=4,
-                    help="Max lower-level terms per candidate (default 4).")
+                        help="Max lower-level terms per candidate (default 4).")
     parser.add_argument(
         "--candidate-profile",
         choices=["core", "expanded"],
@@ -6159,16 +6309,16 @@ def main() -> None:
             _lo = _parse_search_vars(_r.get("Lower Vars", ""))
             _fam = str(_r.get("Family", args.family))
             _fit_try = _fit_model(
-            df_train=df_trainval,
-            aadt_col=args.aadt_col,
-            y_col=args.y_col,
-            upper_vars=_up,
-            lower_vars=_lo,
-            family=_fam,
-            offset_col=offset_col,
+                df_train=df_trainval,
+                aadt_col=args.aadt_col,
+                y_col=args.y_col,
+                upper_vars=_up,
+                lower_vars=_lo,
+                family=_fam,
+                offset_col=offset_col,
             )
             if _fit_try is None:
-            continue
+                continue
 
             _pred_test_try = _predict(df_test_final, _fit_try)
             _rmse_try = float(_metrics(y_test_rescue, _pred_test_try)["rmse"])
@@ -6176,16 +6326,16 @@ def main() -> None:
             _pvinfo = _pvalue_penalty_stats(_fit_try, p_threshold=0.05)
             _bic_try = _bic_raw + 10.0 * _pvinfo["n_insig"] if np.isfinite(_bic_raw) else _bic_raw
             _rescue_pool.append(
-            {
-                "fit": _fit_try,
-                "rmse": _rmse_try,
-                "bic": _bic_try,
-                "bic_raw": _bic_raw,
-                "n_insig": _pvinfo["n_insig"],
-                "upper": _up,
-                "lower": _lo,
-                "family": _fam,
-            }
+                {
+                    "fit": _fit_try,
+                    "rmse": _rmse_try,
+                    "bic": _bic_try,
+                    "bic_raw": _bic_raw,
+                    "n_insig": _pvinfo["n_insig"],
+                    "upper": _up,
+                    "lower": _lo,
+                    "family": _fam,
+                }
             )
 
         _dom = [
@@ -6196,30 +6346,30 @@ def main() -> None:
         if _dom:
             _best_rescue = sorted(_dom, key=lambda r: (r["rmse"], r["bic"]))[0]
             if _best_rescue["rmse"] < _final_rmse_now:
-            final_fit = _best_rescue["fit"]
-            pred_trainval = _predict(df_trainval, final_fit)
-            pred_test = _predict(df_test_final, final_fit)
-            metrics_trainval = _metrics(y_trainval_rescue, pred_trainval)
-            metrics_test = _metrics(y_test_rescue, pred_test)
-            elasticity_trainval = _elasticity_stats(_aadt_elasticity(df_trainval, final_fit))
-            elasticity_test = _elasticity_stats(_aadt_elasticity(df_test_final, final_fit))
-            selected_upper_raw = sorted({name[:-2] if name.endswith("_Z") else name for name in final_fit.upper_vars})
-            selected_lower_raw = sorted({name[:-2] if name.endswith("_Z") else name for name in final_fit.lower_vars})
-            selected_raw = sorted(set(selected_upper_raw + selected_lower_raw))
-            coef_df = _coefficient_report(final_fit, scaler_trainval, binary_vars=binary_vars)
-            metrics_df = pd.DataFrame(
-                [
-                    {"Split": "train (selection fit)", **metrics_train},
-                    {"Split": "validation (selection fit)", **metrics_val},
-                    {"Split": "train+validation (final fit)", **metrics_trainval},
-                    {"Split": "test (held out)", **metrics_test},
-                ]
-            )
-            print(
-                "  Rescue selected benchmark-dominating spec: "
-                f"family={_best_rescue['family']}, "
-                f"BIC={_best_rescue['bic']:.2f}, Test RMSE={_best_rescue['rmse']:.4f}"
-            )
+                final_fit = _best_rescue["fit"]
+                pred_trainval = _predict(df_trainval, final_fit)
+                pred_test = _predict(df_test_final, final_fit)
+                metrics_trainval = _metrics(y_trainval_rescue, pred_trainval)
+                metrics_test = _metrics(y_test_rescue, pred_test)
+                elasticity_trainval = _elasticity_stats(_aadt_elasticity(df_trainval, final_fit))
+                elasticity_test = _elasticity_stats(_aadt_elasticity(df_test_final, final_fit))
+                selected_upper_raw = sorted({name[:-2] if name.endswith("_Z") else name for name in final_fit.upper_vars})
+                selected_lower_raw = sorted({name[:-2] if name.endswith("_Z") else name for name in final_fit.lower_vars})
+                selected_raw = sorted(set(selected_upper_raw + selected_lower_raw))
+                coef_df = _coefficient_report(final_fit, scaler_trainval, binary_vars=binary_vars)
+                metrics_df = pd.DataFrame(
+                    [
+                        {"Split": "train (selection fit)", **metrics_train},
+                        {"Split": "validation (selection fit)", **metrics_val},
+                        {"Split": "train+validation (final fit)", **metrics_trainval},
+                        {"Split": "test (held out)", **metrics_test},
+                    ]
+                )
+                print(
+                    "  Rescue selected benchmark-dominating spec: "
+                    f"family={_best_rescue['family']}, "
+                    f"BIC={_best_rescue['bic']:.2f}, Test RMSE={_best_rescue['rmse']:.4f}"
+                )
 
     bench_compare_df = pd.DataFrame([
         {
@@ -6414,49 +6564,49 @@ def main() -> None:
         print(f"  {'='*60}")
         for _rp_candidate in _rp_candidates_to_try:
             try:
-            _cand_upper = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.upper_vars})
-            _cand_lower = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.lower_vars})
-            _cont_upper = [v for v in _cand_upper if v not in binary_vars]
-            _n_avail = min(int(args.rp_max_random_terms), len(_cont_upper))
-            print(f"\n  [RP] Trying: upper={_cand_upper}, lower={_cand_lower}")
-            print(f"       Continuous upper vars available for random: {_cont_upper} ({_n_avail} max)")
-            # Try correlated random params first, then independent fallback
-            for _try_cor in [True, False]:
-                _rp = _jax_random_params_refit(
-                    df_trainval_raw=df_trainval_raw,
-                    best_upper_raw=_cand_upper,
-                    best_lower_raw=_cand_lower,
-                    y_col=args.y_col,
-                    aadt_col=args.aadt_col,
-                    offset_col=offset_col,
-                    scaler_stats=scaler_trainval,
-                    binary_vars=binary_vars,
-                    include_lower_interactions=bool(args.rp_include_lower_interactions),
-                    max_random_terms=int(args.rp_max_random_terms),
-                    rp_draws=int(args.rp_draws),
-                    try_correlated=_try_cor,
-                )
-                if _rp is not None:
-                    _mode = "correlated" if _try_cor else "independent"
-                    print(f"       [RP] {_mode:12s} OK: BIC={_rp.get('bic', float('nan')):.1f}, "
-                          f"LL={_rp.get('loglik', float('nan')):.2f}")
-                    break
-                else:
-                    _mode = "correlated" if _try_cor else "independent"
-                    print(f"       [RP] {_mode:12s} FAILED")
-            if _rp is None:
-                print(f"       [RP] All modes failed for this candidate")
-                continue
-            _rp_bic = _rp.get("bic", float("nan"))
-            if not np.isfinite(_rp_bic):
-                continue
-            if best_rp_result is None or _rp_bic < best_rp_bic:
-                best_rp_bic    = _rp_bic
-                best_rp_result = _rp
-                print(f"       [RP] *** NEW BEST RP BIC={best_rp_bic:.1f} ***")
+                _cand_upper = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.upper_vars})
+                _cand_lower = sorted({n[:-2] if n.endswith("_Z") else n for n in _rp_candidate.lower_vars})
+                _cont_upper = [v for v in _cand_upper if v not in binary_vars]
+                _n_avail = min(int(args.rp_max_random_terms), len(_cont_upper))
+                print(f"\n  [RP] Trying: upper={_cand_upper}, lower={_cand_lower}")
+                print(f"       Continuous upper vars available for random: {_cont_upper} ({_n_avail} max)")
+                # Try correlated random params first, then independent fallback
+                for _try_cor in [True, False]:
+                    _rp = _jax_random_params_refit(
+                        df_trainval_raw=df_trainval_raw,
+                        best_upper_raw=_cand_upper,
+                        best_lower_raw=_cand_lower,
+                        y_col=args.y_col,
+                        aadt_col=args.aadt_col,
+                        offset_col=offset_col,
+                        scaler_stats=scaler_trainval,
+                        binary_vars=binary_vars,
+                        include_lower_interactions=bool(args.rp_include_lower_interactions),
+                        max_random_terms=int(args.rp_max_random_terms),
+                        rp_draws=int(args.rp_draws),
+                        try_correlated=_try_cor,
+                    )
+                    if _rp is not None:
+                        _mode = "correlated" if _try_cor else "independent"
+                        print(f"       [RP] {_mode:12s} OK: BIC={_rp.get('bic', float('nan')):.1f}, "
+                              f"LL={_rp.get('loglik', float('nan')):.2f}")
+                        break
+                    else:
+                        _mode = "correlated" if _try_cor else "independent"
+                        print(f"       [RP] {_mode:12s} FAILED")
+                if _rp is None:
+                    print(f"       [RP] All modes failed for this candidate")
+                    continue
+                _rp_bic = _rp.get("bic", float("nan"))
+                if not np.isfinite(_rp_bic):
+                    continue
+                if best_rp_result is None or _rp_bic < best_rp_bic:
+                    best_rp_bic    = _rp_bic
+                    best_rp_result = _rp
+                    print(f"       [RP] *** NEW BEST RP BIC={best_rp_bic:.1f} ***")
             except Exception as _rp_exc:
-            print(f"       [RP] Exception: {_rp_exc}")
-            continue
+                print(f"       [RP] Exception: {_rp_exc}")
+                continue
 
         jax_result = best_rp_result
 
@@ -6466,19 +6616,19 @@ def main() -> None:
             print("  [RP] Sweep yielded no result — forcing single-random-var fallback ...")
             _cont_upper = [v for v in selected_upper_raw if v not in binary_vars]
             if _cont_upper:
-            jax_result = _jax_random_params_refit(
-                df_trainval_raw=df_trainval_raw,
-                best_upper_raw=_cont_upper[:1],   # simplest: one random var
-                best_lower_raw=selected_lower_raw,
-                y_col=args.y_col,
-                aadt_col=args.aadt_col,
-                offset_col=offset_col,
-                scaler_stats=scaler_trainval,
-                binary_vars=binary_vars,
-                include_lower_interactions=bool(args.rp_include_lower_interactions),
-                max_random_terms=max(1, int(args.rp_max_random_terms)),
-                rp_draws=int(args.rp_draws),
-            )
+                jax_result = _jax_random_params_refit(
+                    df_trainval_raw=df_trainval_raw,
+                    best_upper_raw=_cont_upper[:1],   # simplest: one random var
+                    best_lower_raw=selected_lower_raw,
+                    y_col=args.y_col,
+                    aadt_col=args.aadt_col,
+                    offset_col=offset_col,
+                    scaler_stats=scaler_trainval,
+                    binary_vars=binary_vars,
+                    include_lower_interactions=bool(args.rp_include_lower_interactions),
+                    max_random_terms=max(1, int(args.rp_max_random_terms)),
+                    rp_draws=int(args.rp_draws),
+                )
     else:
         # ── Mode B: reuse the search's RP winner (--no-rp-sweep) ─────────
         # The selected spec was refit fresh (best_fit_train), so match it against
@@ -6500,11 +6650,11 @@ def main() -> None:
         for _sf in _search_fits:
             _rpr = getattr(_sf, "_rp_result", None)
             if _rpr is None:
-            continue
+                continue
             if (sorted(_sf.upper_vars), sorted(_sf.lower_vars), str(_sf.family)) == (
-            _sel_upper_m, _sel_lower_m, _sel_fam_m,
+                _sel_upper_m, _sel_lower_m, _sel_fam_m,
             ):
-            _rp_pool.append((getattr(_sf, "_rp_bic", float("nan")), _rpr))
+                _rp_pool.append((getattr(_sf, "_rp_bic", float("nan")), _rpr))
         if _rp_pool:
             _rp_pool.sort(key=lambda z: (np.isfinite(z[0]), z[0]))
             jax_result = _rp_pool[0][1]
@@ -6512,35 +6662,35 @@ def main() -> None:
             print(f"  [RP] Reused in-search RP winner: BIC={best_rp_bic:.1f}")
         else:
             print("  [RP] No in-search RP result matched the selected spec — "
-              "single default-distribution refit on the selected spec ...")
+                  "single default-distribution refit on the selected spec ...")
             _cont_upper = [v for v in selected_upper_raw if v not in binary_vars]
             jax_result = None
             if _cont_upper:
-            for _try_cor in [True, False]:
-                _rp = _jax_random_params_refit(
-                    df_trainval_raw=df_trainval_raw,
-                    best_upper_raw=selected_upper_raw,
-                    best_lower_raw=selected_lower_raw,
-                    y_col=args.y_col,
-                    aadt_col=args.aadt_col,
-                    offset_col=offset_col,
-                    scaler_stats=scaler_trainval,
-                    binary_vars=binary_vars,
-                    include_lower_interactions=bool(args.rp_include_lower_interactions),
-                    max_random_terms=int(args.rp_max_random_terms),
-                    rp_draws=int(args.rp_draws),
-                    try_correlated=_try_cor,
-                )
-                if _rp is None:
-                    continue
-                if jax_result is None or (np.isfinite(_rp.get("bic", float("nan")))
-                                          and _rp["bic"] < jax_result["bic"]):
-                    jax_result = _rp
-            if jax_result is not None:
-                best_rp_bic = float(jax_result.get("bic", float("nan")))
-                print(f"  [RP] Fallback refit OK: BIC={best_rp_bic:.1f}")
+                for _try_cor in [True, False]:
+                    _rp = _jax_random_params_refit(
+                        df_trainval_raw=df_trainval_raw,
+                        best_upper_raw=selected_upper_raw,
+                        best_lower_raw=selected_lower_raw,
+                        y_col=args.y_col,
+                        aadt_col=args.aadt_col,
+                        offset_col=offset_col,
+                        scaler_stats=scaler_trainval,
+                        binary_vars=binary_vars,
+                        include_lower_interactions=bool(args.rp_include_lower_interactions),
+                        max_random_terms=int(args.rp_max_random_terms),
+                        rp_draws=int(args.rp_draws),
+                        try_correlated=_try_cor,
+                    )
+                    if _rp is None:
+                        continue
+                    if jax_result is None or (np.isfinite(_rp.get("bic", float("nan")))
+                                              and _rp["bic"] < jax_result["bic"]):
+                        jax_result = _rp
+                if jax_result is not None:
+                    best_rp_bic = float(jax_result.get("bic", float("nan")))
+                    print(f"  [RP] Fallback refit OK: BIC={best_rp_bic:.1f}")
             if jax_result is None:
-            print("  [RP] Fallback failed — no random-parameters result.")
+                print("  [RP] Fallback failed — no random-parameters result.")
 
     if jax_result is None:
         print("  [WARNING] Random-parameters model could not be fitted — "
@@ -6559,8 +6709,8 @@ def main() -> None:
             print("="*72)
             print(coef_str)
             if corr_str:
-            print()
-            print(corr_str)
+                print()
+                print(corr_str)
             print()
             print("  COLUMN GUIDE:")
             print("    Fixed          — same coefficient for every road segment")
@@ -6571,37 +6721,37 @@ def main() -> None:
             print("="*72 + "\n")
 
             rp_txt = (
-            f"Random-parameters NB2  |  LL={rp_ll:.2f}  BIC={rp_bic:.2f}\n\n"
-            "COEFFICIENT TABLE\n"
-            "  Fixed:          same value for every segment\n"
-            "  Random-Ind mean: population average (mean of random distribution)\n"
-            "  Random-Ind sd:   standard deviation of site heterogeneity\n"
-            "  Std.Err / z / p: significance test for each parameter\n\n"
-            + coef_str
-            + ("\n\n" + corr_str if corr_str else "")
-            + "\n\nINTERPRETATION\n"
-            "  A large SD on a variable means its effect varies substantially\n"
-            "  across road segments — some sites respond much more (or less)\n"
-            "  to that characteristic than the population average.\n"
-            "  The correlation matrix shows whether two variables' effects\n"
-            "  tend to move together across sites."
+                f"Random-parameters NB2  |  LL={rp_ll:.2f}  BIC={rp_bic:.2f}\n\n"
+                "COEFFICIENT TABLE\n"
+                "  Fixed:          same value for every segment\n"
+                "  Random-Ind mean: population average (mean of random distribution)\n"
+                "  Random-Ind sd:   standard deviation of site heterogeneity\n"
+                "  Std.Err / z / p: significance test for each parameter\n\n"
+                + coef_str
+                + ("\n\n" + corr_str if corr_str else "")
+                + "\n\nINTERPRETATION\n"
+                "  A large SD on a variable means its effect varies substantially\n"
+                "  across road segments — some sites respond much more (or less)\n"
+                "  to that characteristic than the population average.\n"
+                "  The correlation matrix shows whether two variables' effects\n"
+                "  tend to move together across sites."
             )
 
             (output_dir / "random_params_note.md").write_text(rp_txt, encoding="utf-8")
             (output_dir / "random_params_summary.json").write_text(
-            json.dumps({"summary": rp_txt, "loglik": rp_ll, "bic": rp_bic}, indent=2),
-            encoding="utf-8",
+                json.dumps({"summary": rp_txt, "loglik": rp_ll, "bic": rp_bic}, indent=2),
+                encoding="utf-8",
             )
             print("  random_params_summary.json written.")
 
             # Use random-params predictions for the AADT obs/pred plot
             rp_fit = jax_result.get("fit")
             if rp_fit is not None:
-            rp_preds = np.asarray(rp_fit.get("predictions", [])).squeeze()
-            if rp_preds.shape == (len(df_trainval_raw),):
-                pred_all_rp_tv = rp_preds
-                # For full-dataset predictions, fall back to fixed-effects
-                # (random-params builder only covers trainval)
+                rp_preds = np.asarray(rp_fit.get("predictions", [])).squeeze()
+                if rp_preds.shape == (len(df_trainval_raw),):
+                    pred_all_rp_tv = rp_preds
+                    # For full-dataset predictions, fall back to fixed-effects
+                    # (random-params builder only covers trainval)
         except Exception as exc:
             print(f"[WARNING] Could not write random_params_summary.json: {exc}")
     else:
@@ -6632,7 +6782,7 @@ def main() -> None:
     # Reconstruct in-order history from the sorted df by sorting on Iteration
     # Pass iteration-ordered history so the convergence trace is meaningful
     _save_convergence_html(output_dir / "search_convergence.html",
-                       search_history_ordered, dataset_label)
+                           search_history_ordered, dataset_label)
     _save_convergence_png(output_dir / "search_convergence.png", search_history_ordered, dataset_label)
     print("  search_convergence.html / .png written.")
 
@@ -6710,65 +6860,65 @@ def main() -> None:
             rp_md = _to_markdown(rp_df)
             corr_str = jax_result.get("corr_matrix_str", "")
             rp_full  = (
-            f"LL = {jax_result.get('loglik', float('nan')):.2f}  "
-            f"BIC = {jax_result.get('bic', float('nan')):.2f}\n\n"
-            + rp_md
-            + ("\n\n" + corr_str if corr_str else "")
-            + "\n\n**Fixed** = same for all segments  "
-            "**Random-Ind** = Mean +/- SD across segments  "
-            "**Random-Cor** = correlated (see matrix)"
+                f"LL = {jax_result.get('loglik', float('nan')):.2f}  "
+                f"BIC = {jax_result.get('bic', float('nan')):.2f}\n\n"
+                + rp_md
+                + ("\n\n" + corr_str if corr_str else "")
+                + "\n\n**Fixed** = same for all segments  "
+                "**Random-Ind** = Mean +/- SD across segments  "
+                "**Random-Cor** = correlated (see matrix)"
             )
             (output_dir / "random_params_coef_table.md").write_text(
-            rp_full, encoding="utf-8"
+                rp_full, encoding="utf-8"
             )
 
             # PPTX-friendly compact table: no correlation matrix, fewer rows/columns.
             _rp_pptx = rp_df.copy()
             keep_cols = [c for c in ["Parameter", "Type", "Mean", "SD"] if c in _rp_pptx.columns]
             if keep_cols:
-            _rp_pptx = _rp_pptx[keep_cols].copy()
+                _rp_pptx = _rp_pptx[keep_cols].copy()
             if len(_rp_pptx) > 14:
-            _rp_pptx = _rp_pptx.head(14).copy()
+                _rp_pptx = _rp_pptx.head(14).copy()
             _rp_pptx_md = _to_markdown(_rp_pptx)
             _rp_pptx_note = (
-            f"LL = {jax_result.get('loglik', float('nan')):.2f}  "
-            f"BIC = {jax_result.get('bic', float('nan')):.2f}\n\n"
-            + _rp_pptx_md
-            + "\n\nTop rows shown for slide readability; full table remains in random_params_coef_table.md"
+                f"LL = {jax_result.get('loglik', float('nan')):.2f}  "
+                f"BIC = {jax_result.get('bic', float('nan')):.2f}\n\n"
+                + _rp_pptx_md
+                + "\n\nTop rows shown for slide readability; full table remains in random_params_coef_table.md"
             )
             (output_dir / "random_params_coef_table_pptx.md").write_text(
-            _rp_pptx_note, encoding="utf-8"
+                _rp_pptx_note, encoding="utf-8"
             )
 
             # Package-style random-parameter lines: one random term per line.
             _rp_lines: list[str] = []
             _rp_lines.append(
-            f"Random-Parameters NB2 | LL={jax_result.get('loglik', float('nan')):.2f} | BIC={jax_result.get('bic', float('nan')):.2f}"
+                f"Random-Parameters NB2 | LL={jax_result.get('loglik', float('nan')):.2f} | BIC={jax_result.get('bic', float('nan')):.2f}"
             )
             _rp_lines.append("")
             _rp_lines.append("Random parameters (separate lines):")
 
             _rp_only = rp_df[rp_df["Type"].astype(str).str.lower().str.startswith("random")].copy() if "Type" in rp_df.columns else pd.DataFrame()
             if _rp_only.empty:
-            _rp_lines.append("- (none)")
+                _rp_lines.append("- (none)")
             else:
-            for _, _r in _rp_only.iterrows():
-                _pname = str(_r.get("Parameter", "")).strip()
-                _ptype = str(_r.get("Type", "")).strip()
-                _mean = _r.get("Mean", np.nan)
-                _sd = _r.get("SD", np.nan)
-                _mean_txt = f"{float(_mean):.5f}" if pd.notna(_mean) else "nan"
-                _sd_txt = f"{float(_sd):.5f}" if pd.notna(_sd) else "nan"
-                _rp_lines.append(f"- {_pname}: type={_ptype}, mean={_mean_txt}, sd={_sd_txt}")
+                for _, _r in _rp_only.iterrows():
+                    _pname = str(_r.get("Parameter", "")).strip()
+                    _ptype = str(_r.get("Type", "")).strip()
+                    _mean = _r.get("Mean", np.nan)
+                    _sd = _r.get("SD", np.nan)
+                    _mean_txt = f"{float(_mean):.5f}" if pd.notna(_mean) else "nan"
+                    _sd_txt = f"{float(_sd):.5f}" if pd.notna(_sd) else "nan"
+                    _rp_lines.append(f"- {_pname}: type={_ptype}, mean={_mean_txt}, sd={_sd_txt}")
 
             _corr = str(jax_result.get("corr_matrix_str", "")).strip()
             if _corr:
-            _rp_lines.append("")
-            _rp_lines.append("Correlated random-effects matrix:")
-            _rp_lines.append(_corr)
+                _rp_lines.append("")
+                _rp_lines.append("Correlated random-effects matrix:")
+                _rp_lines.append(_corr)
 
             (output_dir / "random_params_separate_lines.md").write_text(
-            "\n".join(_rp_lines), encoding="utf-8"
+                "\n".join(_rp_lines), encoding="utf-8"
             )
 
     # Benchmark comparison CSV + markdown include
@@ -6780,7 +6930,7 @@ def main() -> None:
         header  = "| " + " | ".join(c.ljust(widths[c]) for c in cols) + " |"
         divider = "| " + " | ".join("-" * widths[c] for c in cols) + " |"
         rows    = ["| " + " | ".join(str(r[c]).ljust(widths[c]) for c in cols) + " |"
-               for _, r in df.iterrows()]
+                   for _, r in df.iterrows()]
         return "\n".join([header, divider] + rows)
     (output_dir / "benchmark_comparison.md").write_text(
         _pipe(bench_compare_df), encoding="utf-8"
@@ -6830,23 +6980,23 @@ def main() -> None:
     if "Phase" in search_history_ordered.columns:
         for _phase in ["sa", "harmony", "ga"]:
             _phase_df = search_history_ordered[
-            search_history_ordered["Phase"].astype(str).str.lower().eq(_phase)
+                search_history_ordered["Phase"].astype(str).str.lower().eq(_phase)
             ].copy()
             if _phase_df.empty:
-            continue
+                continue
             _phase_df = _phase_df.sort_values(["BIC", "Val RMSE"], ascending=[True, True])
             _best = _phase_df.iloc[0]
             phase_compare_rows.append(
-            {
-                "Phase": _phase,
-                "Phase Label": _phase_label_map.get(_phase, _phase.title()),
-                "Iteration": int(_best.get("Iteration", -1)),
-                "Family": str(_best.get("Family", "")),
-                "BIC": float(_best.get("BIC", np.nan)),
-                "Val RMSE": float(_best.get("Val RMSE", np.nan)),
-                "Upper Vars": str(_best.get("Upper Vars", "(none)")),
-                "Lower Vars": str(_best.get("Lower Vars", "(none)")),
-            }
+                {
+                    "Phase": _phase,
+                    "Phase Label": _phase_label_map.get(_phase, _phase.title()),
+                    "Iteration": int(_best.get("Iteration", -1)),
+                    "Family": str(_best.get("Family", "")),
+                    "BIC": float(_best.get("BIC", np.nan)),
+                    "Val RMSE": float(_best.get("Val RMSE", np.nan)),
+                    "Upper Vars": str(_best.get("Upper Vars", "(none)")),
+                    "Lower Vars": str(_best.get("Lower Vars", "(none)")),
+                }
             )
 
     phase_compare_df = pd.DataFrame(phase_compare_rows)
@@ -6854,22 +7004,22 @@ def main() -> None:
         # Fallback for runs where only one refinement strategy is present.
         for _phase in ["random", phase_ref]:
             _phase_df = search_history_ordered[
-            search_history_ordered["Phase"].astype(str).str.lower().eq(_phase)
+                search_history_ordered["Phase"].astype(str).str.lower().eq(_phase)
             ].copy()
             if _phase_df.empty:
-            continue
+                continue
             _best = _phase_df.sort_values(["BIC", "Val RMSE"], ascending=[True, True]).iloc[0]
             phase_compare_rows.append(
-            {
-                "Phase": _phase,
-                "Phase Label": _phase_label_map.get(_phase, _phase.title()),
-                "Iteration": int(_best.get("Iteration", -1)),
-                "Family": str(_best.get("Family", "")),
-                "BIC": float(_best.get("BIC", np.nan)),
-                "Val RMSE": float(_best.get("Val RMSE", np.nan)),
-                "Upper Vars": str(_best.get("Upper Vars", "(none)")),
-                "Lower Vars": str(_best.get("Lower Vars", "(none)")),
-            }
+                {
+                    "Phase": _phase,
+                    "Phase Label": _phase_label_map.get(_phase, _phase.title()),
+                    "Iteration": int(_best.get("Iteration", -1)),
+                    "Family": str(_best.get("Family", "")),
+                    "BIC": float(_best.get("BIC", np.nan)),
+                    "Val RMSE": float(_best.get("Val RMSE", np.nan)),
+                    "Upper Vars": str(_best.get("Upper Vars", "(none)")),
+                    "Lower Vars": str(_best.get("Lower Vars", "(none)")),
+                }
             )
         phase_compare_df = pd.DataFrame(phase_compare_rows)
 
@@ -6904,10 +7054,10 @@ def main() -> None:
         _phase_rows: list[dict[str, Any]] = []
         for _phase in ["sa", "harmony", "ga"]:
             _dfp = search_history_ordered[
-            search_history_ordered["Phase"].astype(str).str.lower().eq(_phase)
+                search_history_ordered["Phase"].astype(str).str.lower().eq(_phase)
             ].copy()
             if _dfp.empty:
-            continue
+                continue
             _bic = pd.to_numeric(_dfp["BIC"], errors="coerce")
             _rmse = pd.to_numeric(_dfp["Val RMSE"], errors="coerce")
             _best_bic = float(np.nanmin(_bic.to_numpy(dtype=float)))
@@ -6915,27 +7065,27 @@ def main() -> None:
             _thr = _best_bic * 1.005
             _within = _dfp[_bic <= _thr]
             if _within.empty:
-            _first_within = np.nan
+                _first_within = np.nan
             else:
-            _first_within = float(pd.to_numeric(_within["Iteration"], errors="coerce").min())
+                _first_within = float(pd.to_numeric(_within["Iteration"], errors="coerce").min())
             _phase_rows.append(
-            {
-                "Search Phase": _phase_label_map.get(_phase, _phase.title()),
-                "Candidates evaluated": int(len(_dfp)),
-                "Best BIC": _best_bic,
-                "Best Val RMSE": _best_rmse,
-                "Median BIC": float(np.nanmedian(_bic.to_numpy(dtype=float))),
-                "Median Val RMSE": float(np.nanmedian(_rmse.to_numpy(dtype=float))),
-                "First iter within 0.5% of best BIC": _first_within,
-            }
+                {
+                    "Search Phase": _phase_label_map.get(_phase, _phase.title()),
+                    "Candidates evaluated": int(len(_dfp)),
+                    "Best BIC": _best_bic,
+                    "Best Val RMSE": _best_rmse,
+                    "Median BIC": float(np.nanmedian(_bic.to_numpy(dtype=float))),
+                    "Median Val RMSE": float(np.nanmedian(_rmse.to_numpy(dtype=float))),
+                    "First iter within 0.5% of best BIC": _first_within,
+                }
             )
         _phase_diff_df = pd.DataFrame(_phase_rows)
         if not _phase_diff_df.empty:
             (output_dir / "search_phase_differences.csv").write_text(
-            _phase_diff_df.to_csv(index=False), encoding="utf-8"
+                _phase_diff_df.to_csv(index=False), encoding="utf-8"
             )
             (output_dir / "search_phase_differences.md").write_text(
-            _to_markdown(_phase_diff_df), encoding="utf-8"
+                _to_markdown(_phase_diff_df), encoding="utf-8"
             )
 
     metric_scope_lines = [
@@ -7046,15 +7196,15 @@ def main() -> None:
         if keep_cols:
             coef_compare_pptx = coef_compare_pptx[keep_cols]
             coef_compare_pptx = coef_compare_pptx.rename(
-            columns={
-                "Literature benchmark coefficient": "Benchmark coef",
-                "Proposed fixed coefficient": "Proposed fixed",
-                "Proposed random mean": "Random mean",
-                "Proposed random sd": "Random SD",
-            }
+                columns={
+                    "Literature benchmark coefficient": "Benchmark coef",
+                    "Proposed fixed coefficient": "Proposed fixed",
+                    "Proposed random mean": "Random mean",
+                    "Proposed random sd": "Random SD",
+                }
             )
             (output_dir / "literature_vs_proposed_coefficients_pptx.md").write_text(
-            _to_markdown(coef_compare_pptx), encoding="utf-8"
+                _to_markdown(coef_compare_pptx), encoding="utf-8"
             )
 
         # Safety interpretation summary for slides: benchmark vs proposed fixed terms.
@@ -7067,45 +7217,45 @@ def main() -> None:
             _cmp = _cmp[np.isfinite(_cmp["_p"])].copy()
 
             def _effect_text(v: float) -> str:
-            if not np.isfinite(v):
-                return "not estimated"
-            if v > 0:
-                return "higher value linked with higher crashes"
-            if v < 0:
-                return "higher value linked with lower crashes"
-            return "near-zero net effect"
+                if not np.isfinite(v):
+                    return "not estimated"
+                if v > 0:
+                    return "higher value linked with higher crashes"
+                if v < 0:
+                    return "higher value linked with lower crashes"
+                return "near-zero net effect"
 
             def _delta_text(b: float, p: float) -> str:
-            if np.isfinite(b):
-                if np.sign(b) != 0 and np.sign(p) != 0 and np.sign(b) != np.sign(p):
-                    return "direction flips vs benchmark"
-                if abs(p) > abs(b):
-                    return "stronger than benchmark"
-                if abs(p) < abs(b):
-                    return "weaker than benchmark"
-            return "new or benchmark-missing term"
+                if np.isfinite(b):
+                    if np.sign(b) != 0 and np.sign(p) != 0 and np.sign(b) != np.sign(p):
+                        return "direction flips vs benchmark"
+                    if abs(p) > abs(b):
+                        return "stronger than benchmark"
+                    if abs(p) < abs(b):
+                        return "weaker than benchmark"
+                return "new or benchmark-missing term"
 
             _cmp["_importance"] = _cmp["_p"].abs()
             _cmp = _cmp.sort_values("_importance", ascending=False)
             _cmp = _cmp.head(8).copy()
             _cmp["Safety implication"] = [
-            f"{_effect_text(float(p))}; {_delta_text(float(b), float(p)) if np.isfinite(b) else 'new or benchmark-missing term'}"
-            for b, p in zip(_cmp["_b"], _cmp["_p"])
+                f"{_effect_text(float(p))}; {_delta_text(float(b), float(p)) if np.isfinite(b) else 'new or benchmark-missing term'}"
+                for b, p in zip(_cmp["_b"], _cmp["_p"])
             ]
 
             _show = pd.DataFrame(
-            {
-                "Parameter": _cmp.get("Parameter", ""),
-                "Benchmark coef": _cmp["_b"],
-                "Proposed coef": _cmp["_p"],
-                "Safety implication": _cmp["Safety implication"],
-            }
+                {
+                    "Parameter": _cmp.get("Parameter", ""),
+                    "Benchmark coef": _cmp["_b"],
+                    "Proposed coef": _cmp["_p"],
+                    "Safety implication": _cmp["Safety implication"],
+                }
             )
             (output_dir / "safety_implications.csv").write_text(
-            _show.to_csv(index=False), encoding="utf-8"
+                _show.to_csv(index=False), encoding="utf-8"
             )
             (output_dir / "safety_implications.md").write_text(
-            _to_markdown(_show), encoding="utf-8"
+                _to_markdown(_show), encoding="utf-8"
             )
 
     literature_ref_lines = [
@@ -7143,17 +7293,17 @@ def main() -> None:
 
     # ── Human-readable model summary printed to console and saved ──────────
     _print_readable_model(final_fit, scaler_trainval, binary_vars,
-                      output_dir / "model_summary_readable.txt")
+                          output_dir / "model_summary_readable.txt")
 
     # Save benchmark Metacount coefficients to file (model already fit above).
     if benchmark_mc is not None:
         bm_df = benchmark_mc.get("coef_df", pd.DataFrame())
         if isinstance(bm_df, pd.DataFrame) and not bm_df.empty:
             (output_dir / "benchmark_metacount_coefficients.csv").write_text(
-            bm_df.to_csv(index=False), encoding="utf-8"
+                bm_df.to_csv(index=False), encoding="utf-8"
             )
             (output_dir / "benchmark_metacount_coefficients.md").write_text(
-            _to_markdown(bm_df), encoding="utf-8"
+                _to_markdown(bm_df), encoding="utf-8"
             )
         (output_dir / "benchmark_metacount_summary.md").write_text(
             str(benchmark_mc.get("summary_md", "")), encoding="utf-8"

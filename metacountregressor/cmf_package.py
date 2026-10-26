@@ -138,7 +138,7 @@ class CMFExperimentBuilder:
             R=final_R,
         )
 
-        result, y_jax, AADT_jax, baseline_jax, locals_jax, draws = fit_result
+        result, y_jax, AADT_jax, baseline_jax, locals_jax, draws, std_info, offset_jax = fit_result
         se, cov = api["compute_se"](
             result,
             y_jax,
@@ -150,6 +150,7 @@ class CMFExperimentBuilder:
             draws,
             R=final_R,
             model=search_result.model,
+            offset=offset_jax,
         )
         summary = api["build_summary_table"](
             result,

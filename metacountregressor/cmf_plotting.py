@@ -17,7 +17,20 @@ def _compute_tight_axis_window(values, objective="bic", padding=0.08):
     values = values[np.isfinite(values)]
     if len(values) == 0:
         return None
-    v_min, v_max = float(np.min(values)), float(np.max(values))
+    # Use a robust window: a handful of failed/penalised fits can otherwise
+    # stretch the axis by orders of magnitude and flatten the trace that the
+    # plot exists to show.  Q1/Q3 +/- 3*IQR keeps genuine candidates and drops
+    # only gross outliers.
+    if len(values) >= 20:
+        q1, q3 = (float(x) for x in np.percentile(values, [25, 75]))
+        iqr = q3 - q1
+        if iqr > 0:
+            v_min = max(float(np.min(values)), q1 - 3.0 * iqr)
+            v_max = min(float(np.max(values)), q3 + 3.0 * iqr)
+        else:
+            v_min, v_max = float(np.min(values)), float(np.max(values))
+    else:
+        v_min, v_max = float(np.min(values)), float(np.max(values))
     span = v_max - v_min
     if span <= 0:
         return None
@@ -32,14 +45,26 @@ def plot_cmf_search_convergence(
     history_csv: str,
     output_path: Optional[str] = None,
     dataset_label: str = "Ex16-3 Washington",
+    selected_iteration: Optional[int] = None,
 ):
     df = pd.read_csv(history_csv)
-    n = len(df)
-    iters = list(range(1, n + 1))
 
     if "BIC" not in df.columns:
         print(f"  [skip] BIC column not in {history_csv}")
         return None
+
+    # Order chronologically.  Archived histories are sometimes written sorted
+    # by objective; a row-index x-axis then makes the "running min" flat from
+    # iteration 1 (the first row is already the global best), which is a
+    # meaningless convergence trace.  Prefer the logged Iteration column.
+    if "Iteration" in df.columns:
+        df = df.assign(_iter=pd.to_numeric(df["Iteration"], errors="coerce"))
+        df = df.sort_values("_iter", kind="mergesort").reset_index(drop=True)
+    else:
+        df = df.reset_index(drop=True)
+    n = len(df)
+    iters = (df["_iter"].tolist() if "_iter" in df.columns
+             else list(range(1, n + 1)))
 
     bic_vals = df["BIC"].tolist()
 
@@ -67,6 +92,22 @@ def plot_cmf_search_convergence(
         bic_window = _compute_tight_axis_window(bic_vals, objective="bic")
         ax1.scatter(iters, bic_vals, c=colors, s=10, alpha=0.55, zorder=3)
         ax1.plot(iters, run_min_bic, color="#0a6c74", lw=2.0, label="Running min")
+        _mark_i = None
+        _mark_lbl = ""
+        if selected_iteration is not None:
+            _it = np.asarray(iters, dtype=float)
+            _mark_i = int(np.argmin(np.abs(_it - float(selected_iteration))))
+            _mark_lbl = "Selected model"
+        else:
+            try:
+                _mark_i = int(np.nanargmin(np.asarray(bic_vals, dtype=float)))
+                _mark_lbl = "Best BIC"
+            except (ValueError, TypeError):
+                _mark_i = None
+        if _mark_i is not None:
+            ax1.axvline(iters[_mark_i], color="#d96f32", ls="--", lw=1.1, alpha=0.8)
+            ax1.scatter([iters[_mark_i]], [bic_vals[_mark_i]], s=55, marker="*",
+                        color="#d96f32", zorder=6, label=_mark_lbl)
         ax1.set_title("BIC over Iterations", fontsize=10, fontweight="bold")
         ax1.set_xlabel("Iteration")
         ax1.set_ylabel("BIC")
@@ -122,6 +163,13 @@ def plot_cmf_search_convergence(
         ax3.set_title("Pareto Front: BIC vs Val RMSE", fontsize=10, fontweight="bold")
         ax3.set_xlabel("BIC (lower ← better)")
         ax3.set_ylabel("Val RMSE (lower ← better)")
+        if len(bic_feas) > 0:
+            _bw = _compute_tight_axis_window(bic_feas, objective="bic")
+            _rw = _compute_tight_axis_window(rmse_feas, objective="rmse")
+            if _bw is not None:
+                ax3.set_xlim(*_bw)
+            if _rw is not None:
+                ax3.set_ylim(*_rw)
         ax3.legend(fontsize=7, loc="upper right")
         ax3.grid(alpha=0.15)
 
@@ -130,6 +178,12 @@ def plot_cmf_search_convergence(
         fig, ax1 = plt.subplots(1, 1, figsize=(10, 4.5), dpi=150)
         ax1.scatter(iters, bic_vals, c=colors, s=22, alpha=0.65, zorder=3)
         ax1.plot(iters, run_min_bic, color="#0a6c74", lw=2.5, label="Running min")
+        if selected_iteration is not None:
+            _it = np.asarray(iters, dtype=float)
+            _mi = int(np.argmin(np.abs(_it - float(selected_iteration))))
+            ax1.axvline(iters[_mi], color="#d96f32", ls="--", lw=1.1, alpha=0.8)
+            ax1.scatter([iters[_mi]], [bic_vals[_mi]], s=55, marker="*",
+                        color="#d96f32", zorder=6, label="Selected model")
         ax1.set_title(f"{dataset_label} \u2014 Search Convergence", fontsize=11, fontweight="bold")
         ax1.set_xlabel("Iteration")
         ax1.set_ylabel("BIC")
