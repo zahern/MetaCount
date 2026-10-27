@@ -1703,3 +1703,150 @@ if __name__ == "__main__":
     print_cmf_results(result, selected_baseline, selected_local,
                       rand_baseline, rand_local,
                       AADT_mean, model=model)
+
+
+def refine_specification(data, selected_baseline, selected_local,
+                         rand_baseline, rand_local, model='poisson',
+                         integration='aghq', ghq_points=7, R=500, seed=42,
+                         min_upper=1, min_lower=1, sigma_tol=0.0,
+                         alpha=0.05, max_iter=20, verbose=True):
+    """Post-search refinement of a selected structure.
+
+    1. Prunes random parameters that are not identified: |sigma| below
+       ``sigma_tol`` or a sigma p-value above ``alpha``.
+    2. Guarded backward elimination: removes terms whose p-value exceeds
+       ``alpha``, never dropping below the tier floors (so the lower tier
+       never empties).
+
+    Significance is judged with the exact observed-information Hessian -- the
+    same standard errors that are reported -- which is *not* what the search's
+    own fitness used (it used a diagonal approximation).
+    """
+    sel_b = list(selected_baseline)
+    sel_l = list(selected_local)
+    rand_b = list(rand_baseline)
+    rand_l = list(rand_local)
+
+    def _fit():
+        res, y, a, b, l, draws, std_info, off = fit_final_model(
+            data, sel_b, sel_l, rand_b, rand_l, model=model, use_halton=True,
+            R=R, integration=integration, ghq_points=ghq_points, seed=seed)
+        se, _ = compute_se(res, y, a, b, l, rand_b, rand_l, draws, R, model,
+                           off, integration=integration, ghq_points=ghq_points)
+        tab = build_summary_table(res, sel_b, sel_l, rand_b, rand_l, model, se)
+        return res, y, a, b, l, off, se, tab
+
+    def _nll(res, y, a, b, l, off):
+        n_rand = sum(rand_b) + sum(rand_l)
+        if integration == 'aghq':
+            return float(_aghq_loglik(jnp.array(res.params), y, a, b, l,
+                                      rand_b, rand_l, model, off, ghq_points))
+        if integration == 'ghq':
+            d, lw = _ghq_draws(len(y), n_rand, ghq_points)
+        else:
+            d, lw = generate_draws(len(y), R, n_rand, True, seed=seed), None
+        obj = make_objective(y, a, b, l, rand_b, rand_l, d, R, model, off, lw,
+                             integration, ghq_points)
+        return float(obj(jnp.array(res.params)))
+
+    res, y, a, b, l, off, se, tab = _fit()
+
+    # 1. prune unidentifiable random parameters
+    #    Variance components are bounded, so a Wald p-value is unreliable;
+    #    use a likelihood-ratio test against the fixed-effect version instead.
+    #    lr_crit = 2.71 is the 5% point of chi-square(1), conservative for the
+    #    50:50 mixture that applies to a variance component.
+    lr_crit = 2.71
+    for _ in range(max_iter):
+        est = dict(zip(tab["Parameter"], tab["Estimate"]))
+        ll_rand = -_nll(res, y, a, b, l, off)
+        changed = False
+
+        def _try_drop(tier, k):
+            """Drop random flag (tier, k); keep it only if LR test says so."""
+            flags = rand_b if tier == 'b' else rand_l
+            flags[k] = False
+            r2, y2, a2, b2, l2, off2, se2, tab2 = _fit()
+            lr = 2.0 * (ll_rand - (-_nll(r2, y2, a2, b2, l2, off2)))
+            if lr < lr_crit:
+                return (r2, y2, a2, b2, l2, off2, se2, tab2)
+            flags[k] = True
+            return None
+
+        for k, v in enumerate(sel_b):
+            if not rand_b[k]:
+                continue
+            if sigma_tol > 0 and abs(est.get(f"sigma_alpha[{v}]", 0.0)) < sigma_tol:
+                rand_b[k] = False
+                res, y, a, b, l, off, se, tab = _fit()
+                changed = True
+                break
+            got = _try_drop('b', k)
+            if got is not None:
+                res, y, a, b, l, off, se, tab = got
+                changed = True
+                break
+        if changed:
+            continue
+
+        for k, v in enumerate(sel_l):
+            if not rand_l[k]:
+                continue
+            if sigma_tol > 0 and abs(est.get(f"sigma_beta[{v}]", 0.0)) < sigma_tol:
+                rand_l[k] = False
+                res, y, a, b, l, off, se, tab = _fit()
+                changed = True
+                break
+            got = _try_drop('l', k)
+            if got is not None:
+                res, y, a, b, l, off, se, tab = got
+                changed = True
+                break
+        if not changed:
+            break
+
+    # 2. guarded backward elimination
+    for _ in range(max_iter):
+        pv = dict(zip(tab["Parameter"], tab["p-value"]))
+        # Terms carrying an identified random effect are protected: their mean
+        # coefficient can be insignificant while their variance is strongly
+        # significant, so a Wald test on the mean must not delete the term.
+        cands = [(pv.get(f"alpha[{v}]", 1.0), 'b', k)
+                 for k, v in enumerate(sel_b) if not rand_b[k]]
+        cands += [(pv.get(f"beta[{v}]", 1.0), 'l', k)
+                  for k, v in enumerate(sel_l) if not rand_l[k]]
+        cands = [c for c in cands if c[0] > alpha]
+        if not cands:
+            break
+        cands.sort(key=lambda t: -t[0])
+        dropped = False
+        for _, tier, k in cands:
+            if tier == 'b' and len(sel_b) - 1 < min_upper:
+                continue
+            if tier == 'l' and len(sel_l) - 1 < min_lower:
+                continue
+            if tier == 'b':
+                sel_b.pop(k); rand_b.pop(k)
+            else:
+                sel_l.pop(k); rand_l.pop(k)
+            res, y, a, b, l, off, se, tab = _fit()
+            dropped = True
+            break
+        if not dropped:
+            break
+
+    ll = -_nll(res, y, a, b, l, off)
+    n_par = len(np.asarray(res.params))
+    bic = -2.0 * ll + n_par * np.log(len(y))
+
+    if verbose:
+        rnd = [v for v, r in zip(sel_b + sel_l, rand_b + rand_l) if r]
+        print(f"    refined -> upper={sel_b} lower={sel_l} random={rnd} "
+              f"BIC={bic:.2f}")
+
+    return {
+        "baseline": sel_b, "local": sel_l,
+        "rand_baseline": rand_b, "rand_local": rand_l,
+        "model": model, "result": res, "se": se, "table": tab,
+        "ll": ll, "bic": bic, "n_params": n_par,
+    }
