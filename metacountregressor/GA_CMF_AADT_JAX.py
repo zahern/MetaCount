@@ -748,7 +748,7 @@ def _sigma_bounds(selected_baseline, selected_local, rand_baseline, rand_local,
         if lbl.startswith('sigma_'):
             out.append((-limit, limit))
         elif lbl in ('log_alpha', 'log_theta'):
-            out.append((-6.0, 1.0))
+            out.append((-6.0, 6.0))
         else:
             out.append((-big, big))
     return out
@@ -771,6 +771,63 @@ def _initial_params(labels, sigma0=0.5):
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # STANDARD ERRORS  (exact Hessian via JAX autodiff)
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+def identification_report(result, y_jax, AADT_jax, baseline_jax, locals_jax,
+                          selected_baseline, selected_local,
+                          rand_baseline, rand_local, draws, model,
+                          offset=None, integration='halton', ghq_points=7,
+                          cond_limit=1e8, eig_tol=1e-6):
+    """Local identification check from the exact Hessian at the optimum.
+
+    Works on the correlation-scaled information matrix so units do not matter.
+    Returns a dict with the condition number, smallest eigenvalue, a boolean
+    ``identified`` and, for each weak direction, the parameters that load on
+    it.  Sigmas pinned at zero (flat likelihood) are reported separately.
+    """
+    rb, rl = tuple(rand_baseline), tuple(rand_local)
+    simulate = any(rb) or any(rl)
+    n_rand = sum(rb) + sum(rl)
+    log_w = None
+    if simulate and integration == 'ghq' and n_rand > 0:
+        draws, log_w = _ghq_draws(len(y_jax), n_rand, ghq_points)
+    if integration == 'aghq' and simulate:
+        fn = lambda p: _aghq_loglik(p, y_jax, AADT_jax, baseline_jax, locals_jax,
+                                    rb, rl, model, offset, ghq_points)
+    elif not simulate:
+        fn = lambda p: _fixed_ll(p, y_jax, AADT_jax, baseline_jax, locals_jax,
+                                 rb, rl, model, offset)
+    else:
+        fn = lambda p: _mixed_ll(p, y_jax, AADT_jax, baseline_jax, locals_jax,
+                                 rb, rl, draws, model, offset, log_w)
+
+    p_star = jnp.array(result.params if hasattr(result, "params") else result.x)
+    labels = _param_labels(selected_baseline, selected_local, rand_baseline,
+                           rand_local, model)
+    H = np.array(jax.hessian(fn)(p_star), dtype=float)
+    H = np.where(np.isfinite(H), H, 0.0)
+    if np.trace(H) < 0:
+        H = -H
+    d = np.sqrt(np.clip(np.diag(H), 1e-12, None))
+    Hs = H / np.outer(d, d)
+    w, V = np.linalg.eigh((Hs + Hs.T) / 2)
+    lam_min, lam_max = float(w[0]), float(w[-1])
+    cond = float(lam_max / max(lam_min, 1e-300)) if lam_min > 0 else float("inf")
+    weak = []
+    for k in np.where(w < eig_tol * max(lam_max, 1.0))[0]:
+        load = np.abs(V[:, k])
+        idx = [labels[i] for i in np.where(load > 0.3)[0]]
+        weak.append(idx)
+    p_arr = np.asarray(p_star)
+    flat_sigmas = [l for l, v in zip(labels, p_arr)
+                   if l.startswith("sigma_") and abs(v) < 1e-3]
+    return {
+        "condition_number": cond,
+        "min_eigenvalue": lam_min,
+        "weak_directions": weak,
+        "flat_sigmas": flat_sigmas,
+        "identified": bool(lam_min > 0 and cond < cond_limit and not flat_sigmas),
+    }
+
 
 def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
                rand_baseline, rand_local, draws, R, model, offset=None,
@@ -856,6 +913,94 @@ def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
 # MODEL EVALUATOR  (called inside GA fitness)
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+def _newton_polish(objective, params, bounds, iters=50, tol=1e-6):
+    """Damped Newton finisher using the exact JAX Hessian.
+
+    First-order solvers stall on the alpha0/beta0 ridge (log AADT spans a narrow
+    range, so intercept and elasticity are nearly collinear).  Newton steps
+    with a backtracking line search and a Levenberg ridge for indefinite
+    Hessians converge quadratically once close.  Steps are clipped to bounds.
+    Returns (params, f).
+    """
+    import jax
+    lb = np.array([b[0] for b in bounds]); ub = np.array([b[1] for b in bounds])
+    grad_fn = jax.jit(jax.grad(objective))
+    hess_fn = jax.jit(jax.hessian(objective))
+    x = np.clip(np.asarray(params, dtype=np.float64), lb, ub)
+    f = float(objective(jnp.array(x)))
+    for _ in range(iters):
+        g = np.asarray(grad_fn(jnp.array(x)))
+        H = np.asarray(hess_fn(jnp.array(x)))
+        if not (np.all(np.isfinite(g)) and np.all(np.isfinite(H))):
+            break
+        free = ~(((x <= lb + 1e-9) & (g > 0)) | ((x >= ub - 1e-9) & (g < 0)))
+        if np.linalg.norm(g[free]) < tol:
+            break
+        Hf, gf = H[np.ix_(free, free)], g[free]
+        lam = 0.0
+        step = None
+        for _try in range(12):
+            try:
+                step = np.linalg.solve(Hf + lam * np.eye(len(gf)), -gf)
+                if np.all(np.isfinite(step)) and gf @ step < 0:
+                    break
+            except np.linalg.LinAlgError:
+                pass
+            lam = max(lam * 10.0, 1e-6)
+            step = None
+        if step is None:
+            break
+        t, improved = 1.0, False
+        for _ls in range(25):
+            cand = x.copy()
+            cand[free] = x[free] + t * step
+            cand = np.clip(cand, lb, ub)
+            fc = float(objective(jnp.array(cand)))
+            if np.isfinite(fc) and fc < f - 1e-12:
+                x, f, improved = cand, fc, True
+                break
+            t *= 0.5
+        if not improved:
+            break
+    return x, f
+
+
+def _informed_start(labels, y, AADT, offset=None):
+    """Start vector: sigma off its stationary point, intercept at sample rate,
+    AADT exponent at 1 (log mu = alpha0 + log(AADT) + offset)."""
+    p = _initial_params(labels)
+    mean_off = float(np.mean(offset)) if offset is not None else 0.0
+    p[labels.index('alpha0')] = (np.log(max(float(np.mean(y)), 1e-6)) - mean_off
+                                 - float(np.mean(np.log(AADT))))
+    p[labels.index('beta0')] = 1.0
+    return p
+
+
+def _basin_hop(objective, res, f_best, bounds, n_hops=3, step=0.5, seed=0):
+    """Basin-hopping ("grasshopper") refinement.
+
+    Randomly jumps away from the incumbent optimum (Gaussian kick scaled by
+    ``step``, clipped to the bounds), re-optimises locally, and accepts any
+    strictly better finite optimum.  Escapes shallow local optima and the
+    sigma = 0 / dispersion ridge that a single local solve can stall on.
+    """
+    rng = np.random.default_rng(seed)
+    lb = np.array([b[0] for b in bounds]); ub = np.array([b[1] for b in bounds])
+    for h in range(int(n_hops)):
+        cur = np.asarray(res.params, dtype=np.float64)
+        scale = step * (1.0 + h)
+        cand = np.clip(cur + rng.normal(0.0, scale, cur.shape), lb, ub)
+        try:
+            r = run_optimizer_bounded(objective, cand, bounds,
+                                      method="L-BFGS-B", maxiter=500)
+            f = float(objective(jnp.array(r.params)))
+        except Exception:
+            continue
+        if np.isfinite(f) and f < f_best - 1e-6:
+            res, f_best = r, f
+    return res, f_best
+
+
 def evaluate_model(solution,
                    data,
                    baseline_vars,
@@ -866,7 +1011,9 @@ def evaluate_model(solution,
                    rand_local_all=None,
                    R=200,
                    integration='halton',
-                   ghq_points=7):
+                   ghq_points=7,
+                   n_hops=3,
+                   hop_step=0.5):
 
     k_base = len(baseline_vars)
     k_loc  = len(local_vars)
@@ -941,7 +1088,35 @@ def evaluate_model(solution,
         "fitted_scale": "standardised",
     }
 
-    res = run_optimizer(objective, p0, method="SLSQP", maxiter=1000)
+    # Informed start (sigma seeded off its stationary point at 0, intercept
+    # matched to the sample mean) plus the bounded solver, tried against the
+    # legacy zero start; the better finite optimum is kept.
+    labels = _param_labels(active_baseline, active_local,
+                           rand_baseline, rand_local, model)
+    p_init = _initial_params(labels)
+    mean_off = float(np.mean(offset_np)) if offset_np is not None else 0.0
+    p_init[0] = (np.log(max(float(y_np.mean()), 1e-6)) - mean_off
+                 - float(np.mean(np.log(AADT_np))))
+    p_init[1 + k_base_act + sum(rand_baseline)] = 1.0
+    bnds = _sigma_bounds(active_baseline, active_local,
+                         rand_baseline, rand_local, model)
+
+    best_res, best_f = None, np.inf
+    for start in (p_init, p0):
+        try:
+            r = run_optimizer_bounded(objective, start, bnds,
+                                      method="L-BFGS-B", maxiter=1000)
+            f = float(objective(jnp.array(r.params)))
+        except Exception:
+            continue
+        if np.isfinite(f) and f < best_f:
+            best_res, best_f = r, f
+    if best_res is None:
+        best_res = run_optimizer(objective, p0, method="SLSQP", maxiter=1000)
+    else:
+        best_res, best_f = _basin_hop(objective, best_res, best_f, bnds,
+                                      n_hops=n_hops, step=hop_step)
+    res = best_res
 
     params    = jnp.array(res.params)
     ll        = -float(objective(params))
@@ -1111,6 +1286,8 @@ def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8,
 
             # Check correlation constraint on baseline (upper-level) terms
             selected_baseline = [var for var, _ in baseline_terms]
+            if {v for v, _ in baseline_terms} & {v for v, _ in local_terms}:
+                return None  # one tier per variable
             if not _check_corr_constraint(selected_baseline):
                 return None  # Invalid spec - correlation constraint violated
 
@@ -1146,6 +1323,9 @@ def run_ga(data, baseline_vars, local_vars, R=200, corr_threshold=0.8,
             selected_baseline = [v for v, m in zip(baseline_vars, baseline_mask) if m]
             if not _check_corr_constraint(selected_baseline):
                 return 1e12  # Large penalty for correlation constraint violation
+            _sel_local = [v for v, m in zip(local_vars, full[k_base:k_base + k_loc]) if m]
+            if set(selected_baseline) & set(_sel_local):
+                return 1e12  # one tier per variable (avoids alpha_v/beta_v collinearity)
 
             # Hard dimension bounds (C3) and hierarchical integrity (K_L^min >= 1).
             # Enforced here, not only in build_spec, because the optimiser
@@ -1363,19 +1543,16 @@ def fit_final_model(data,
     n_params = count_params(rand_baseline, rand_local, model)
     _labels  = _param_labels(selected_baseline, selected_local,
                              rand_baseline, rand_local, model)
-    p_start  = _initial_params(_labels)
+    p_start  = _informed_start(_labels, y_np, AADT_np, offset_np)
+    _bnds = _sigma_bounds(selected_baseline, selected_local,
+                          rand_baseline, rand_local, model)
 
     print("  Compiling JAX kernel (first call) …")
     obj_std = make_objective(y_jax, AADT_jax, jnp.array(bmat_s), jnp.array(lmat_s),
                              rand_baseline, rand_local, draws, R, model, offset_jax,
                              log_w, integration, ghq_points)
-    if integration == 'aghq' or model == 'nb':
-        _bnds = _sigma_bounds(selected_baseline, selected_local,
-                              rand_baseline, rand_local, model)
-        res_std = run_optimizer_bounded(obj_std, p_start, _bnds,
-                                        method="SLSQP", maxiter=2000)
-    else:
-        res_std = run_optimizer(obj_std, np.zeros(n_params), method="SLSQP", maxiter=2000)
+    res_std = run_optimizer_bounded(obj_std, p_start, _bnds,
+                                    method="SLSQP", maxiter=2000)
 
     # ── Stage 2: refit in ORIGINAL predictor space ────────────────────────
     # Reporting and inference are on the interpretable scale (CMF per unit,
@@ -1395,21 +1572,22 @@ def fit_final_model(data,
     # Refit from the warm start; also try a zero start and keep the better
     # optimum, since the warm start came from a slightly different
     # (reparameterised) surface and can occasionally settle in a poor basin.
-    if integration == 'aghq' or model == 'nb':
-        _bnds = _sigma_bounds(selected_baseline, selected_local,
-                              rand_baseline, rand_local, model)
-        res = run_optimizer_bounded(objective, p0_orig, _bnds,
-                                    method="SLSQP", maxiter=2000)
-        res0 = run_optimizer_bounded(objective, p_start, _bnds,
-                                     method="SLSQP", maxiter=2000)
-    else:
-        res = run_optimizer(objective, p0_orig, method="SLSQP", maxiter=2000)
-        res0 = run_optimizer(objective, np.zeros(n_params), method="SLSQP", maxiter=2000)
+    res = run_optimizer_bounded(objective, p0_orig, _bnds,
+                                method="SLSQP", maxiter=2000)
+    res0 = run_optimizer_bounded(objective, p_start, _bnds,
+                                 method="SLSQP", maxiter=2000)
     if float(objective(jnp.array(res0.params))) < float(objective(jnp.array(res.params))):
         res = res0
+    res, _ = _basin_hop(objective, res, float(objective(jnp.array(res.params))),
+                        _bnds, n_hops=3, step=0.3)
+    _xp, _fp = _newton_polish(objective, np.asarray(res.params), _bnds)
+    if _fp < float(objective(jnp.array(res.params))):
+        from types import SimpleNamespace
+        res = SimpleNamespace(params=jnp.array(_xp))
 
     std_info = {
         "baseline_means": b_means,
+
         "baseline_stds": b_stds,
         "baseline_is_binary": b_bin,
         "local_means": l_means,
