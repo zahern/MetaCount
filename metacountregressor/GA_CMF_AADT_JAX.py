@@ -45,6 +45,7 @@ from functools import partial
 from scipy.optimize import minimize
 from scipy.stats import norm
 from scipy.stats import qmc
+from jax.scipy.stats import norm as norm_jax
 try:
     from .Solvers_METAJAX import MultiStartSA
 except ImportError:
@@ -303,6 +304,38 @@ def generate_draws(n, R, n_rand, use_halton=True, seed=42):
         draws_np = norm.ppf(np.random.rand(R, n, n_rand))
 
     return jnp.array(draws_np)   # hand off to JAX
+
+
+_DRAW_CACHE = {}
+_DRAW_MASTER_DIM = 12
+
+
+def get_cached_draws(n, R, n_rand, use_halton=True, seed=42,
+                     dtype=None, max_cache=3):
+    """Shared base draws, built once and sliced per model.
+
+    Halton/ppf generation of (R, N, q) draws dominates the cost of building a
+    model in a specification search.  A single master block with
+    ``_DRAW_MASTER_DIM`` columns is generated per (N, R, seed, sampler) and
+    each model takes ``[..., :n_rand]``.  Using the same draws for every
+    candidate also removes simulation noise from BIC comparisons.  ``dtype``
+    (e.g. ``jnp.float32``) halves memory for search-time fits; the final refit
+    should keep the default float64.  Only ``max_cache`` masters are kept.
+    """
+    if n_rand == 0:
+        return None
+    dim = max(_DRAW_MASTER_DIM, n_rand)
+    key = (n, R, seed, bool(use_halton), dim, str(dtype))
+    if key not in _DRAW_CACHE:
+        if len(_DRAW_CACHE) >= max_cache:
+            _DRAW_CACHE.pop(next(iter(_DRAW_CACHE)))
+        m = generate_draws(n, R, dim, use_halton, seed=seed)
+        _DRAW_CACHE[key] = m.astype(dtype) if dtype is not None else m
+    return _DRAW_CACHE[key][:, :, :n_rand]
+
+
+def clear_draw_cache():
+    _DRAW_CACHE.clear()
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1032,6 +1065,66 @@ def _basin_hop(objective, res, f_best, bounds, n_hops=3, step=0.5, seed=0):
     return res, f_best
 
 
+DRAW_DISTRIBUTIONS = ("normal", "uniform", "triangular", "lognormal")
+
+
+def shape_draws(draws, dists=None, rho=0.0):
+    """Impose a mixing distribution and an equicorrelation on standard draws.
+
+    Every marginal is standardised to mean 0 and variance 1, so ``sigma`` is
+    still the standard deviation and exp(coefficient mean) is still the
+    central CMF whatever the distribution.  ``rho`` is the common correlation
+    between the random terms (a single extra parameter, profiled by the
+    search).  ``lognormal`` is right-skewed; ``uniform``/``triangular`` are
+    bounded, so effects cannot change sign far out in the tails.
+    """
+    if draws is None or draws.shape[-1] == 0:
+        return draws
+    q = draws.shape[-1]
+    z = draws
+    if rho and q > 1:
+        R_ = (1.0 - rho) * np.eye(q) + rho * np.ones((q, q))
+        L = np.linalg.cholesky(R_)
+        z = jnp.einsum("rnq,pq->rnp", z, jnp.array(L))
+    if not dists:
+        return z
+    cols = []
+    for j in range(q):
+        d = dists[j] if j < len(dists) else "normal"
+        c = z[..., j]
+        if d == "uniform":
+            c = jnp.sqrt(3.0) * (2.0 * norm_jax.cdf(c) - 1.0)
+        elif d == "triangular":
+            p = norm_jax.cdf(c)
+            t = jnp.where(p < 0.5, jnp.sqrt(2.0 * p) - 1.0,
+                          1.0 - jnp.sqrt(2.0 * (1.0 - p)))
+            c = t * jnp.sqrt(6.0)
+        elif d == "lognormal":
+            s = 0.5
+            c = (jnp.exp(s * c) - np.exp(s * s / 2.0)) / np.sqrt(
+                (np.exp(s * s) - 1.0) * np.exp(s * s))
+        elif d != "normal":
+            raise ValueError(f"Unknown distribution '{d}'")
+        cols.append(c)
+    return jnp.stack(cols, axis=-1)
+
+
+def _draw_dist_names(dists_all, baseline_mask, local_mask,
+                     rand_baseline_all, rand_local_all):
+    """Names of the distributions for the random columns, in draw order."""
+    if dists_all is None:
+        return None
+    k_base = len(baseline_mask)
+    names = []
+    for i, (m, r) in enumerate(zip(baseline_mask, rand_baseline_all)):
+        if m and r:
+            names.append(dists_all[i])
+    for i, (m, r) in enumerate(zip(local_mask, rand_local_all)):
+        if m and r:
+            names.append(dists_all[k_base + i])
+    return names
+
+
 def evaluate_model(solution,
                    data,
                    baseline_vars,
@@ -1044,7 +1137,9 @@ def evaluate_model(solution,
                    integration='halton',
                    ghq_points=7,
                    n_hops=3,
-                   hop_step=0.5):
+                   hop_step=0.5,
+                   dists_all=None,
+                   rho=0.0):
 
     k_base = len(baseline_vars)
     k_loc  = len(local_vars)
@@ -1099,7 +1194,10 @@ def evaluate_model(solution,
     elif integration == 'ghq' and n_rand > 0:
         draws, log_w = _ghq_draws(N, n_rand, ghq_points)
     else:
-        draws, log_w = generate_draws(N, R, n_rand, use_halton), None
+        draws, log_w = get_cached_draws(N, R, n_rand, use_halton), None
+        draws = shape_draws(draws, _draw_dist_names(
+            dists_all, baseline_mask, local_mask,
+            rand_baseline_all, rand_local_all), rho)
 
     n_params = count_params(rand_baseline, rand_local, model)
     p0       = np.zeros(n_params)
@@ -1151,7 +1249,7 @@ def evaluate_model(solution,
 
     params    = jnp.array(res.params)
     ll        = -float(objective(params))
-    bic       = -2.0 * ll + n_params * np.log(N)
+    bic       = -2.0 * ll + (n_params + (1 if (rho and n_rand > 1) else 0)) * np.log(N)
 
     # Significance penalty â€” diagonal Hessian via forward-over-reverse autodiff (O(p))
     grad_fn   = jax.grad(objective)
@@ -1519,7 +1617,8 @@ def fit_final_model(data,
                     selected_baseline, selected_local,
                     rand_baseline, rand_local,
                     model='poisson', use_halton=True, R=500,
-                    integration='halton', ghq_points=7, seed=42):
+                    integration='halton', ghq_points=7, seed=42,
+                    dists=None, rho=0.0):
     """
     Re-estimates the GA-selected model at higher R for final inference.
 
@@ -1569,7 +1668,8 @@ def fit_final_model(data,
     elif integration == 'ghq' and n_rand > 0:
         draws, log_w = _ghq_draws(N, n_rand, ghq_points)
     else:
-        draws, log_w = generate_draws(N, R, n_rand, use_halton, seed=seed), None
+        draws, log_w = get_cached_draws(N, R, n_rand, use_halton, seed=seed), None
+        draws = shape_draws(draws, dists, rho)
 
     n_params = count_params(rand_baseline, rand_local, model)
     _labels  = _param_labels(selected_baseline, selected_local,
