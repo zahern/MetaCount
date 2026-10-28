@@ -772,6 +772,37 @@ def _initial_params(labels, sigma0=0.5):
 # STANDARD ERRORS  (exact Hessian via JAX autodiff)
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+def observed_covariance(result, y_jax, AADT_jax, baseline_jax, locals_jax,
+                        rand_baseline, rand_local, draws, model, offset=None,
+                        integration='halton', ghq_points=7):
+    """Full parameter covariance = pinv of the exact observed information.
+
+    ``compute_se`` returns NaN for the covariance when PARTE shrinkage is used,
+    so delta-method CMF intervals (which need the off-diagonals) use this.
+    """
+    rb, rl = tuple(rand_baseline), tuple(rand_local)
+    simulate = any(rb) or any(rl)
+    n_rand = sum(rb) + sum(rl)
+    log_w = None
+    if simulate and integration == 'ghq' and n_rand > 0:
+        draws, log_w = _ghq_draws(len(y_jax), n_rand, ghq_points)
+    if integration == 'aghq' and simulate:
+        fn = lambda p: _aghq_loglik(p, y_jax, AADT_jax, baseline_jax, locals_jax,
+                                    rb, rl, model, offset, ghq_points)
+    elif not simulate:
+        fn = lambda p: _fixed_ll(p, y_jax, AADT_jax, baseline_jax, locals_jax,
+                                 rb, rl, model, offset)
+    else:
+        fn = lambda p: _mixed_ll(p, y_jax, AADT_jax, baseline_jax, locals_jax,
+                                 rb, rl, draws, model, offset, log_w)
+    p_star = jnp.array(result.params if hasattr(result, "params") else result.x)
+    H = np.array(jax.hessian(fn)(p_star), dtype=float)
+    H = np.where(np.isfinite(H), H, 0.0)
+    if np.trace(H) < 0:
+        H = -H
+    return np.linalg.pinv((H + H.T) / 2)
+
+
 def identification_report(result, y_jax, AADT_jax, baseline_jax, locals_jax,
                           selected_baseline, selected_local,
                           rand_baseline, rand_local, draws, model,

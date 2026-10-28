@@ -34,6 +34,41 @@ def test_identification_report_flags_flat_sigma():
     assert "condition_number" in rep and "flat_sigmas" in rep
 
 
+def test_cmf_catalogue_recovers_upper_effect():
+    from metacountregressor import GA_CMF_AADT_JAX as G
+    from metacountregressor.cmf_catalogue import build_cmf_catalogue
+    df = _simulate(n=3000)
+    res, y, A, B, L, draws, _, off = G.fit_final_model(
+        df, ["X"], ["Z"], [False], [False], model="poisson", R=50)
+    se, _ = G.compute_se(res, y, A, B, L, [False], [False], draws, 50,
+                         "poisson", off)
+    cat = build_cmf_catalogue(res.params, se, df, ["X"], ["Z"], [False], [False])
+    assert set(cat["tier"]) == {"upper", "lower"}
+    up = cat[cat.term == "X"].iloc[0]
+    assert abs(np.log(up.cmf) - 0.3) < 0.1
+    assert up.cmf_lo < up.cmf < up.cmf_hi
+
+
+def test_derive_cmf_matches_truth_and_combines():
+    from metacountregressor import GA_CMF_AADT_JAX as G
+    from metacountregressor.cmf_catalogue import derive_cmf
+    df = _simulate(n=3000)
+    res, y, A, B, L, draws, _, off = G.fit_final_model(
+        df, ["X"], ["Z"], [False], [False], model="poisson", R=50)
+    se, _ = G.compute_se(res, y, A, B, L, [False], [False], draws, 50,
+                         "poisson", off)
+    cov = G.observed_covariance(res, y, A, B, L, [False], [False], draws,
+                                "poisson", off)
+    assert np.allclose(np.sqrt(np.diag(cov)), se, rtol=0.2)
+    args = (res.params, cov, ["X"], ["Z"], [False], [False])
+    args = (res.params, cov, ["X"], ["Z"], [False], [False])
+    one = derive_cmf(*args, changes={"X": 1})
+    assert abs(np.log(one["cmf"]) - 0.3) < 0.1
+    assert one["cmf_lo"] < one["cmf"] < one["cmf_hi"]
+    both = derive_cmf(*args, changes={"X": 1, "Z": 1}, aadt=5000)
+    assert both["cmf"] > one["cmf"]
+
+
 def test_homogeneous_data_recommends_fixed():
     df = _simulate()
     out = structure_diagnostics(df, ["X"], ["Z"], R=100)
