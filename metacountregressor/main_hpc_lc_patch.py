@@ -390,6 +390,7 @@ def build_jax_data(
     class_rdm_cor_cols=None,     # per-class random corr lists
     event_col=None,              # survival/hazard: column of 0/1 event flags
     draw_method='sobol',        # 'halton' or 'sobol' (Sobol faster, more stable)
+    standardize=True,
     R=200,
 ):
     fixed_cols        = fixed_cols        or []
@@ -414,7 +415,11 @@ def build_jax_data(
         fixed_cols + random_ind_cols + random_cor_cols
         + grouped_cols + hetro_cols + hetro_var_cols + gse_cols + zi_cols + membership_cols
     ))
-    _scaler = _hpc.compute_scaler(df, _predictor_cols)
+    # ``standardize=False`` preserves the scale the caller supplied.  See the
+    # matching note in main_hpc.build_jax_data: re-centring log(AADT) turns a
+    # random elasticity into a random coefficient on centred AADT, adding an
+    # implied random intercept of SD = tau * mean(log AADT).
+    _scaler = _hpc.compute_scaler(df, _predictor_cols) if standardize else {}
     if _scaler:
         df = _hpc.apply_scaler(df, _scaler)
 
@@ -701,7 +706,7 @@ _hpc.parse_manual_spec = parse_manual_spec
 def build_model_from_manual_spec(
     df, manual_spec, id_col, y_col,
     offset_col=None, draws_ind=None, draws_cor=None, draws_g=None,
-    draw_method='sobol', R=200, event_col=None
+    draw_method='sobol', standardize=True, R=200, event_col=None
 ):
     (
         fixed_cols, random_ind, random_cor, grouped_cols, hetro_cols, hetro_var_cols,
@@ -738,6 +743,7 @@ def build_model_from_manual_spec(
         grouped_dists=grouped_dists,
         event_col=event_col,
         draw_method=draw_method,
+        standardize=standardize,
         R=R,
     )
 

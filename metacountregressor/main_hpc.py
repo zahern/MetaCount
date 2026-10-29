@@ -1311,6 +1311,7 @@ def build_model_from_manual_spec(
     draws_ind=None,
     draws_cor=None,
     draws_g=None,
+    standardize=True,
     R=200
 ):
 
@@ -1338,6 +1339,7 @@ def build_model_from_manual_spec(
         random_ind_dists=random_ind_dists,
         random_cor_dists=random_cor_dists,
         grouped_dists=grouped_dists,
+        standardize=standardize,
         R=R
     )
 
@@ -1455,6 +1457,7 @@ def build_jax_data(
     random_cor_dists=None,
     grouped_dists=None,
     zi_cols = None,
+    standardize=True,
     R=200
 ):
 
@@ -1490,7 +1493,13 @@ def build_jax_data(
         fixed_cols + random_ind_cols + random_cor_cols
         + grouped_cols + hetro_cols + hetro_var_cols + gse_cols + zi_cols
     ))
-    _scaler = compute_scaler(df, _predictor_cols)
+    # ``standardize=False`` keeps the caller's columns on the scale they were
+    # supplied on.  The CMF pipeline already passes standardised ``*_Z``
+    # columns and deliberately builds log(AADT)/interaction columns, so
+    # re-standardising them here silently changes the model: a random
+    # coefficient on *centred* log(AADT) is not a random elasticity, because
+    # centring adds an implied random intercept of SD = tau * mean(log AADT).
+    _scaler = compute_scaler(df, _predictor_cols) if standardize else {}
     if _scaler:
         df = apply_scaler(df, _scaler)
 

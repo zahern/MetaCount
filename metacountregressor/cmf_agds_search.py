@@ -31,7 +31,7 @@ class CMFAGDSObjective:
     is_multi = False
     maximize = False
 
-    def __init__(self, data, variables, max_terms=8, R=100, n_hops=1,
+    def __init__(self, data, variables, max_terms=8, min_lower=0, R=100, n_hops=1,
                  allow_models=MODELS, allow_dists=DISTS, allow_rho=RHOS,
                  integration="halton", seed=0, instance_name="run_agds_cmf",
                  max_time=1e9):
@@ -39,6 +39,11 @@ class CMFAGDSObjective:
         self.variables = list(variables)
         self.K = len(self.variables)
         self.max_terms = max_terms
+        # A lower-tier term makes the AADT elasticity covariate-dependent, i.e.
+        # a genuinely hierarchical CMF.  With min_lower = 0 the search may
+        # return a plain random-parameters model instead; set it to 1 to keep
+        # the search inside the hierarchical class.
+        self.min_lower = int(min_lower)
         self.R = R
         self.n_hops = n_hops
         self.integration = integration
@@ -131,7 +136,8 @@ class CMFAGDSObjective:
                sp["model"], sp["rho"])
         if key in self.cache:
             return {"layout": list(layout), "bic": self.cache[key]}
-        if n_terms == 0 or n_terms > self.max_terms:
+        n_lower = len(sp["lower"])
+        if n_terms == 0 or n_terms > self.max_terms or n_lower < self.min_lower:
             self.cache[key] = 1e12
             return {"layout": list(layout), "bic": 1e12}
         base_m, loc_m, rand, names, model, rho = self.decode(layout)
@@ -214,6 +220,22 @@ def refit_and_report(data, spec, R=300, integration="halton"):
                               spec["lower"], ru, rl, spec["model"])
     attr, elast = aadt_attribution(res.params, spec["upper"], spec["lower"],
                                    ru, rl, data, spec["model"])
+
+    # Fit statistics on the SAME draws the refit used, so the searched model
+    # and any comparison model can be reported on one scale.
+    ll = float("nan")
+    bic = float("nan")
+    n_params = int(G.count_params(ru, rl, spec["model"]))
+    try:
+        obj = G.make_objective(y, A, B, L, ru, rl, draws, R, spec["model"],
+                               off, None, integration, 7)
+        ll = -float(obj(G.jnp.array(res.params)))
+        if np.isfinite(ll):
+            bic = float(-2.0 * ll + n_params * np.log(len(y)))
+    except Exception as exc:  # pragma: no cover - diagnostics only
+        print(f"  [refit] fit statistics unavailable: {exc}")
+
     return SimpleNamespace(result=res, cov=cov, se=se, identification=ident,
-                           catalogue=cat, attribution=attr,
+                           catalogue=cat, attribution=attr, ll=ll, bic=bic,
+                           n_params=n_params, n_obs=int(len(y)),
                            mean_aadt_elasticity=elast)
