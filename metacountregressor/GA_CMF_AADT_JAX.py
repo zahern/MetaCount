@@ -846,7 +846,8 @@ def identification_report(result, y_jax, AADT_jax, baseline_jax, locals_jax,
     Works on the correlation-scaled information matrix so units do not matter.
     Returns a dict with the condition number, smallest eigenvalue, a boolean
     ``identified`` and, for each weak direction, the parameters that load on
-    it.  Sigmas pinned at zero (flat likelihood) are reported separately.
+    it.  Sigmas that cannot be separated from zero — collapsed onto the mean,
+    or no larger than their own standard error — are reported separately.
     """
     rb, rl = tuple(rand_baseline), tuple(rand_local)
     simulate = any(rb) or any(rl)
@@ -882,13 +883,24 @@ def identification_report(result, y_jax, AADT_jax, baseline_jax, locals_jax,
         idx = [labels[i] for i in np.where(load > 0.3)[0]]
         weak.append(idx)
     p_arr = np.asarray(p_star)
-    flat_sigmas = [l for l, v in zip(labels, p_arr)
-                   if l.startswith("sigma_") and abs(v) < 1e-3]
+    # Standard errors come from the same information matrix, rescaled from the
+    # correlation-scaled form back to parameter units (SE_i = sqrt((Hs^-1)_ii)
+    # / d_i), so "indistinguishable from zero" can be judged against sigma's
+    # own precision rather than an absolute cutoff alone.
+    try:
+        sd = np.sqrt(np.clip(np.diag(np.linalg.pinv(Hs)), 0.0, None)) / d
+    except np.linalg.LinAlgError:                      # pragma: no cover
+        sd = np.full(len(labels), np.nan)
+    flat_sigmas = [l for l, v, s in zip(labels, p_arr, sd)
+                   if l.startswith("sigma_") and sigma_is_flat(v, s)]
+    sigma_se = {l: float(s) for l, s in zip(labels, sd)
+                if l.startswith("sigma_")}
     return {
         "condition_number": cond,
         "min_eigenvalue": lam_min,
         "weak_directions": weak,
         "flat_sigmas": flat_sigmas,
+        "sigma_se": sigma_se,
         "identified": bool(lam_min > 0 and cond < cond_limit and not flat_sigmas),
     }
 
@@ -1066,6 +1078,43 @@ def _basin_hop(objective, res, f_best, bounds, n_hops=3, step=0.5, seed=0):
 
 
 DRAW_DISTRIBUTIONS = ("normal", "uniform", "triangular", "lognormal")
+
+# A random coefficient whose sigma sits below this is indistinguishable from a
+# fixed effect: the mixing distribution moves the CMF by under 0.1% at one SD.
+# The search still pays a BIC penalty for the parameter, so a selected-but-flat
+# sigma is a specification cost, not evidence of heterogeneity.  Shared by the
+# identification check and the CMF catalogue so the two cannot disagree.
+SIGMA_FLAT_TOL = 1e-3
+
+# A boundary estimate can also be merely badly determined: sigma = 0.09 with
+# SE(sigma) = 0.09 leaves the sign uniform across sites just as surely as
+# sigma = 0, yet the absolute tolerance above would call it heterogeneity.  A
+# sigma therefore also counts as indistinguishable from zero unless its Wald
+# interval sigma +/- z*SE(sigma) excludes zero.  sigma is bounded below by
+# zero, so this test is conservative (it can only add flags, never remove one).
+SIGMA_FLAT_Z = 1.96
+
+
+def sigma_is_flat(sigma, se, z=SIGMA_FLAT_Z):
+    """True when a random-parameter SD cannot be separated from zero.
+
+    Two ways a selected random term fails to be heterogeneous: the mixing
+    distribution collapsed onto the mean (``|sigma| < SIGMA_FLAT_TOL``), or the
+    point estimate is only a small fraction of its own standard error, so zero
+    is not ruled out.  ``se`` may be None, non-finite or zero when no standard
+    error is available, in which case only the absolute tolerance applies.
+    Shared by the identification check and the CMF catalogue so the two cannot
+    disagree about which random terms are identified.
+    """
+    sigma = abs(float(sigma))
+    if not np.isfinite(sigma) or sigma < SIGMA_FLAT_TOL:
+        return True
+    if se is None:
+        return False
+    se = float(se)
+    if not np.isfinite(se) or se <= 0:
+        return False
+    return bool(sigma / se < z)
 
 
 def shape_draws(draws, dists=None, rho=0.0):

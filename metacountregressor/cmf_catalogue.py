@@ -4,7 +4,26 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
-from .GA_CMF_AADT_JAX import _param_labels
+from .GA_CMF_AADT_JAX import SIGMA_FLAT_TOL, sigma_is_flat, _param_labels
+
+
+def _readable_basis(span, coef):
+    """Power of ten that makes a wide-range count effect readable.
+
+    A per-unit CMF for a variable spanning hundreds of units is not
+    interpretable: a per-unit elasticity of 0.0028 over 1-1732 units compounds
+    to a 133-fold CMF, which is a linear-in-exposure proxy rather than a
+    published-style CMF.  Report such terms per 100 or per 1000 units instead.
+    Only applies when the full-span extrapolation exceeds one decade, so
+    narrow-range and dummy terms keep their per-unit reading.
+    """
+    if not np.isfinite(span) or span < 100 or coef == 0 or not np.isfinite(coef):
+        return 1
+    if abs(coef * span) < np.log(10):
+        return 1
+    want = 0.3 / abs(coef)          # basis putting the CMF near 1.35
+    mag = 10 ** int(np.round(np.log10(max(want, 1.0))))
+    return int(min(mag, 10 ** int(np.floor(np.log10(span)))))
 
 
 def build_cmf_catalogue(params, se, data, selected_baseline, selected_local,
@@ -12,12 +31,23 @@ def build_cmf_catalogue(params, se, data, selected_baseline, selected_local,
                         region=None, z=1.96):
     """One row per term.
 
-    Upper tier: CMF per unit = exp(alpha) with a Wald interval on alpha.
+    Upper tier: CMF = exp(alpha * basis) with a Wald interval on alpha; the
+    basis is one unit, except for wide-range count variables where a power of
+    ten (``basis_scale``) is used so the CMF is readable (``cmf_basis`` says
+    which, and ``coef`` stays per unit with ``coef_per_basis`` alongside).
     Lower tier: the term shifts the AADT elasticity, so the CMF depends on
     traffic; ``cmf_aadt_doubling`` is 2**beta, the multiplicative effect of a
     one-unit change in the variable when AADT doubles.
     Random terms also report the population spread exp(alpha +/- sigma) and the
     share of sites where the effect is protective (CMF < 1).
+    ``sigma_collapsed`` marks a selected random term whose sigma cannot be
+    separated from zero (``sigma_is_flat``: below ``SIGMA_FLAT_TOL``, or smaller
+    than ``z`` standard errors): the sign of the mean is uniform across sites, so
+    the spread is not heterogeneity and ``share_protective`` is left empty
+    rather than reported as 0 or 1.  ``sigma_se`` and ``sigma_z`` (= sigma / SE)
+    are reported so a reader can check that judgement, and ``sigma_flat_abs``
+    says whether the estimate collapsed onto the mean rather than merely being
+    imprecise.
     ``min``/``max`` give the applicability range seen in the estimation data.
     """
     params = np.asarray(params, dtype=float)
@@ -33,31 +63,58 @@ def build_cmf_catalogue(params, se, data, selected_baseline, selected_local,
             i = idx[f"{key}[{v}]"]
             b, s = params[i], se[i]
             sig = abs(params[idx[f"sigma_{key}[{v}]"]]) if is_rand else 0.0
-            base = 1.0 if tier == "upper" else 2.0
+            sig_se = float(se[idx[f"sigma_{key}[{v}]"]]) if is_rand else np.nan
+            # sigma is a boundary parameter, so "is there heterogeneity?" is a
+            # Wald question against sigma's own SE, not only an absolute cutoff:
+            # a sigma of 0.09 judged to 0.09 is no more evidence of site-level
+            # variation than a collapsed one.
+            sig_z = (sig / sig_se if is_rand and np.isfinite(sig_se) and sig_se > 0
+                     else np.nan)
+            collapsed = bool(is_rand and sigma_is_flat(sig, sig_se, z=z))
+            flat_abs = bool(is_rand and sig < SIGMA_FLAT_TOL)
             col = data[v] if v in data.columns else None
+            span = float(col.max() - col.min()) if col is not None else np.nan
+            basis = _readable_basis(span, b) if tier == "upper" else 1
+            basis_factor = basis if tier == "upper" else 1.0
+            if tier == "upper":
+                cmf_f = lambda e: float(np.exp(basis_factor * e))
+            else:
+                cmf_f = lambda e: float(2.0 ** e)
             rows.append({
                 "term": v, "tier": tier, "region": region,
                 "coef": b, "se": s,
-                "cmf": base ** b if tier == "lower" else np.exp(b),
-                "cmf_lo": (base ** (b - z * s)) if tier == "lower" else np.exp(b - z * s),
-                "cmf_hi": (base ** (b + z * s)) if tier == "lower" else np.exp(b + z * s),
-                "cmf_basis": "AADT doubling" if tier == "lower" else "per unit",
+                "coef_per_basis": b * basis_factor, "se_per_basis": s * basis_factor,
+                "basis_scale": basis,
+                "cmf": cmf_f(b),
+                "cmf_lo": cmf_f(b - z * s),
+                "cmf_hi": cmf_f(b + z * s),
+                "cmf_basis": ("AADT doubling" if tier == "lower" else
+                              "per unit" if basis == 1 else f"per {basis} units"),
                 "random": bool(is_rand), "sigma": sig,
-                "cmf_spread_lo": (np.exp(b - sig) if tier == "upper" else 2.0 ** (b - sig)) if is_rand else np.nan,
-                "cmf_spread_hi": (np.exp(b + sig) if tier == "upper" else 2.0 ** (b + sig)) if is_rand else np.nan,
-                "share_protective": float(norm.cdf(-b / sig)) if sig > 0 else float(b < 0),
+                "sigma_se": sig_se, "sigma_z": sig_z,
+                "sigma_collapsed": collapsed, "sigma_flat_abs": flat_abs,
+                "cmf_spread_lo": (cmf_f(b - sig) if is_rand else np.nan),
+                "cmf_spread_hi": (cmf_f(b + sig) if is_rand else np.nan),
+                "share_protective": (np.nan if (not is_rand or collapsed) else
+                                     float(norm.cdf(-b / sig)) if sig > 0 else
+                                     float(b < 0)),
                 "significant": bool(s > 0 and abs(b / s) > z),
                 "min": float(col.min()) if col is not None else np.nan,
                 "max": float(col.max()) if col is not None else np.nan,
             })
     out = pd.DataFrame(rows)
     # Published CMFs are almost always within about 0.3-3; flag anything beyond
-    # for a coding/sparsity check, and size the effect over the observed range.
+    # on the reported basis for a coding/sparsity check.
     span = (out["max"] - out["min"]).replace(0, np.nan)
+    # Size the effect over the full observed range, per unit, whatever basis the
+    # row is reported on; a wide count range legitimately compounds, so that is
+    # recorded separately rather than called implausible.
     out["cmf_over_range"] = np.where(out["tier"] == "upper",
                                      np.exp(out["coef"] * span), np.nan)
+    out["wide_range_extrapolation"] = (out["tier"] == "upper") & (
+        out["cmf_over_range"] > 10)
     out["implausible"] = (out["tier"] == "upper") & (
-        (out["cmf"] > 3) | (out["cmf"] < 1 / 3) | (out["cmf_over_range"] > 10))
+        (out["cmf"] > 3) | (out["cmf"] < 1 / 3))
     out.attrs["aadt_range"] = (float(data["AADT"].min()), float(data["AADT"].max()))
     return out
 
