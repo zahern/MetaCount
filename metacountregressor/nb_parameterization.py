@@ -59,6 +59,38 @@ def nb2_logpmf(y, eta, log_alpha):
     )
 
 
+def nb1_logpmf(y, eta, log_alpha):
+    """NB1 log-PMF: linear variance, ``Var = mu * (1 + alpha)``.
+
+    The counterpart of :func:`nb2_logpmf`, which carries ``Var = mu + alpha *
+    mu**2``.  Written as a negative-binomial with size ``r = mu / alpha`` and
+    ``p = 1 / (1 + alpha)``, then collapsed so that the two shape terms never
+    need ``log(p)`` and ``log(1 - p)`` separately:
+
+    ``ll = gammaln(y + r) - gammaln(r) - gammaln(y + 1)
+            - (r + y) * log1p(alpha) + y * log(alpha)``
+
+    ``r`` is formed in logs as ``exp(eta - log_alpha)``, which stays finite as
+    alpha -> 0 (the Poisson limit) instead of overflowing ``mu / alpha``.
+    """
+    eta = jnp.clip(eta, -30.0, 30.0)
+    log_alpha = clipped_log_alpha(log_alpha)
+    log_r = eta - log_alpha
+    r = jnp.exp(log_r)
+    return (
+        jsp.special.gammaln(y + r)
+        - jsp.special.gammaln(r)
+        - jsp.special.gammaln(y + 1.0)
+        - (r + y) * jnp.log1p(jnp.exp(log_alpha))
+        + y * log_alpha
+    )
+
+
+def nb1_logpmf_from_mean(y, mu, log_alpha):
+    """``nb1_logpmf`` for callers that hold ``mu`` rather than ``log(mu)``."""
+    return nb1_logpmf(y, jnp.log(jnp.clip(mu, 1e-12, None)), log_alpha)
+
+
 def nb2_logpmf_from_mean(y, mu, log_alpha):
     """NB2 log-PMF for a positive mean and optimizer-scale dispersion."""
     log_mu = jnp.log(jnp.clip(mu, 1e-12, 1e12))

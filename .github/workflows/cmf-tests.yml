@@ -1,0 +1,65 @@
+name: CMF tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: cmf-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cmf-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Single interpreter on purpose.  The suite is verified on 3.12 with
+        # jax 0.11; jax/jaxlib 0.11 require >= 3.12, so pinning the oldest
+        # interpreter pyproject allows (3.10) would silently test a much older
+        # jax that nothing here has been run against.  Add versions only when
+        # they have actually been exercised.
+        python-version: ["3.12"]
+
+    env:
+      # No GPU on the runner; keep JAX from probing for one.
+      JAX_PLATFORMS: cpu
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # `[dev]` pins pytest; the package itself carries jax/numpy/pandas.  The
+      # wheel version is dynamic (version.txt), so install the tree, not a tag.
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      # The CMF suite: the sigma-flat rule, the catalogue and identification
+      # report it drives, random-parameter CMF reporting (mean vs median), the
+      # helper-conditional CMFunction for structural random terms, the
+      # stacked-CMF multiplication caveats, the SparseEA-AGDS search that
+      # selects the terms, the cross-family rule that decides which CMFs survive
+      # a change of count family (NB2 vs NB1 vs Poisson), and the exclusion of
+      # nested or duplicated candidate terms from the search.
+      - name: Run CMF tests
+        run: |
+          python -m pytest \
+            tests/test_sigma_flat_rule.py \
+            tests/test_structure_diagnostics.py \
+            tests/test_random_parameter_cmf.py \
+            tests/test_conditional_cmf.py \
+            tests/test_cmf_combine.py \
+            tests/test_cmf_family_sensitivity.py \
+            tests/test_cmf_forbidden_pairs.py \
+            tests/test_cmf_agds_search.py \
+            -q --durations=10

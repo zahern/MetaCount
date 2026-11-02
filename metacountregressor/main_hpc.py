@@ -1037,6 +1037,11 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
     elif spec.model == "nb":
         alpha = blocks["alpha"]
         ll_count = nb2_loglik(y, eta, alpha)
+    elif spec.model == "nb1":
+        # Linear-variance negative binomial: Var = mu * (1 + alpha).  Unlike the
+        # NB2 branch this likelihood takes the mean rather than the linear
+        # predictor, so eta is exponentiated here.
+        ll_count = nb1_loglik(y, jnp.exp(eta), blocks["alpha"])
     elif spec.model == "lognormal":
         sigma    = blocks["sigma"]
         ll_count = lognormal_loglik(y, eta, sigma)
@@ -1072,6 +1077,11 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi = False):
         # Probability of zero from count model
         if spec.model == "poisson":
             f0 = jnp.exp(-mu)
+        elif spec.model == "nb1":
+            log_f0 = nb1_loglik(
+                jnp.zeros_like(y), mu, blocks["alpha"]
+            )
+            f0 = jnp.exp(log_f0)
         else:
             # NB zero probability
             log_f0 = nb2_logpmf(
@@ -1343,7 +1353,13 @@ def build_model_from_manual_spec(
         R=R
     )
 
-    model_type = "nb" if manual_spec.get("dispersion", 0) else "poisson"
+    # ``dispersion`` is the historical on/off flag (0 = Poisson, non-zero = NB2).
+    # An explicit ``model`` key overrides it, which is how the linear-variance
+    # negative binomial (``"nb1"``) is requested; specs without the key keep the
+    # old behaviour exactly.
+    model_type = manual_spec.get("model") or (
+        "nb" if manual_spec.get("dispersion", 0) else "poisson"
+    )
     spec = replace(spec, model=model_type)
 
     return data, spec
@@ -1746,7 +1762,7 @@ def build_base_index(spec, model=None):
         index["gse_gamma"] = (idx, idx + spec.K_random_total)
         idx += spec.K_random_total
 
-    if _model == "nb":
+    if _model in {"nb", "nb1"}:
         index["dispersion"] = idx
         idx += 1
 
@@ -2139,7 +2155,7 @@ def print_summary(result, objective, data, spec, param_index):
                 names.append(f"hetro({rnd}|{z})")
 
     # NB dispersion / Tobit-Gaussian scale
-    if spec.model == "nb":
+    if spec.model in {"nb", "nb1"}:
         names.append("dispersion")
     elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic", "weibull_ph"}:
         names.append("sigma")
@@ -2498,7 +2514,7 @@ def print_summary(result, objective, data, spec, param_index):
                 names.append(f"hetro({rnd}|{z})")
 
     # NB dispersion / Tobit-Gaussian scale
-    if spec.model == "nb":
+    if spec.model in {"nb", "nb1"}:
         names.append("dispersion")
     elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic", "weibull_ph"}:
         names.append("sigma")
@@ -3355,7 +3371,7 @@ def print_summary(result, objective, data, spec, param_index):
             names.append(f"gse({rnd})")
 
     # NB dispersion / Tobit-Gaussian scale
-    if spec.model == "nb":
+    if spec.model in {"nb", "nb1"}:
         names.append("dispersion")
     elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic", "weibull_ph"}:
         names.append("sigma")
@@ -3385,7 +3401,7 @@ def print_summary(result, objective, data, spec, param_index):
     )
 
     # NB dispersion
-    if spec.model == "nb":
+    if spec.model in {"nb", "nb1"}:
         disp_mask = summary_df["Parameter"] == "dispersion"
         summary_df.loc[disp_mask, "Estimate"] = np.exp(
             np.clip(summary_df.loc[disp_mask, "Estimate"], -12.0, 12.0)
@@ -3674,7 +3690,7 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
         for rnd in spec.random_cor_names + spec.random_ind_names:
             names.append(f"gse({rnd})")
 
-    if spec.model == "nb":
+    if spec.model in {"nb", "nb1"}:
         names.append("dispersion")
     elif spec.model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic", "weibull_ph"}:
         names.append("sigma")
@@ -5472,7 +5488,7 @@ def unpack_params(params, spec: ModelSpec, model=None):
             out["gamma_gse"] = None
 
         # NB DISPERSION / SCALE
-        if _model == "nb":
+        if _model in {"nb", "nb1"}:
             out["alpha"] = params[idx]
             idx += 1
         elif _model in {"lognormal", "gaussian", "tobit", "weibull", "loglogistic", "weibull_ph"}:

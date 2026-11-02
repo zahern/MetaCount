@@ -63,9 +63,9 @@ except ImportError:  # flat import (script run from inside the package dir)
     from _jax_config import configure_jax
 configure_jax()
 try:
-    from .nb_parameterization import nb2_logpmf
+    from .nb_parameterization import nb1_logpmf, nb2_logpmf
 except ImportError:
-    from nb_parameterization import nb2_logpmf
+    from nb_parameterization import nb1_logpmf, nb2_logpmf
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -156,7 +156,7 @@ def _aghq_components(params, y, AADT, baseline_mat, locals_mat,
             cols.append(sig_b[k] * locals_mat[:, k] * log_aadt)
     a = jnp.stack(cols, axis=1) if cols else jnp.zeros((N, 0))
 
-    alpha = jnp.exp(params[idx]) if model == 'nb' else None
+    alpha = jnp.exp(params[idx]) if model in ('nb', 'nb1') else None
     return eta0, a, alpha
 
 def _aghq_conditional_modes(params, y, AADT, baseline_mat, locals_mat,
@@ -179,6 +179,9 @@ def _aghq_conditional_modes(params, y, AADT, baseline_mat, locals_mat,
         if model == 'nb':
             # -d2 log p / d eta^2 for NB2 with Var = mu + alpha*mu^2
             return mu * (1.0 + alpha * y) / (1.0 + alpha * mu) ** 2
+        if model == 'nb1':
+            # NB1 has Var = mu*(1+alpha), so the curvature is alpha-flat.
+            return mu / (1.0 + alpha)
         return mu
 
     def body(_, u):
@@ -190,6 +193,8 @@ def _aghq_conditional_modes(params, y, AADT, baseline_mat, locals_mat,
             # For NB2, d log p(y | eta) / d eta is
             # (y - mu) / (1 + alpha * mu), not the Poisson score.
             score = (y - mu) / (1.0 + alpha * mu)
+        elif model == 'nb1':
+            score = (y - mu) / (1.0 + alpha)
         else:
             score = y - mu
         g = score[:, None] * a - u
@@ -236,6 +241,8 @@ def _aghq_loglik(params, y, AADT, baseline_mat, locals_mat,
     # Posterior precision H = I + c a a'  (Gauss-Newton, exact for Poisson/NB2)
     if model == 'nb':
         c = mu_hat * (1.0 + alpha * y) / (1.0 + alpha * mu_hat) ** 2
+    elif model == 'nb1':
+        c = mu_hat / (1.0 + alpha)
     else:
         c = mu_hat
     H = jnp.eye(q)[None, :, :] + c[:, None, None] * (a[:, :, None] * a[:, None, :])
@@ -267,6 +274,8 @@ def _aghq_loglik(params, y, AADT, baseline_mat, locals_mat,
 
     if model == 'nb':
         ll = nb2_logpmf(y[None, :], eta, jnp.log(alpha))
+    elif model == 'nb1':
+        ll = nb1_logpmf(y[None, :], eta, jnp.log(alpha))
     else:
         mu = jnp.exp(eta)
         ll = y[None, :] * eta - mu - gammaln(y + 1.0)[None, :]
@@ -351,7 +360,9 @@ def clear_draw_cache():
 def count_params(rand_baseline, rand_local, model):
     n  = 1 + len(rand_baseline) + sum(rand_baseline)   # alpha block
     n += 1 + len(rand_local)   + sum(rand_local)        # beta  block
-    if model == 'nb':
+    # Both negative-binomial families carry exactly one dispersion parameter;
+    # only the variance function it indexes differs (NB2 quadratic, NB1 linear).
+    if model in ('nb', 'nb1'):
         n += 1
     return n
 
@@ -407,9 +418,13 @@ def _fixed_ll(params, y, AADT, baseline_mat, locals_mat,
 
     if model == 'poisson':
         ll = y * log_mu - mu - gammaln(y + 1.0)
+    elif model == 'nb':
+        ll = nb2_logpmf(y, log_mu, params[idx])
+    elif model == 'nb1':
+        ll = nb1_logpmf(y, log_mu, params[idx])
     else:
-        log_theta = params[idx]
-        ll = nb2_logpmf(y, log_mu, log_theta)
+        raise ValueError(
+            f"unknown count family '{model}'; expected poisson, nb or nb1")
 
     return -jnp.sum(ll)
 
@@ -494,8 +509,13 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
 
     if model == 'poisson':
         sim_ll = y[None, :] * log_mu - mu - gammaln(y + 1.0)[None, :]
-    else:
+    elif model == 'nb':
         sim_ll = nb2_logpmf(y[None, :], log_mu, params[idx])
+    elif model == 'nb1':
+        sim_ll = nb1_logpmf(y[None, :], log_mu, params[idx])
+    else:
+        raise ValueError(
+            f"unknown count family '{model}'; expected poisson, nb or nb1")
 
     if log_weights is None:
         loglik_i = logsumexp(sim_ll, axis=0) - jnp.log(R)
@@ -519,7 +539,7 @@ def _mixed_ll(params, y, AADT, baseline_mat, locals_mat,
 def count_params_exp(rand_baseline, rand_local, model):
     n = 1 + len(rand_baseline) + sum(rand_baseline)   # alpha block
     n += 1 + len(rand_local) + sum(rand_local)        # raw_beta0 + beta/exponent block
-    if model == 'nb':
+    if model in ('nb', 'nb1'):
         n += 1
     return n
 
@@ -538,6 +558,8 @@ def _param_labels_exp(selected_baseline, selected_local,
             labels.append(f'sigma_beta[{v}]')
     if model == 'nb':
         labels.append('log_theta')
+    elif model == 'nb1':
+        labels.append('log_alpha')
     return labels
 
 
@@ -574,9 +596,13 @@ def _fixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
 
     if model == 'poisson':
         ll = y * log_mu - mu - gammaln(y + 1.0)
+    elif model == 'nb':
+        ll = nb2_logpmf(y, log_mu, params[idx])
+    elif model == 'nb1':
+        ll = nb1_logpmf(y, log_mu, params[idx])
     else:
-        log_theta = params[idx]
-        ll = nb2_logpmf(y, log_mu, log_theta)
+        raise ValueError(
+            f"unknown count family '{model}'; expected poisson, nb or nb1")
 
     return -jnp.sum(ll)
 
@@ -652,8 +678,13 @@ def _mixed_ll_exp(params, y, AADT, baseline_mat, locals_mat,
 
     if model == 'poisson':
         sim_ll = y[None, :] * log_mu - mu - gammaln(y + 1.0)[None, :]
-    else:
+    elif model == 'nb':
         sim_ll = nb2_logpmf(y[None, :], log_mu, params[idx])
+    elif model == 'nb1':
+        sim_ll = nb1_logpmf(y[None, :], log_mu, params[idx])
+    else:
+        raise ValueError(
+            f"unknown count family '{model}'; expected poisson, nb or nb1")
 
     loglik_i = logsumexp(sim_ll, axis=0) - jnp.log(R)
     return -jnp.sum(loglik_i)
@@ -840,7 +871,7 @@ def identification_report(result, y_jax, AADT_jax, baseline_jax, locals_jax,
                           selected_baseline, selected_local,
                           rand_baseline, rand_local, draws, model,
                           offset=None, integration='halton', ghq_points=7,
-                          cond_limit=1e8, eig_tol=1e-6):
+                          cond_limit=1e8, eig_tol=1e-6, grad_tol=1e-3):
     """Local identification check from the exact Hessian at the optimum.
 
     Works on the correlation-scaled information matrix so units do not matter.
@@ -848,6 +879,12 @@ def identification_report(result, y_jax, AADT_jax, baseline_jax, locals_jax,
     ``identified`` and, for each weak direction, the parameters that load on
     it.  Sigmas that cannot be separated from zero — collapsed onto the mean,
     or no larger than their own standard error — are reported separately.
+
+    Convergence is checked rather than assumed: ``gradient_inf_norm`` is the
+    largest absolute derivative of the log-likelihood at the reported estimate
+    and ``converged`` is that against ``grad_tol``.  ``identified`` requires a
+    converged point as well as a positive-definite, well-conditioned Hessian,
+    because a singular or non-stationary optimum cannot identify anything.
     """
     rb, rl = tuple(rand_baseline), tuple(rand_local)
     simulate = any(rb) or any(rl)
@@ -883,6 +920,11 @@ def identification_report(result, y_jax, AADT_jax, baseline_jax, locals_jax,
         idx = [labels[i] for i in np.where(load > 0.3)[0]]
         weak.append(idx)
     p_arr = np.asarray(p_star)
+    # Stationarity at the reported point: a fit that stopped short of the
+    # optimum has an uninverted, and falsely "precise", Hessian.
+    grad = np.asarray(jax.grad(fn)(p_star), dtype=float)
+    grad_inf = float(np.max(np.abs(grad))) if grad.size else 0.0
+    converged = bool(np.isfinite(grad_inf) and grad_inf <= grad_tol)
     # Standard errors come from the same information matrix, rescaled from the
     # correlation-scaled form back to parameter units (SE_i = sqrt((Hs^-1)_ii)
     # / d_i), so "indistinguishable from zero" can be judged against sigma's
@@ -901,7 +943,11 @@ def identification_report(result, y_jax, AADT_jax, baseline_jax, locals_jax,
         "weak_directions": weak,
         "flat_sigmas": flat_sigmas,
         "sigma_se": sigma_se,
-        "identified": bool(lam_min > 0 and cond < cond_limit and not flat_sigmas),
+        "gradient_inf_norm": grad_inf,
+        "converged": converged,
+        "hessian_positive_definite": bool(lam_min > 0),
+        "identified": bool(converged and lam_min > 0 and cond < cond_limit
+                           and not flat_sigmas),
     }
 
 
@@ -1344,6 +1390,8 @@ def _param_labels(selected_baseline, selected_local, rand_baseline, rand_local, 
             labels.append(f'sigma_beta[{v}]')
     if model == 'nb':
         labels.append('log_theta')
+    elif model == 'nb1':
+        labels.append('log_alpha')
     return labels
 
 
@@ -1962,6 +2010,13 @@ def print_cmf_results(result,
         print(f"{'=' * W}")
         print(f"  theta = {theta:.4f}  ->  Var[Y] = mu + mu^2/theta")
         print(f"  Smaller theta = greater overdispersion.")
+    elif model == 'nb1':
+        alpha = np.exp(params[idx])
+        print(f"\n{'=' * W}")
+        print("  NEGATIVE BINOMIAL DISPERSION (linear variance)")
+        print(f"{'=' * W}")
+        print(f"  alpha = {alpha:.4f}  ->  Var[Y] = mu * (1 + alpha)")
+        print(f"  Larger alpha = greater overdispersion.")
 
     # â”€â”€ Consolidated random-parameter summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     any_random = any(rand_baseline) or any(rand_local)

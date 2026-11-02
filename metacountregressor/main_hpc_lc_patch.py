@@ -101,6 +101,7 @@ try:
         nb2_dispersion,
         nb2_loglik,
         nb2_logpmf,
+        nb1_loglik,
         gaussian_loglik,
         lognormal_loglik,
         tobit_loglik,
@@ -128,6 +129,7 @@ except ImportError:
         nb2_dispersion,
         nb2_loglik,
         nb2_logpmf,
+        nb1_loglik,
         gaussian_loglik,
         lognormal_loglik,
         tobit_loglik,
@@ -747,7 +749,13 @@ def build_model_from_manual_spec(
         R=R,
     )
 
-    model_type = "nb" if manual_spec.get("dispersion", 0) else "poisson"
+    # ``dispersion`` is the historical on/off flag (0 = Poisson, non-zero = NB2).
+    # An explicit ``model`` key overrides it, which is how the linear-variance
+    # negative binomial (``"nb1"``) is requested; specs without the key keep the
+    # old behaviour exactly.
+    model_type = manual_spec.get("model") or (
+        "nb" if manual_spec.get("dispersion", 0) else "poisson"
+    )
     lc         = int(manual_spec.get("latent_classes", 1))
     class_models = tuple(manual_spec.get("class_models", ()))
     min_class_prop = float(manual_spec.get("min_class_proportion", 0.15))
@@ -1117,6 +1125,11 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
         alpha    = blocks["alpha"]
         ll_count = nb2_loglik(y, eta, alpha)
 
+    elif spec.model == "nb1":
+        # Linear-variance negative binomial: Var = mu * (1 + alpha).  The
+        # likelihood takes the mean rather than the linear predictor.
+        ll_count = nb1_loglik(y, jnp.exp(eta), blocks["alpha"])
+
     elif spec.model == "lognormal":
         sigma    = blocks["sigma"]
         ll_count = lognormal_loglik(y, eta, sigma)
@@ -1146,6 +1159,10 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
         elif spec.model == "nb":
             f0 = jnp.exp(nb2_logpmf(
                 jnp.zeros_like(y), eta, blocks["alpha"]
+            ))
+        elif spec.model == "nb1":
+            f0 = jnp.exp(nb1_loglik(
+                jnp.zeros_like(y), mu, blocks["alpha"]
             ))
         elif spec.model == "lognormal":
             f0 = jnp.zeros_like(mu)
