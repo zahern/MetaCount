@@ -6,6 +6,7 @@ The package now exposes:
 
 - count-model search and manual fitting
 - CMF search and manual fitting
+- hierarchical SPF / CMF models (Chen & Persaud 2014) with random parameters at the site, group or both levels, and a specification search over their components (`HierarchicalSPFSearch`)
 - duration experiments on a JAX hierarchical lognormal path
 - linear experiments on a JAX hierarchical Gaussian path
 - latent-class probability extraction

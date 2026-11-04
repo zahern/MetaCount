@@ -18,6 +18,7 @@ A JAX-first Python package for hierarchical model fitting and metaheuristic-driv
 - [Model families](#model-families)
   - [Count models](#count-models-poisson--negative-binomial)
   - [CMF models](#cmf-models)
+  - [Hierarchical SPF / CMF search](#hierarchical-spf--cmf-search)
   - [Duration models](#duration-models)
   - [Linear models](#linear-models)
 - [Latent class models](#latent-class-models)
@@ -518,6 +519,89 @@ cmf.print_report(search, fit)
 ```python
 get_help('cmf')   # full workflow guide
 ```
+
+### Hierarchical SPF / CMF search
+
+Hierarchical safety performance functions with crash-modification-function
+sub-models (Chen & Persaud, 2014, *Accident Analysis and Prevention* 70,
+131–139, Eq. 13). The first-level SPF keeps its AADT form, and local
+factors either scale it (Component A, a CMF `exp(alpha x)`) or reshape a
+traffic elasticity (a CM-Function in the AADT exponent):
+
+```
+mu = A * AADT_1^B_1 * ... * AADT_M^B_M * exp(offset)
+ln A = ln(alpha0) + sum_k alpha_k x_k
+B_m  = b0_m * exp(sum_j beta_mj z_j)          # exponent_form="exp" (paper)
+B_m  = b0_m + sum_j beta_mj z_j                # exponent_form="linear"
+```
+
+One or several AADT terms are supported (e.g. a single segment AADT, or
+major + minor approach AADT). NB2 uses the SAS NLMIXED convention
+`Var = mu + alpha mu^2`, so estimates are directly comparable with the paper.
+
+Any coefficient can be random: site level (panel: constant across a
+site's years; optionally correlated), group level (e.g. corridor or
+district), or **both** levels (`beta_ij = beta + s_g u_j + s_s v_ij`).
+The integrals are nested correctly (site draws inside each site, group
+draws across the group's sites).
+
+**Fit a given structure**
+
+```python
+from metacountregressor import HierarchicalSPFSpec, fit_hierarchical_spf
+
+spec = HierarchicalSPFSpec(
+    aadt_cols=["AADT_MAJ", "AADT_MIN"],          # or just ["AADT"]
+    a_terms=["LT", "RT"],                        # Component A (CMFs)
+    b_terms={"AADT_MAJ": ["CLASS"],              # CM-Functions in the exponents
+             "AADT_MIN": ["CLASS"]},
+    exponent_form="exp",
+    site_col="SITE",                             # panel id (e.g. 6 years per site)
+    random={"b0[AADT_MAJ]": "site"},             # optional random parameters
+)
+fit = fit_hierarchical_spf(df, "CRASHES", spec, R=300)
+print(fit.summary())             # estimates in the paper's units, AIC/BIC in .attrs
+print(fit.cm_function("LT", [1, 2, 3, 4]))      # CMFs for 1-4 left-turn approaches
+```
+
+**Search for the components**
+
+`HierarchicalSPFSearch` chooses which candidate variables enter Component A
+or which AADT exponent, which coefficients are random and at which level,
+and (optionally) the exponent form, minimising BIC (or AIC). With
+`significance=0.10` it also applies the paper's rule that every retained
+coefficient must be significant at the 10% level.
+
+```python
+from metacountregressor import HierarchicalSPFSearch
+
+search = HierarchicalSPFSearch(
+    df, "CRASHES",
+    aadt_cols=["AADT"],                          # single-AADT segment SPF
+    candidates=["LANES", "URBAN", "WIDTH", "CURVES"],
+    site_col="SITE", group_col="CORRIDOR", offset_col="LN_LENGTH",
+    random_levels=("site", "group", "both"),     # random-parameter flavours to try
+    max_random=2,
+    exponent_forms=("exp", "linear"),
+    criterion="bic",
+    significance=0.10,                           # optional: paper's admissibility rule
+    R=100, final_R=500,                          # cheap draws while searching, more for the final fit
+)
+result = search.run(max_iter=60, seed=0)
+
+print(result.describe())          # the selected equation
+print(result.summary())           # final refit with standard errors
+print(result.leaderboard.head())  # every structure evaluated, best first
+```
+
+The search uses simulated annealing over single changes (add, drop, move a
+variable between Component A and an exponent, change a coefficient's random
+level, switch exponent form), then a greedy pass from the best structure,
+then a final refit with `final_R` draws. On simulated data with a known
+structure (A = LANES, exponent = URBAN, site-random elasticity, two
+irrelevant candidates) it ranks the true structure first. Two-level
+(group + site) models need roughly 1000 outer draws for unbiased variance
+estimates.
 
 ### Duration models
 

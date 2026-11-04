@@ -163,3 +163,26 @@ def test_single_aadt_supports_every_flavour(random, correlated):
     assert s.loc["alpha[LANES]", "estimate"] == pytest.approx(-0.15, abs=0.1)
     if correlated:
         assert fit.site_covariance().shape == (2, 2)
+
+
+def test_search_selects_true_components():
+    df = _one_aadt(n_sites=250, years=4, seed=5)
+    rng = np.random.default_rng(0)
+    df["NOISE"] = rng.normal(size=df.SITE.nunique())[df.SITE]
+    from metacountregressor.hierarchical_spf import HierarchicalSPFSearch
+    search = HierarchicalSPFSearch(
+        df, "Y", aadt_cols=["AADT"], candidates=["LANES", "URBAN", "NOISE"],
+        site_col="SITE", group_col="DIST", offset_col="LNLEN",
+        random_levels=(), significance=0.10, R=20, final_R=20, verbose=False)
+    res = search.run(max_iter=10, seed=1)
+    assert res.best_spec.a_terms == ["LANES"]
+    assert res.best_spec.b_terms == {"AADT": ["URBAN"]}
+    assert res.leaderboard.score.iloc[0] == pytest.approx(res.best_score)
+    assert "ln(AADT)" in res.describe()
+
+
+def test_search_rejects_group_levels_without_group_col():
+    from metacountregressor.hierarchical_spf import HierarchicalSPFSearch
+    with pytest.raises(ValueError, match="group_col"):
+        HierarchicalSPFSearch(_one_aadt(n_sites=20), "Y", aadt_cols=["AADT"],
+                              candidates=["LANES"], random_levels=("group",))

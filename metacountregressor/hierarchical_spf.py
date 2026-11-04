@@ -62,7 +62,8 @@ from jax.scipy.special import gammaln, logsumexp
 
 jax.config.update("jax_enable_x64", True)
 
-__all__ = ["HierarchicalSPFSpec", "HierarchicalSPF", "fit_hierarchical_spf"]
+__all__ = ["HierarchicalSPFSpec", "HierarchicalSPF", "fit_hierarchical_spf",
+           "HierarchicalSPFSearch", "SearchResult"]
 
 _LEVELS = ("site", "group", "both")
 
@@ -432,7 +433,7 @@ class HierarchicalSPF:
         return p, f
 
     def fit(self, df: pd.DataFrame, y_col: str, maxiter: int = 2000,
-            start: Optional[np.ndarray] = None):
+            start: Optional[np.ndarray] = None, compute_se: bool = True):
         y = self._prepare(df, y_col)
         lay = self._layout()
         p0 = self._start(y) if start is None else np.asarray(start, float)
@@ -441,22 +442,27 @@ class HierarchicalSPF:
             fixed = HierarchicalSPF(
                 HierarchicalSPFSpec(**{**self.spec.__dict__, "random": {}}),
                 R=self.R, inner_draws=self.S, seed=self.seed)
-            fixed.fit(df, y_col, maxiter=maxiter)
+            fixed.fit(df, y_col, maxiter=maxiter, compute_se=False)
             p0[:self._P] = fixed.result_["params"][:self._P]
             if "ln_disp" in lay:
                 p0[lay["ln_disp"][0]] = fixed.result_["params"][-1]
         res = self._optimize(self.negloglik, p0, maxiter)
         p_hat = np.asarray(res.x, float)
-        hess = jax.jit(jax.hessian(self.negloglik))
-        p_hat, f_hat = self._newton_polish(p_hat, float(res.fun), hess)
-        res.fun = f_hat
-        H = np.asarray(hess(jnp.asarray(p_hat)))
-        H = 0.5 * (H + H.T)
-        try:
-            cov = np.linalg.inv(H)
-            se = np.sqrt(np.where(np.diag(cov) > 0, np.diag(cov), np.nan))
-        except np.linalg.LinAlgError:
-            cov, se = None, np.full(len(p_hat), np.nan)
+        cov, se = None, np.full(len(p_hat), np.nan)
+        if compute_se or not (self._site_rand or self._group_rand):
+            # Newton polish needs the Hessian; for fixed models it is cheap,
+            # so always polish them (ln a0 / elasticity collinearity).
+            hess = jax.jit(jax.hessian(self.negloglik))
+            p_hat, f_hat = self._newton_polish(p_hat, float(res.fun), hess)
+            res.fun = f_hat
+            if compute_se:
+                H = np.asarray(hess(jnp.asarray(p_hat)))
+                H = 0.5 * (H + H.T)
+                try:
+                    cov = np.linalg.inv(H)
+                    se = np.sqrt(np.where(np.diag(cov) > 0, np.diag(cov), np.nan))
+                except np.linalg.LinAlgError:
+                    cov = None
         ll = -float(res.fun)
         k = len(p_hat)
         n = self._N
@@ -516,3 +522,259 @@ def fit_hierarchical_spf(df: pd.DataFrame, y_col: str, spec: HierarchicalSPFSpec
     """Convenience wrapper: build, fit and return a :class:`HierarchicalSPF`."""
     return HierarchicalSPF(spec, R=R, inner_draws=inner_draws,
                            seed=seed).fit(df, y_col, maxiter=maxiter)
+
+
+
+# ======================================================================
+# Specification search
+# ======================================================================
+@dataclass
+class SearchResult:
+    """Outcome of :class:`HierarchicalSPFSearch`.
+
+    ``best_spec`` / ``best_fit`` are the selected structure and its final
+    refit (with standard errors and the full draw count); ``leaderboard``
+    lists every evaluated structure, best first.
+    """
+    best_spec: HierarchicalSPFSpec
+    best_fit: HierarchicalSPF
+    best_score: float
+    leaderboard: pd.DataFrame
+    history: List[float]
+
+    def summary(self) -> pd.DataFrame:
+        return self.best_fit.summary()
+
+    def describe(self) -> str:
+        sp = self.best_spec
+        lines = ["ln mu = ln(alpha0)"
+                 + "".join(f" + alpha[{x}]*{x}" for x in sp.a_terms)]
+        for m in sp.aadt_cols:
+            zs = sp.b_terms.get(m, [])
+            if sp.exponent_form == "exp":
+                expo = f"b0[{m}]" + (" * exp(" + " + ".join(f"beta[{m}|{z}]*{z}" for z in zs) + ")" if zs else "")
+            else:
+                expo = f"b0[{m}]" + "".join(f" + beta[{m}|{z}]*{z}" for z in zs)
+            lines.append(f"        + ({expo}) * ln({m})")
+        if sp.random:
+            lines.append("random: " + ", ".join(f"{k} ({v})" for k, v in sp.random.items()))
+        return "\n".join(lines)
+
+
+class HierarchicalSPFSearch:
+    """Search the component structure of a hierarchical SPF / CMF model.
+
+    Decision per candidate variable: excluded, in Component A (a CMF
+    ``exp(alpha x)``), or in the exponent sub-model of one AADT term (a
+    CM-Function that reshapes the traffic elasticity, Chen & Persaud 2014
+    Eq. 13). Decision per included coefficient (and per base elasticity
+    ``b0[AADT]``): fixed, or random at one of ``random_levels``. Optionally
+    the exponent form (``"exp"`` / ``"linear"``).
+
+    Scoring is BIC (or AIC) of the maximum (simulated) likelihood fit. With
+    ``significance=0.10`` a structure is only admissible if every
+    non-intercept coefficient is significant at that level (the paper's
+    rule); inadmissible structures are penalised rather than discarded so
+    the search can move through them.
+
+    Search: simulated annealing over single-change moves (add / drop /
+    move between components / change random level / change form), then a
+    greedy best-improvement pass from the incumbent, then a final refit with
+    ``final_R`` draws and standard errors.
+    """
+
+    def __init__(self, df: pd.DataFrame, y_col: str, aadt_cols: List[str],
+                 candidates: List[str], site_col: Optional[str] = None,
+                 group_col: Optional[str] = None, offset_col: Optional[str] = None,
+                 family: str = "nb2", exponent_forms=("exp",),
+                 allow_a: Optional[List[str]] = None,
+                 allow_b: Optional[Dict[str, List[str]]] = None,
+                 force_a: Optional[List[str]] = None,
+                 random_levels=("site",), randomisable: Optional[List[str]] = None,
+                 max_random: int = 2, max_terms: Optional[int] = None,
+                 criterion: str = "bic", significance: Optional[float] = None,
+                 R: int = 100, inner_draws: int = 32, final_R: int = 300,
+                 final_inner_draws: int = 100, maxiter: int = 800,
+                 verbose: bool = True):
+        self.df, self.y_col = df, y_col
+        self.aadt_cols = list(aadt_cols)
+        self.candidates = list(candidates)
+        self.site_col, self.group_col, self.offset_col = site_col, group_col, offset_col
+        self.family = family
+        self.forms = tuple(exponent_forms)
+        self.allow_a = set(self.candidates if allow_a is None else allow_a)
+        self.allow_b = {m: set(self.candidates if allow_b is None else allow_b.get(m, []))
+                        for m in self.aadt_cols}
+        self.force_a = set(force_a or [])
+        levels = tuple(random_levels or ())
+        if any(l in ("group", "both") for l in levels) and group_col is None:
+            raise ValueError("group-level random parameters need group_col")
+        if any(l not in _LEVELS for l in levels):
+            raise ValueError(f"random_levels must be drawn from {_LEVELS}")
+        self.levels = levels
+        self.randomisable = None if randomisable is None else set(randomisable)
+        self.max_random = int(max_random)
+        self.max_terms = max_terms
+        if criterion not in ("bic", "aic"):
+            raise ValueError("criterion must be 'bic' or 'aic'")
+        self.criterion = criterion
+        self.significance = significance
+        self.R, self.S, self.final_R, self.final_S = R, inner_draws, final_R, final_inner_draws
+        self.maxiter = maxiter
+        self.verbose = verbose
+        self._cache: Dict[tuple, tuple] = {}
+
+    # -- state <-> spec ---------------------------------------------------
+    # state = (form, roles tuple, random tuple-of-(label, level) sorted)
+    #   role: 0 excluded, 1 Component A, 2+m exponent of aadt_cols[m]
+    def _spec(self, state) -> HierarchicalSPFSpec:
+        form, roles, rand = state
+        a = [v for v, r in zip(self.candidates, roles) if r == 1]
+        b = {m: [v for v, r in zip(self.candidates, roles) if r == 2 + j]
+             for j, m in enumerate(self.aadt_cols)}
+        return HierarchicalSPFSpec(
+            aadt_cols=self.aadt_cols, a_terms=a, b_terms={m: z for m, z in b.items() if z},
+            exponent_form=form, random=dict(rand), correlated=False,
+            family=self.family, site_col=self.site_col, group_col=self.group_col,
+            offset_col=self.offset_col)
+
+    def _role_options(self, v):
+        opts = [0]
+        if v in self.allow_a:
+            opts.append(1)
+        opts += [2 + j for j, m in enumerate(self.aadt_cols) if v in self.allow_b[m]]
+        if v in self.force_a:
+            opts = [1]
+        return opts
+
+    def _labels_of(self, state):
+        return set(self._spec(state).labels())
+
+    def _random_candidates(self, state):
+        labs = [l for l in self._spec(state).labels() if l != "ln_alpha0"] + ["ln_alpha0"]
+        if self.randomisable is not None:
+            labs = [l for l in labs if l in self.randomisable or
+                    any(l == f"alpha[{x}]" or l.startswith(f"beta[") and l.endswith(f"|{x}]")
+                        for x in self.randomisable)]
+        return labs
+
+    def _clean(self, state):
+        form, roles, rand = state
+        labs = self._labels_of((form, roles, ()))
+        rand = tuple(sorted((k, v) for k, v in rand if k in labs))[: self.max_random]
+        return (form, tuple(roles), rand)
+
+    # -- scoring ----------------------------------------------------------
+    def evaluate(self, state):
+        state = self._clean(state)
+        if state in self._cache:
+            return self._cache[state][0]
+        sp = self._spec(state)
+        n_terms = len(sp.a_terms) + sum(len(z) for z in sp.b_terms.values())
+        if self.max_terms is not None and n_terms > self.max_terms:
+            self._cache[state] = (np.inf, None)
+            return np.inf
+        try:
+            m = HierarchicalSPF(sp, R=self.R, inner_draws=self.S)
+            m.fit(self.df, self.y_col, maxiter=self.maxiter,
+                  compute_se=self.significance is not None)
+            r = m.result_
+            score = r["bic"] if self.criterion == "bic" else r["aic"]
+            if not np.isfinite(score):
+                raise FloatingPointError
+            if self.significance is not None:
+                from scipy.stats import norm as _norm
+                crit = _norm.ppf(1 - self.significance / 2)
+                names = m.param_names()
+                t = np.abs(r["params"] / r["se"])
+                bad = [n for n, tv in zip(names, t)
+                       if n.startswith(("alpha[", "beta[")) and not (tv >= crit)]
+                # each non-significant coefficient costs a large penalty
+                score = score + 1e3 * len(bad)
+        except Exception:
+            score, m = np.inf, None
+        self._cache[state] = (float(score), m)
+        if self.verbose:
+            print(f"  [{len(self._cache):3d}] {self.criterion.upper()}={score:12.2f}  "
+                  f"{self._short(state)}")
+        return float(score)
+
+    def _short(self, state):
+        sp = self._spec(state)
+        parts = [f"A={sp.a_terms}"] + [f"B[{m}]={z}" for m, z in sp.b_terms.items()]
+        if sp.random:
+            parts.append(f"rand={sp.random}")
+        if len(self.forms) > 1:
+            parts.append(sp.exponent_form)
+        return " ".join(parts)
+
+    # -- neighbourhood ----------------------------------------------------
+    def _neighbours(self, state):
+        form, roles, rand = state
+        out = []
+        for i, v in enumerate(self.candidates):
+            for r in self._role_options(v):
+                if r != roles[i]:
+                    nr = list(roles); nr[i] = r
+                    out.append((form, tuple(nr), rand))
+        if self.levels:
+            cur = dict(rand)
+            for lab in self._random_candidates(state):
+                for lvl in (None,) + self.levels:
+                    if cur.get(lab) == lvl:
+                        continue
+                    nd = dict(cur)
+                    if lvl is None:
+                        nd.pop(lab, None)
+                    else:
+                        if lab not in nd and len(nd) >= self.max_random:
+                            continue
+                        nd[lab] = lvl
+                    out.append((form, roles, tuple(sorted(nd.items()))))
+        for f in self.forms:
+            if f != form:
+                out.append((f, roles, rand))
+        return [self._clean(s) for s in out]
+
+    # -- driver -----------------------------------------------------------
+    def run(self, max_iter: int = 60, seed: int = 0, T0: Optional[float] = None,
+            cooling: float = 0.93, greedy_polish: bool = True,
+            init: Optional[dict] = None) -> SearchResult:
+        rng = np.random.default_rng(seed)
+        roles = [1 if v in self.force_a else 0 for v in self.candidates]
+        if init:
+            for v, r in init.items():
+                roles[self.candidates.index(v)] = r
+        cur = self._clean((self.forms[0], tuple(roles), ()))
+        f_cur = self.evaluate(cur)
+        best, f_best = cur, f_cur
+        T = T0 if T0 is not None else max(10.0, 0.002 * abs(f_cur) if np.isfinite(f_cur) else 10.0)
+        history = [f_best]
+        for it in range(max_iter):
+            nbrs = self._neighbours(cur)
+            if not nbrs:
+                break
+            cand = nbrs[int(rng.integers(len(nbrs)))]
+            f_c = self.evaluate(cand)
+            if np.isfinite(f_c) and (f_c < f_cur or rng.random() < np.exp(-(f_c - f_cur) / max(T, 1e-9))):
+                cur, f_cur = cand, f_c
+                if f_c < f_best:
+                    best, f_best = cand, f_c
+            T *= cooling
+            history.append(f_best)
+        if greedy_polish:
+            improved = True
+            while improved:
+                improved = False
+                for cand in self._neighbours(best):
+                    f_c = self.evaluate(cand)
+                    if f_c < f_best - 1e-9:
+                        best, f_best, improved = cand, f_c, True
+                history.append(f_best)
+        # final refit with more draws and standard errors
+        spec = self._spec(best)
+        final = HierarchicalSPF(spec, R=self.final_R, inner_draws=self.final_S)
+        final.fit(self.df, self.y_col, maxiter=max(self.maxiter, 2000))
+        rows = [dict(score=v[0], structure=self._short(k)) for k, v in self._cache.items()]
+        board = pd.DataFrame(rows).sort_values("score").reset_index(drop=True)
+        return SearchResult(spec, final, float(f_best), board, history)
