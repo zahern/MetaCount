@@ -1297,15 +1297,23 @@ def _nested_hierarchical_loglik(params, data, spec, indivi=False):
                      sd[None, :, None] * data["draws_ind"])      # (N,P,R)
     eta_b = eta - c_v                                            # group part
     S = min(R, _NESTED_INNER_DRAWS)
-    eta2 = jnp.clip(eta_b[..., :, None] + c_v[..., None, :S], -25.0, 25.0)
-    y = ensure_3d(data["y"])[..., None]                          # (N,P,1,1)
-    mask = ensure_3d(data["mask"])[..., None]
-    if spec.model == "poisson":
-        ll = poisson_loglik(y, jnp.exp(eta2))
-    else:
-        ll = nb2_loglik(y, eta2, blocks["alpha"])
-    ll_site = jnp.sum(ll * mask, axis=1)                          # (N,R,S)
-    ll_site_r = jsp.special.logsumexp(ll_site, axis=-1) - jnp.log(S)   # (N,R)
+    y = ensure_3d(data["y"])                                     # (N,P,1)
+    mask = ensure_3d(data["mask"])
+    c_in = c_v[..., :S]                                          # (N,P,S)
+
+    def _per_outer(r):
+        # one outer (group) draw at a time, checkpointed: memory is
+        # O(N*P*S) instead of O(N*P*R*S) (R=1000 previously ran out of RAM)
+        eta2 = jnp.clip(eta_b[..., r][..., None] + c_in, -25.0, 25.0)
+        if spec.model == "poisson":
+            ll = poisson_loglik(y, jnp.exp(eta2))
+        else:
+            ll = nb2_loglik(y, eta2, blocks["alpha"])
+        ll_site = jnp.sum(ll * mask, axis=1)                     # (N,S)
+        return jsp.special.logsumexp(ll_site, axis=-1) - jnp.log(S)
+
+    ll_site_r = jax.lax.map(jax.checkpoint(_per_outer),
+                            jnp.arange(R)).T                     # (N,R)
     if indivi:
         return jsp.special.logsumexp(ll_site_r, axis=-1) - jnp.log(R)
     n_groups = data["draws_g"].shape[0]

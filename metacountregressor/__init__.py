@@ -147,6 +147,9 @@ __all__ = [
     "PavementMultiObjectiveEvaluator",
     # pavement building blocks
     "fit_form",
+    "HierarchicalSPFSpec",
+    "HierarchicalSPF",
+    "fit_hierarchical_spf",
     "build_design",
     "transform_col",
     "discretize",
@@ -315,6 +318,9 @@ _EXPORTS = {
         "pavement_search", "PavementMultiObjectiveEvaluator"),
     # pavement building blocks
     "fit_form": ("pavement_forms", "fit_form"),
+    "HierarchicalSPFSpec": ("hierarchical_spf", "HierarchicalSPFSpec"),
+    "HierarchicalSPF": ("hierarchical_spf", "HierarchicalSPF"),
+    "fit_hierarchical_spf": ("hierarchical_spf", "fit_hierarchical_spf"),
     "build_design": ("pavement_forms", "build_design"),
     "transform_col": ("pavement_forms", "transform_col"),
     "discretize": ("pavement_markov", "discretize"),
