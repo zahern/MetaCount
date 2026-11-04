@@ -35,16 +35,18 @@ from .pavement_minimize import minimize, expit
 FAMILIES = ("exponential", "weibull", "gompertz", "loglogistic")
 
 
-def _design_matrix(Xc, names, form, lam_vec, cat_dummies=None, shape=None):
+def _design_matrix(Xc, names, form, lam_vec, cat_dummies=None, shape=None,
+                   gp_callable=None):
     """Thin wrapper so this module can reuse the form transforms."""
     from .pavement_forms import build_design
     return build_design(np.asarray(Xc, float), names, form,
                         np.asarray(lam_vec, float) if lam_vec is not None else None,
-                        shape=shape, cat_dummies=cat_dummies)
+                        shape=shape, cat_dummies=cat_dummies,
+                        gp_callable=gp_callable)
 
 
 def _build_covariate_design(Xc, names, form, lam_vec, active_mask,
-                            cat_dummies, shape):
+                            cat_dummies, shape, gp_callable=None):
     """Build the covariate design exactly as used in fitting.
 
     Raw ``Xc`` (n, p) + feature ``names`` are reduced to the active columns
@@ -56,6 +58,9 @@ def _build_covariate_design(Xc, names, form, lam_vec, active_mask,
     Xc = np.asarray(Xc, float)
     p = len(names)
     if active_mask is None:
+        active_mask = np.ones(p, bool)
+    if int(form) == 11:
+        # GP tree indexes the full continuous column order (mask unused)
         active_mask = np.ones(p, bool)
     Xa = Xc[:, active_mask]
     names_a = [names[j] for j in range(p) if active_mask[j]]
@@ -69,7 +74,8 @@ def _build_covariate_design(Xc, names, form, lam_vec, active_mask,
             cd = np.tile(cd.mean(0, keepdims=True), (Xa.shape[0], 1))
         cat_dummies = cd
     return _design_matrix(Xa, names_a, form, lam_a,
-                          cat_dummies=cat_dummies, shape=shape)
+                          cat_dummies=cat_dummies, shape=shape,
+                          gp_callable=gp_callable)
 
 
 def _neg_log_likelihood(params, family, t, event, Xd):
@@ -98,7 +104,9 @@ def _neg_log_likelihood(params, family, t, event, Xd):
         z = np.clip(t / scale, 1e-9, 1e9)
         # Log-space evaluation: h and S are computed from log terms so large
         # p / z combinations cannot overflow intermediate powers.
-        log_h = (np.log(p) - p * np.log(scale)
+        # h = dH/dt with H = z**p * exp(lin), z = t/scale
+        #   = (p/scale) * z**(p-1) * exp(lin)
+        log_h = (np.log(p) - np.log(scale)
                  + (p - 1.0) * np.log(z) + lin)
         log_h = np.clip(log_h, -700.0, 700.0)
         h = np.exp(log_h)
@@ -123,7 +131,8 @@ def _neg_log_likelihood(params, family, t, event, Xd):
         scale = np.exp(np.clip(log_scale, -10.0, 10.0))
         lin = np.clip(Xd @ beta, -30.0, 30.0)
         z = np.clip(t / scale, 1e-9, 1e9)
-        h = (p / scale) * z ** (p - 1) * np.exp(lin) / (1.0 + z ** p)
+        # H = log(1 + z**p e^lin)  =>  h = (p/scale) z**(p-1) e^lin / (1 + z**p e^lin)
+        h = (p / scale) * z ** (p - 1) * np.exp(lin) / (1.0 + z ** p * np.exp(lin))
         logS = -np.clip(np.log1p(z ** p * np.exp(lin)), -30.0, 30.0)
         ll = np.sum(event * np.log(h + 1e-12) + logS)
     else:
@@ -133,7 +142,7 @@ def _neg_log_likelihood(params, family, t, event, Xd):
 
 def fit_hazard(Xc, names, form, lam_vec, t, event,
                family="weibull", cat_dummies=None, shape=None,
-               active_mask=None):
+               active_mask=None, gp_callable=None):
     """Fit a parametric hazard model for one cluster.
 
     Parameters
@@ -156,7 +165,7 @@ def fit_hazard(Xc, names, form, lam_vec, t, event,
     na = Xa.shape[1]
     names_a = [names[j] for j in range(p) if active_mask[j]]
     Xd = _build_covariate_design(Xc, names, form, lam_vec, active_mask,
-                                cat_dummies, shape)
+                                cat_dummies, shape, gp_callable=gp_callable)
     # Xd is the covariate design only (no intercept column); the baseline /
     # shape parameter is params[0] (and params[1] for shape families).
     q = Xd.shape[1]
@@ -203,7 +212,9 @@ def fit_hazard(Xc, names, form, lam_vec, t, event,
         "n_params": int(n_params),
         "loglik": float(ll),
         "bic": float(bic),
-        "beta": params[1:],
+        # covariate coefficients only (shape families carry 2 baseline params)
+        "beta": params[2:] if family in ("weibull", "loglogistic", "gompertz")
+        else params[1:],
         "hazard_fn": hazard_fn,
         "survival_fn": survival_fn,
     }
@@ -220,7 +231,8 @@ def _hazard_from(params, family, t, Xd):
         return np.exp(params[0]) * np.exp(params[1] * t) * np.exp(Xd @ params[2:])
     if family == "loglogistic":
         p = np.exp(params[1]); scale = np.exp(params[0]); z = t / scale
-        return (p / scale) * z ** (p - 1) * np.exp(Xd @ params[2:]) / (1.0 + z ** p)
+        e = np.exp(Xd @ params[2:])
+        return (p / scale) * z ** (p - 1) * e / (1.0 + z ** p * e)
 
 
 def _survival_from(params, family, t, Xd):
@@ -254,13 +266,15 @@ class HazardModel:
             "active_mask": kw.get("active_mask"),
             "cat_dummies": kw.get("cat_dummies"),
             "shape": kw.get("shape"),
+            "gp_callable": kw.get("gp_callable"),
         }
         return self
 
     def _design(self, Xnew):
         s = self._spec
         return _build_covariate_design(Xnew, s["names"], s["form"], s["lam_vec"],
-                                       s["active_mask"], s["cat_dummies"], s["shape"])
+                                       s["active_mask"], s["cat_dummies"], s["shape"],
+                                       gp_callable=s.get("gp_callable"))
 
     def predict_hazard(self, t, Xnew):
         return self.fitted["hazard_fn"](t, self._design(Xnew))

@@ -73,9 +73,15 @@ def tree_to_lambda(tree, n_vars):
         if node[0] == "sub":
             return f"({compile_node(node[1])} - {compile_node(node[2])})"
         if node[0] == "div":
-            return f"(np.where(np.abs({compile_node(node[2])})<1e-9, 1e-9, {compile_node(node[2])}))"
+            # protected division a / b (the old code returned b alone)
+            den = compile_node(node[2])
+            return (f"({compile_node(node[1])} / "
+                    f"np.where(np.abs({den}) < 1e-9, 1e-9, {den}))")
         if node[0] == "pow":
-            return f"np.clip({compile_node(node[1])}, -5, 5)**2"  # squared for stability
+            # protected power |a| ** b with a bounded exponent (the old code
+            # ignored the exponent sub-tree and always squared)
+            return (f"np.power(np.clip(np.abs({compile_node(node[1])}), 1e-6, 1e6), "
+                    f"np.clip({compile_node(node[2])}, -3.0, 3.0))")
         if node[0] == "log":
             return f"np.log(np.clip({compile_node(node[1])}, 1e-6, None))"
         if node[0] == "exp":
@@ -144,11 +150,13 @@ def _replace(root, target, repl):
 
 def _ols_bic(Xd, y):
     Xd = np.hstack([np.ones((Xd.shape[0], 1)), Xd])
+    if not np.all(np.isfinite(Xd)):
+        return np.inf
     if Xd.shape[0] <= Xd.shape[1] or np.linalg.matrix_rank(Xd) < Xd.shape[1]:
         return np.inf
     beta, *_ = np.linalg.lstsq(Xd, y, rcond=None)
     resid = y - Xd @ beta
-    rss = float(resid @ resid)
+    rss = max(float(resid @ resid), 1e-300)
     n, p = Xd.shape
     return n * np.log(rss / n) + p * np.log(n)
 
@@ -179,16 +187,23 @@ class GPSymbolicRegressor:
         rng = self.rng
         pop = [make_tree(rng, self.max_depth, n_vars) for _ in range(self.pop_size)]
         fit = [self._fitness(t, Xc, y, n_vars) for t in pop]
+        def tournament():
+            # k-way tournament on BIC (lower is better). The previous code
+            # compared BIC values with random *indices* inside min(), which
+            # was not a selection operator at all.
+            cand = [rng.randrange(self.pop_size)
+                    for _ in range(max(2, int(self.tournament)))]
+            return min(cand, key=lambda i: fit[i])
+
         for _ in range(self.generations):
-            new_pop = []
+            elite = int(np.argmin(fit))
+            new_pop = [pop[elite]]                 # elitism: keep the best
             while len(new_pop) < self.pop_size:
-                i1 = min(range(self.pop_size),
-                         key=lambda i: fit[i] if rng.random() < 0.5
-                         else rng.randrange(self.pop_size))
-                i2 = min(range(self.pop_size),
-                         key=lambda i: fit[i] if rng.random() < 0.5
-                         else rng.randrange(self.pop_size))
-                p1, p2 = _crossover(pop[i1], pop[i2], rng)
+                p1, p2 = pop[tournament()], pop[tournament()]
+                if rng.random() < self.cross_rate:
+                    p1, p2 = _crossover(p1, p2, rng)
+                else:
+                    p1, p2 = deepcopy(p1), deepcopy(p2)
                 if rng.random() < self.mut_rate:
                     p1 = _mutate(p1, rng, n_vars, self.max_depth)
                 if rng.random() < self.mut_rate:

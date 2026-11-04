@@ -106,7 +106,22 @@ class PavementDeteriorationEvaluator:
     """Evaluate one full decision structure -> composite BIC_tot."""
     def __init__(self, df, id_col, psi_col, cont_vars, cat_vars,
                  constraints: Constraints, time_col="age",
-                 treatment_col=None):
+                 treatment_col=None, gp_budget=None):
+        # Drop rows whose response / continuous covariates are not finite:
+        # the least-squares and MLE layers cannot use them, and leaving them
+        # in made every structure raise "SVD did not converge".
+        need = [psi_col] + list(cont_vars)
+        finite = np.isfinite(df[need].to_numpy(float)).all(axis=1)
+        if not finite.all():
+            import warnings
+            warnings.warn(f"PavementDeteriorationEvaluator: dropping "
+                          f"{int((~finite).sum())} row(s) with non-finite "
+                          f"{psi_col}/continuous covariates.", RuntimeWarning)
+            df = df.loc[finite].copy()
+        # GP form (11) without a supplied tree: evolve one per cluster.
+        self.gp_budget = dict(pop_size=30, generations=8, max_depth=3, seed=0)
+        if gp_budget:
+            self.gp_budget.update(gp_budget)
         self.df = df
         self.id_col = id_col
         self.psi_col = psi_col
@@ -163,18 +178,33 @@ class PavementDeteriorationEvaluator:
             shape = structure.get("shape", [None] * K)[k]
             cat = self._cat_dummies(df_k)
             gp_call = None
-            if form == 11 and structure.get("gp_tree") is not None:
-                from .pavement_gp import tree_to_lambda
-                gp_call = tree_to_lambda(structure["gp_tree"][k], p)
+            gp_tree_k = None
+            if form == 11:
+                from .pavement_gp import tree_to_lambda, GPSymbolicRegressor
+                trees = structure.get("gp_tree")
+                gp_tree_k = trees[k] if trees is not None else None
+                if gp_tree_k is None:
+                    gp_tree_k = GPSymbolicRegressor(**self.gp_budget).search(
+                        Xc, y, n_vars=p)["tree"]
+                gp_call = tree_to_lambda(gp_tree_k, p)
 
             # (1) regression / functional form
-            fit = fit_form(Xc, y, self.cont_vars, form, mask,
-                           cat_dummies=cat, lam0=lam, shape0=shape,
-                           gp_callable=gp_call)
+            try:
+                fit = fit_form(Xc, y, self.cont_vars, form, mask,
+                               cat_dummies=cat, lam0=lam, shape0=shape,
+                               gp_callable=gp_call)
+            except (ValueError, np.linalg.LinAlgError, FloatingPointError):
+                res = EvalResult(np.inf, np.inf, np.inf, np.inf)
+                self.cache[key] = res
+                return res
+            if gp_tree_k is not None:
+                fit["gp_tree"] = gp_tree_k
             n_k = len(y)
             total_n += n_k
             if temporal_codes is None:
-                k_reg = n_k * np.log(fit["rss"] / n_k) \
+                # floor the RSS so a (near-)perfect fit cannot give -inf BIC
+                rss_k = max(float(fit["rss"]), 1e-12 * n_k)
+                k_reg = n_k * np.log(rss_k / n_k) \
                     + fit["n_params"] * np.log(n_k)
             else:
                 model = str(temporal_codes[k])
@@ -184,6 +214,7 @@ class PavementDeteriorationEvaluator:
                     self.cache[key] = res
                     return res
                 rss_c, n_c, k_c, t_fit = t_out
+                rss_c = max(rss_c, 1e-12 * n_c)
                 k_reg = n_c * np.log(rss_c / n_c) + k_c * np.log(n_c)
                 temporal[k] = {"model": model, "rss_cond": rss_c,
                                "n_cond": n_c, "n_params": k_c, "fit": t_fit}
@@ -191,7 +222,8 @@ class PavementDeteriorationEvaluator:
             fits[k] = fit
 
             # (2) Markov layer (if active)
-            if bool(structure.get("markov_on", [False] * K)[k]):
+            if bool(structure.get("markov_on", [False] * K)[k]) and \
+                    self.constraints.allow_markov:
                 R = int(structure["R"])
                 theta = structure["theta"][k]
                 states = discretize(df_k[self.psi_col].to_numpy(float), theta)
@@ -205,17 +237,18 @@ class PavementDeteriorationEvaluator:
                 transitions[k] = tr
 
             # (3) Hazard / survival layer (if active)
-            if bool(structure.get("hazard_on", [False] * K)[k]):
+            if bool(structure.get("hazard_on", [False] * K)[k]) and \
+                    self.constraints.allow_hazard:
                 t = df_k[self.time_col].to_numpy(float)
                 # event = first interval where a treatment is recorded, else censor
                 if self.treatment_col:
                     event = df_k[self.treatment_col].to_numpy(float) > 0
                 else:
                     event = np.zeros(len(df_k), int)
-                hz = fit_hazard(Xc, self.cont_vars, form,
-                                np.asarray(structure["lam"][k]),
+                hz = fit_hazard(Xc, self.cont_vars, form, lam,
                                 t, event, family=structure.get("hazard_family", "weibull"),
-                                cat_dummies=cat, active_mask=mask)
+                                cat_dummies=cat, active_mask=mask,
+                                shape=fit.get("shape"), gp_callable=gp_call)
                 bic_haz += hz["bic"]
                 hazards[k] = hz
 

@@ -1355,6 +1355,9 @@ class PavementCLROptimizer:
         temporal_search: bool = False,
         temporal_candidates: Optional[Sequence[str]] = None,
         temporal_flip_prob: float = 0.15,
+        max_move_frac: float = 0.2,
+        anneal_step: bool = True,
+        exchange_refine: bool = True,
     ):
         if temporal_model not in self._TEMPORAL_MODELS:
             raise ValueError(
@@ -1389,6 +1392,16 @@ class PavementCLROptimizer:
         self.temporal_search = bool(temporal_search)
         self.temporal_candidates = candidates
         self.temporal_flip_prob = float(temporal_flip_prob)
+        # Neighbourhood size: at most ``max_move_frac`` of the segments move
+        # per perturbation (``n_changes`` is an upper bound), shrinking with
+        # temperature when ``anneal_step``. Previously ``n_changes`` segments
+        # were always reassigned, which on panels of <= n_changes segments
+        # made every "neighbour" a full random restart.
+        self.max_move_frac = float(max_move_frac)
+        self.anneal_step = bool(anneal_step)
+        self._step_scale = 1.0
+        # Spath-style exchange pass after SA (see _exchange_refine)
+        self.exchange_refine = bool(exchange_refine)
 
     # ----------------------------------------------------------
     # Public interface
@@ -1443,27 +1456,41 @@ class PavementCLROptimizer:
         best_clusters = clusters.copy()
         best_fits = [f.copy() if f else None for f in fits]
         best_codes = list(codes)
+        current_bic = best_bic
         convergence = [(0, best_bic)]
         temp = self.temp_init
         iteration = 0
+        self._step_scale = 1.0
 
         while temp > 1e-15 and iteration < max_iterations:
+            if self.anneal_step:
+                self._step_scale = max(temp / self.temp_init, 0.0)
             for _ in range(self.n_neighbors):
                 nbr_c = self._perturb_clusters(clusters, seg_ids, obs_per_seg,
                                                n_clusters, rng)
                 nbr_codes = (self._perturb_temporal_codes(codes, rng)
                              if temporal_search else codes)
+                if nbr_c is None and list(nbr_codes) == list(codes):
+                    continue                    # no valid move: skip the refit
+                if nbr_c is None:
+                    nbr_c = clusters.copy()
                 nbr_fits = self._fit_all_clusters(df_log, nbr_c, n_clusters,
                                                   nbr_codes)
                 if any(f is None for f in nbr_fits):
                     continue
                 nbr_bic = (self._total_bic_cond(nbr_fits) if temporal_search
                            else self._total_bic(nbr_fits))
-                diff = nbr_bic - best_bic
-                if diff < 0 or rng.random() < exp(-abs(diff / self.boltzmann) / max(temp, 1e-30)):
+                if not np.isfinite(nbr_bic):
+                    continue
+                # Metropolis test against the CURRENT state (not the best):
+                # comparing with the best made the chain unable to descend
+                # from an accepted uphill state.
+                diff = nbr_bic - current_bic
+                if diff < 0 or rng.random() < exp(-(diff / self.boltzmann) / max(temp, 1e-30)):
                     clusters = nbr_c
                     fits = nbr_fits
                     codes = list(nbr_codes)
+                    current_bic = nbr_bic
                     if nbr_bic < best_bic:
                         best_bic = nbr_bic
                         best_clusters = nbr_c.copy()
@@ -1475,6 +1502,14 @@ class PavementCLROptimizer:
             convergence.append((iteration, best_bic))
             if verbose and iteration % 10 == 0:
                 print(f"    SA iter {iteration:4d} | T={temp:.2e} | BIC={best_bic:.2f}")
+
+        if self.exchange_refine:
+            ref = self._exchange_refine(df_log, best_clusters, best_codes,
+                                        best_bic, seg_ids, obs_per_seg,
+                                        n_clusters, temporal_search)
+            if ref is not None:
+                best_clusters, best_fits, best_bic = ref
+                convergence.append((iteration + 1, best_bic))
 
         total_rss = sum(f["rss"] for f in best_fits if f is not None)
         return {
@@ -1749,9 +1784,9 @@ class PavementCLROptimizer:
     # ----------------------------------------------------------
 
     def _build_segment_index(self, df: pd.DataFrame):
-        seg_ids = df[self.segment_col].unique()
-        obs_per_seg = {int(s): int((df[self.segment_col] == s).sum()) for s in seg_ids}
-        return [int(s) for s in seg_ids], obs_per_seg
+        counts = df[self.segment_col].value_counts(sort=False)
+        obs_per_seg = {int(s): int(c) for s, c in counts.items()}
+        return [int(s) for s in df[self.segment_col].unique()], obs_per_seg
 
     def _random_init(self, seg_ids, obs_per_seg, n_cl, rng):
         max_id = max(seg_ids) + 1
@@ -1773,10 +1808,83 @@ class PavementCLROptimizer:
                 return False
         return True
 
+    def _exchange_refine(self, df_log, clusters, codes, bic, seg_ids,
+                         obs_per_seg, n_cl, temporal_search, max_rounds=25):
+        """Spath (1979) exchange step for clusterwise regression.
+
+        Reassign every segment to the cluster whose fitted mean equation
+        gives it the smallest within-segment SSR, refit, and repeat while
+        the total BIC improves. Random reassignment alone (the SA move) is
+        a very weak local search for CLR; this deterministic pass converges
+        to a local optimum of the clusterwise criterion.
+        Random-walk clusters are skipped (their coefficients are on the
+        differenced scale, not levels).
+        """
+        if n_cl < 2 or any(c == "random_walk" for c in codes):
+            return None
+        segcol = self.segment_col
+        X_all, y_all, cols = _build_design_matrix(
+            df_log, self.psi_col, self.variable_names, self.variable_names,
+            self.categorical_vars)
+        col_idx = {c: i for i, c in enumerate(cols)}
+        seg_arr = df_log[segcol].to_numpy().astype(int)
+        seg_order = np.asarray(seg_ids, dtype=int)
+        pos = {s: i for i, s in enumerate(seg_order)}
+        row_seg = np.array([pos[s] for s in seg_arr])
+
+        cur_c = clusters.copy()
+        cur_fits = self._fit_all_clusters(df_log, cur_c, n_cl, codes)
+        if any(f is None for f in cur_fits):
+            return None
+        cur_bic = (self._total_bic_cond(cur_fits) if temporal_search
+                   else self._total_bic(cur_fits))
+        improved_any = False
+        for _ in range(max_rounds):
+            sse = np.zeros((len(seg_order), n_cl))
+            for k, f in enumerate(cur_fits):
+                beta = np.zeros(len(cols))
+                for name, val in f.get("coeff_dict", {}).items():
+                    if name in col_idx:
+                        beta[col_idx[name]] = val
+                r = y_all - X_all @ beta
+                sse[:, k] = np.bincount(row_seg, weights=r * r,
+                                        minlength=len(seg_order))
+            new_c = cur_c.copy()
+            new_c[seg_order] = np.argmin(sse, axis=1) + 1
+            if np.array_equal(new_c[seg_order], cur_c[seg_order]):
+                break
+            if not self._valid(new_c, seg_ids, obs_per_seg, n_cl):
+                break
+            new_fits = self._fit_all_clusters(df_log, new_c, n_cl, codes)
+            if any(f is None for f in new_fits):
+                break
+            new_bic = (self._total_bic_cond(new_fits) if temporal_search
+                       else self._total_bic(new_fits))
+            if not (np.isfinite(new_bic) and new_bic < cur_bic - 1e-9):
+                break
+            cur_c, cur_fits, cur_bic = new_c, new_fits, new_bic
+            improved_any = True
+        if improved_any and cur_bic < bic:
+            return cur_c, cur_fits, cur_bic
+        return None
+
+    def _n_moves(self, n_seg: int) -> int:
+        cap = max(1, int(np.ceil(self.max_move_frac * n_seg)))
+        n = min(int(self.n_changes), cap)
+        return max(1, int(round(n * self._step_scale)))
+
     def _perturb_clusters(self, clusters, seg_ids, obs_per_seg, n_cl, rng):
+        """Reassign a temperature-scaled subset of segments.
+
+        Returns ``None`` when no feasible neighbour (min_observations per
+        cluster) is found, so the caller can skip a pointless refit.
+        """
+        if n_cl < 2:
+            return None
+        n_move = self._n_moves(len(seg_ids))
         for _ in range(50):
             new_c = clusters.copy()
-            picks = rng.choice(seg_ids, size=min(self.n_changes, len(seg_ids)),
+            picks = rng.choice(seg_ids, size=min(n_move, len(seg_ids)),
                                replace=False)
             for s in picks:
                 old = new_c[s]
@@ -1787,7 +1895,7 @@ class PavementCLROptimizer:
                     new_c[s] = cand
             if self._valid(new_c, seg_ids, obs_per_seg, n_cl):
                 return new_c
-        return clusters.copy()
+        return None
 
     def _fit_cluster(self, df_log: pd.DataFrame, cid: int, clusters: np.ndarray,
                      temporal_model: Optional[str] = None):

@@ -115,6 +115,27 @@ def transform_col(vals: np.ndarray, name: str, form: int,
     raise ValueError(f"Unknown form id {form}")
 
 
+def default_interaction_pairs(names, form):
+    """Interaction pairs implied by forms 5 / 9 when the caller gives none.
+
+    * form 5 (Age x Traffic): ``ln(age) * ln(x_j)`` for every other active
+      continuous column (the traffic/loading columns).
+    * form 9 (Generalised interaction): every pairwise ``ln(x_i) * ln(x_j)``.
+
+    Without this default both forms silently collapsed to form 0 because no
+    caller (evaluator, hazard layer, hold-out scorer) supplied pairs.
+    """
+    names = list(names)
+    if form == 5:
+        if AGE_NAME not in names:
+            return []
+        a = names.index(AGE_NAME)
+        return [(a, j) for j in range(len(names)) if j != a]
+    if form == 9:
+        return [(i, j) for i in range(len(names)) for j in range(i + 1, len(names))]
+    return []
+
+
 def build_design(Xc, names, form, lam_vec, shape=None,
                  cat_dummies=None, cat_names=None,
                  interaction_pairs=None, gp_callable=None):
@@ -133,6 +154,22 @@ def build_design(Xc, names, form, lam_vec, shape=None,
     """
     Xc = np.asarray(Xc, dtype=float)
     n, p = Xc.shape
+    form = int(form)
+    if form not in FORM_SPECS:
+        raise ValueError(f"Unknown form id {form}")
+
+    if form == 11:
+        # GP form: the expression tree *replaces* the continuous design and
+        # indexes columns of the matrix it is given (never transform_col).
+        if gp_callable is None:
+            raise ValueError("Form 11 (GP) needs gp_callable / a gp_tree; "
+                             "use pavement_gp.GPSymbolicRegressor to evolve one.")
+        X = np.asarray(gp_callable(Xc, names), dtype=float)
+        X = X.reshape(n, -1)
+        if cat_dummies is not None and np.asarray(cat_dummies).shape[1] > 0:
+            X = np.hstack([X, np.asarray(cat_dummies, dtype=float)])
+        return X
+
     blocks = []
     for j in range(p):
         lam = float(lam_vec[j]) if lam_vec is not None else 1.0
@@ -142,17 +179,15 @@ def build_design(Xc, names, form, lam_vec, shape=None,
     X = np.hstack(blocks) if blocks else np.zeros((n, 0))
 
     # Interaction terms for forms 5 (age x traffic) and 9 (generalised)
-    if form in (5, 9) and interaction_pairs:
+    if form in (5, 9):
+        if interaction_pairs is None:
+            interaction_pairs = default_interaction_pairs(names, form)
         for i, j in interaction_pairs:
-            if names[i] == AGE_NAME:
-                a = np.log(_safe_pos(Xc[:, i]))
-            else:
-                a = np.log(_safe_pos(Xc[:, i]))
+            if i >= p or j >= p:
+                continue
+            a = np.log(_safe_pos(Xc[:, i]))
             b = np.log(_safe_pos(Xc[:, j]))
             X = np.hstack([X, np.atleast_2d(a * b).T])
-
-    if form == 11 and gp_callable is not None:
-        X = gp_callable(Xc, names)
 
     if cat_dummies is not None and cat_dummies.shape[1] > 0:
         X = np.hstack([X, np.asarray(cat_dummies, dtype=float)])
@@ -172,6 +207,9 @@ def _ols_fit(X, y):
     cluster (e.g. a single-category dummy or a zero-variance covariate).
     """
     Xd = np.hstack([np.ones((X.shape[0], 1)), X])
+    if not (np.all(np.isfinite(Xd)) and np.all(np.isfinite(y))):
+        raise ValueError("Non-finite values in the design or response; "
+                         "drop/clean NaN/inf rows before fitting a form.")
     beta, *_ = np.linalg.lstsq(Xd, y, rcond=None)
     resid = y - Xd @ beta
     rss = float(resid @ resid)
@@ -199,6 +237,15 @@ def fit_form(Xc, y, names, form, active_mask, cat_dummies=None,
         lam = np.asarray(lam0, dtype=float)
     lam_a = lam[active_mask] if form == 6 else np.ones(na)
     shape = dict(shape0) if shape0 else {}
+
+    if form == 11:
+        # The GP tree indexes the *full* continuous column order (the mask
+        # does not apply: the tree itself selects variables).
+        Xd = build_design(Xc, names, form, None, None, cat_dummies=cat_a,
+                          gp_callable=gp_callable)
+        beta, rss, k = _ols_fit(Xd, y)
+        return {"beta": beta, "rss": rss, "n_params": int(k),
+                "lam": lam, "shape": shape, "design": Xd}
 
     def rss_for(lam_a, shape):
         Xd = build_design(Xa, names_a, form, lam_a, shape,
@@ -239,26 +286,70 @@ def fit_form(Xc, y, names, form, active_mask, cat_dummies=None,
             "lam": full_lam, "shape": shape, "design": Xd}
 
 
-def _refine_shape(Xa, y, names_a, form, shape, cat_a, pairs, lam_a):
-    """Light profile search over the age-shape parameters."""
+def _shape_bounds(age, form, shape):
+    """Data-driven search boxes for the age-shape parameters.
+
+    The previous fixed boxes (e.g. S-curve midpoint in [0.5, 3]) were tuned to
+    one dataset; on an age scale of 0-30 years every optimum hit the bound and
+    the S-curve fit was worse than a straight line. Bounds now follow the
+    observed age distribution.
+    """
+    a = np.asarray(age, float)
+    a = a[np.isfinite(a)]
+    lo_q, hi_q = np.percentile(a, [5, 95])
+    rng = max(float(a.max() - a.min()), 1e-6)
+    if hi_q <= lo_q:
+        hi_q = lo_q + rng
     if form == 7:
-        keys = [("sigma0", 0.5, 3.0, 1.0), ("sigma1", 0.3, 3.0, 1.0)]
-    elif form == 8:
-        keys = [("kappa1", 1.0, 10.0, 3.0), ("kappa2", 5.0, 20.0, 10.0)]
-    elif form == 10:
-        keys = [("alpha", 0.005, 0.2, 0.05)]
-    else:
+        return [("sigma0", lo_q, hi_q), ("sigma1", 0.01 * rng, 0.5 * rng)]
+    if form == 8:
+        q10, q50, q90 = np.percentile(a, [10, 50, 90])
+        return [("kappa1", q10, q50), ("kappa2", None, q90)]
+    if form == 10:
+        a_pos = max(float(np.percentile(a, 95)), 1e-6)
+        return [("alpha", 0.05 / a_pos, 20.0 / a_pos)]
+    return []
+
+
+def _refine_shape(Xa, y, names_a, form, shape, cat_a, pairs, lam_a,
+                  n_sweeps=2):
+    """Profile (coordinate-wise) search over the age-shape parameters."""
+    shape = dict(shape or {})
+    if AGE_NAME not in names_a:
+        return shape                       # no age column -> nothing to shape
+    age = Xa[:, names_a.index(AGE_NAME)]
+    boxes = _shape_bounds(age, form, shape)
+    if not boxes:
         return shape
-    for key, lo, hi, mid in keys:
-        sh = dict(shape); sh[key] = mid
-        def obj(val):
-            s = dict(sh); s[key] = val
-            Xd = build_design(Xa, names_a, form, lam_a, s,
-                              cat_dummies=cat_a, interaction_pairs=pairs)
-            _, rss, _ = _ols_fit(Xd, y)
-            return rss
-        res = minimize_scalar(obj, bounds=(lo, hi), method="bounded")
-        shape[key] = float(res.x)
+
+    def rss_of(s):
+        Xd = build_design(Xa, names_a, form, lam_a, s,
+                          cat_dummies=cat_a, interaction_pairs=pairs)
+        try:
+            return _ols_fit(Xd, y)[1]
+        except ValueError:
+            return np.inf
+
+    for _ in range(n_sweeps):
+        for key, lo, hi in boxes:
+            if key == "kappa2":            # keep the two knots ordered
+                lo = shape.get("kappa1", lo if lo is not None else age.min())
+                lo = float(lo) + 1e-3 * max(np.ptp(age), 1e-6)
+                if hi <= lo:
+                    shape[key] = lo
+                    continue
+            # multi-start over a coarse grid, then bounded polish
+            grid = np.linspace(lo, hi, 9)
+            vals = [rss_of({**shape, key: g}) for g in grid]
+            i = int(np.argmin(vals))
+            a_ = grid[max(i - 1, 0)]; b_ = grid[min(i + 1, len(grid) - 1)]
+            best_x, best_f = grid[i], vals[i]
+            if b_ > a_:
+                res = minimize_scalar(lambda v: rss_of({**shape, key: v}),
+                                      bounds=(a_, b_), method="bounded")
+                if float(res.fun) < best_f:
+                    best_x, best_f = float(res.x), float(res.fun)
+            shape[key] = float(best_x)
     return shape
 
 

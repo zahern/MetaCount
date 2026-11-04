@@ -24,9 +24,10 @@ Objectives (minimised)
 ----------------------
 1. composite BIC of the clusterwise pipeline (regression layer, optionally
    + Markov + hazard layers when ``enable_markov/enable_hazard``).
-2. hold-out RMSE on **log(PSI)** over the 2011--2012 test panel
-   (continuous in the genes; falls back to mean active parameter count
-   without a ``test_df``). Clusters with a non-OLS temporal code are
+2. hold-out RMSE of the response column (``psi_col``; pass log-PSI for the
+   log-scale RMSE) over the 2011--2012 test panel
+   (falls back to mean active parameter count without a ``test_df``).
+   Clusters with a non-OLS temporal code are
    predicted one-step-ahead with the observed prior level (previous
    hold-out row, else the last training row), so the temporal decision
    layer propagates into the hold-out metric too.
@@ -76,7 +77,7 @@ _BIG = 1e12
 def _genome_high(mo):
     # GP form (11) needs an expression tree the GA does not carry -> exclude
     hi = np.empty(mo.dimension, dtype=int)
-    hi[mo.form_slice] = N_FORMS - 2
+    hi[mo.form_slice] = len(mo.form_choices) - 1
     hi[mo.mask_slice] = 1
     hi[mo.markov_slice] = 1
     hi[mo.haz_idx] = len(mo.hazard_families) - 1
@@ -110,6 +111,13 @@ class PavementMultiObjectiveEvaluator:
             constraints or Constraints(),
             time_col=time_col, treatment_col=treatment_col)
         self.test_df = test_df
+        # Form gene -> allowed form ids (honours Constraints.no_form /
+        # allow_form; GP form 11 is excluded because the genome carries no
+        # expression tree).
+        self.form_choices = sorted(f for f in self.base.constraints.allowed_forms
+                                   if 0 <= int(f) < N_FORMS - 1)
+        if not self.form_choices:
+            raise ValueError("Constraints leave no searchable functional form")
         self.membership = np.asarray(membership, int)
         self.K = int(self.membership.max()) + 1
         self.p = len(cont_vars)
@@ -132,6 +140,7 @@ class PavementMultiObjectiveEvaluator:
         # NSGA2Engine compatibility aliases
         self.vars = list(range(self.dimension))
         self.max_latent_classes = 1
+        self.allowed_roles = {}   # NSGA2Engine.optimize() queries this
 
         self._cache: Dict[tuple, np.ndarray] = {}
         self.last_eval_error = None
@@ -157,7 +166,8 @@ class PavementMultiObjectiveEvaluator:
             "K": self.K,
             "membership": self.membership,
             "var_mask": v[self.mask_slice].reshape(self.K, self.p).astype(bool),
-            "form": v[self.form_slice] % N_FORMS,
+            "form": np.array([self.form_choices[int(g) % len(self.form_choices)]
+                              for g in v[self.form_slice]], dtype=int),
             "lam": np.ones((self.K, self.p)),
             "shape": [None] * self.K,
             "R": 4,
@@ -315,7 +325,7 @@ class PavementMultiObjectiveEvaluator:
         return rows
 
     def _holdout_logrmse(self, st, res) -> float:
-        """RMSE on log(PSI) over the hold-out panel.
+        """Hold-out RMSE on the modelled response scale (``psi_col``).
 
         Clusters whose jointly selected error structure is non-OLS are
         predicted one-step-ahead with the observed prior level (previous
@@ -341,15 +351,21 @@ class PavementMultiObjectiveEvaluator:
             try:
                 if model == "ols":
                     X_tr, X_te, y_tr = self._designs(st_k, fit_k, k, d_te)
+                    # intercept, exactly as in the training fit (_ols_fit)
+                    X_tr = np.hstack([np.ones((len(X_tr), 1)), X_tr])
+                    X_te = np.hstack([np.ones((len(X_te), 1)), X_te])
                     beta, *_ = np.linalg.lstsq(X_tr, y_tr, rcond=None)
-                    pred = np.clip(X_te @ beta, -30.0, 30.0)
+                    pred = X_te @ beta
                 else:
                     pred = self._temporal_holdout_predict(
                         st_k, k, d_te, model, temporal_fits.get(k))
-                y_log = np.log(np.clip(d_te[self.base.psi_col]
-                                       .to_numpy(float), 1e-3, None))
-                sq_err += float(np.sum((pred - y_log) ** 2))
-                n_all += len(y_log)
+                # Score on the SAME scale the regression was fitted on
+                # (``psi_col`` as supplied -- pass log-PSI for a log-scale
+                # RMSE). Comparing level-scale predictions against log(PSI)
+                # made this objective meaningless.
+                y_obs = d_te[self.base.psi_col].to_numpy(float)
+                sq_err += float(np.sum((pred - y_obs) ** 2))
+                n_all += len(y_obs)
                 if dbg:
                     print(f"    [holdout] K{k} model={model} "
                           f"pred=[{pred.min():.2f},{pred.max():.2f}]")
@@ -418,9 +434,10 @@ class PavementMultiObjectiveEvaluator:
                 if has_prior:
                     pred[i] = py + drift + float((X_te[i] - px) @ b[1:])
                 else:
-                    # differenced coefficients carry no level information:
-                    # anchor to the observed level (pipeline convention)
-                    pred[i] = float(y_te[i])
+                    # differenced coefficients carry no level information;
+                    # anchor to the training-cluster mean level. (Using
+                    # y_te[i] here leaked the hold-out target.)
+                    pred[i] = float(np.mean(y_tr))
             elif model == "nur":
                 if has_prior:
                     pred[i] = nur_rho * py + (1.0 - nur_rho) * nur_mu \
@@ -442,7 +459,6 @@ class PavementMultiObjectiveEvaluator:
             if len(h) > 2:
                 del h[:-2]
 
-        pred = np.clip(pred, -30.0, 30.0)
         out = np.empty(len(d_te), dtype=float)
         out[order] = pred
         return out
@@ -456,7 +472,7 @@ class _PavementOperator:
         self.evaluator = evaluator
         self.mut_rate = mut_rate
 
-    def generate(self, pop, i, gen, max_iter):
+    def generate(self, pop, i, gen, max_iter, **_engine_kwargs):
         hi = _genome_high(self.evaluator)
         a = pop[np.random.randint(len(pop))]
         b = pop[np.random.randint(len(pop))]
