@@ -291,16 +291,30 @@ def survival_mixed_model_loglik(
         K_base    = base_idx["total_params"]
 
         theta_all = params[:C * K_base].reshape(C, K_base)
-        logits    = params[C * K_base:]
-        logits_f  = jnp.concatenate([jnp.array([0.0]), logits])
-        log_pi    = jax.nn.log_softmax(logits_f)           # (C,)
+        K_mem     = int(getattr(spec, "K_membership", 0) or 0)
+        N         = data["y"].shape[0]
+        # Class-membership model (same layout as the count LC model):
+        # class 1 is the reference; each other class c has gamma_c =
+        # [intercept, membership coefs...] so pi_ic = softmax(Z_i gamma).
+        # Previously only constant shares were supported and membership
+        # covariates were silently ignored.
+        if K_mem > 0 and "Xmem" in data:
+            Z = jnp.concatenate(
+                [jnp.ones((N, 1)), jnp.mean(data["Xmem"], axis=1)], axis=1)
+            G = params[C * K_base:].reshape(C - 1, K_mem + 1)
+            logits_i = Z @ G.T                               # (N, C-1)
+        else:
+            logits_i = jnp.broadcast_to(params[C * K_base:C * K_base + C - 1],
+                                        (N, C - 1))
+        log_pi = jax.nn.log_softmax(
+            jnp.concatenate([jnp.zeros((N, 1)), logits_i], axis=1), axis=1)
 
         ll_classes = []
         for c in range(C):
             ll_c = survival_mixed_model_loglik(
                 theta_all[c], data, base_spec, family, indivi=True
             )
-            ll_classes.append(ll_c + log_pi[c])
+            ll_classes.append(ll_c + log_pi[:, c])
 
         ll_stack = jnp.stack(ll_classes, axis=1)           # (N, C)
         ll_ind   = jsp.special.logsumexp(ll_stack, axis=1) # (N,)
@@ -611,7 +625,58 @@ class SurvivalModel:
     def _objective(self, p):
         return survival_mixed_model_loglik(p, self.data, self.spec, self.family)
 
+    def n_params(self) -> int:
+        K = build_base_index(replace(self.spec, latent_classes=1))["total_params"]
+        C = int(self.spec.latent_classes)
+        if C <= 1:
+            return K
+        K_mem = int(getattr(self.spec, "K_membership", 0) or 0)
+        return C * K + (C - 1) * (K_mem + 1)
+
+    def _fit_latent_class(self) -> "SurvivalModel":
+        """Latent-class duration model: single-class warm start, then several
+        class-separating starts (level shifts + slope scaling), keep best."""
+        C = int(self.spec.latent_classes)
+        spec1 = replace(self.spec, latent_classes=1)
+        single = SurvivalModel(spec1, self.data, self.family,
+                               maxiter=self.maxiter, n_restarts=1).fit()
+        th1 = np.asarray(single.params, dtype=float)
+        K = th1.size
+        K_mem = int(getattr(self.spec, "K_membership", 0) or 0)
+        n_gamma = (C - 1) * (K_mem + 1)
+        has_int = tuple(getattr(spec1, "fixed_names", ()) or ())[:1] == ("__INTERCEPT__",)
+        Kf = int(getattr(spec1, "Kf", 0))
+
+        solver = LBFGS(fun=self._objective, maxiter=self.maxiter)
+        run_solver = jax.jit(solver.run)
+        rng = np.random.default_rng(0)
+        best = None
+        for spread in (0.25, 0.5, 1.0, 1.5)[: max(2, self.n_restarts + 2)]:
+            lv = np.linspace(-1.0, 1.0, C) * spread
+            blocks = []
+            for c in range(C):
+                b = th1.copy()
+                if has_int:
+                    b[0] += lv[c]
+                    b[1:Kf] *= 1.0 - 0.5 * lv[c] / max(spread, 1e-9) * min(spread, 1.0)
+                blocks.append(b + rng.normal(0.0, 0.05, K))
+            p0 = np.concatenate(blocks + [np.zeros(n_gamma)])
+            try:
+                r = run_solver(jnp.array(p0))
+                v = float(r.state.value)
+            except Exception:
+                continue
+            if np.isfinite(v) and (best is None or v < float(best.state.value)):
+                best = r
+        if best is None:
+            raise RuntimeError("latent-class survival fit failed for every start")
+        self.params = np.array(best.params)
+        self._result = best
+        return self
+
     def fit(self) -> "SurvivalModel":
+        if int(self.spec.latent_classes) > 1:
+            return self._fit_latent_class()
         K = build_base_index(self.spec)["total_params"]
         p0_np  = _survival_ols_init(self.data, K)
         p0     = jnp.array(p0_np)

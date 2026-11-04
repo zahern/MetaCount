@@ -114,6 +114,18 @@ class FitResult(dict):
             raise AttributeError(name) from None
 
 
+def _survival_module():
+    """Import survival_models whether this module is loaded as part of the
+    package or flat (scripts / tests that put the package dir on sys.path).
+    Function-level ``from .survival_models import ...`` raised ImportError
+    in the flat case, which the search swallowed and scored as 1e12."""
+    try:
+        from . import survival_models as _sm  # type: ignore[attr-defined]
+    except ImportError:
+        import survival_models as _sm  # type: ignore[no-redef]
+    return _sm
+
+
 def _ph_families():
     """The proportional-hazards family set, or an empty set if unavailable."""
     try:
@@ -181,9 +193,10 @@ def _survival_summary_df(result, objective, data, spec, param_index, family):
     with np.errstate(over="ignore"):
         df_out[ratio_col] = np.exp(params)
     # The trailing scale/shape parameter is not a covariate effect.
-    for scale in ("sigma", "shape"):
-        if scale in names:
-            df_out.loc[names.index(scale), ratio_col] = np.nan
+    for i, nm in enumerate(names):
+        base = str(nm).split(" [Class")[0]
+        if base in ("sigma", "shape") or base.startswith("membership("):
+            df_out.loc[i, ratio_col] = np.nan
 
     df_out.attrs["fit_stats"] = stats_out
     return df_out
@@ -211,7 +224,23 @@ def _hessian_se(params, objective):
 
 
 def _param_names_for_spec(spec):
-    """Parameter names in flat-vector order, matching build_base_index."""
+    """Parameter names in flat-vector order, matching build_base_index.
+
+    For latent-class specs: per-class blocks suffixed ``[Class c]`` followed
+    by the class-membership logits (class 1 is the reference).
+    """
+    C = int(getattr(spec, "latent_classes", 1) or 1)
+    if C > 1:
+        base = _param_names_for_spec(replace(spec, latent_classes=1))
+        names = [f"{n} [Class {c + 1}]" for c in range(C) for n in base]
+        mem = list(getattr(spec, "membership_names", ()) or ())
+        K_mem = int(getattr(spec, "K_membership", 0) or 0)
+        if len(mem) != K_mem:
+            mem = [f"mem{j}" for j in range(K_mem)]
+        for c in range(1, C):
+            names.append(f"membership(const) [Class {c + 1}]")
+            names += [f"membership({m}) [Class {c + 1}]" for m in mem]
+        return names
     names = list(getattr(spec, "fixed_names", ()) or ())
     zi = list(getattr(spec, "zi_names", ()) or ())
     cor = list(getattr(spec, "random_cor_names", ()) or ())
@@ -628,8 +657,8 @@ class StructureEvaluatorLC(StructureEvaluator):
         training split exactly as the count path does, so hazard and count
         structures are ranked on the same footing.
         """
-        from .survival_models import SurvivalModel
-        from .survival_models import _ALL_SURVIVAL_FAMILIES  # noqa: F401
+        SurvivalModel = _survival_module().SurvivalModel
+        _ALL_SURVIVAL_FAMILIES = _survival_module()._ALL_SURVIVAL_FAMILIES
         try:
             if "event" not in data:
                 raise ValueError(
@@ -1773,7 +1802,7 @@ def _survival_family_for(model: Optional[str]) -> Optional[str]:
     if not model:
         return None
     try:
-        from .survival_models import ALL_SURVIVAL_FAMILIES
+        ALL_SURVIVAL_FAMILIES = _survival_module().ALL_SURVIVAL_FAMILIES
     except ImportError:                       # flat import (script in package dir)
         try:
             from survival_models import ALL_SURVIVAL_FAMILIES
@@ -2281,12 +2310,13 @@ class ExperimentBuilder:
                 )
             if "event" not in data:
                 raise ValueError("data['event'] missing for a survival spec")
-            from .survival_models import SurvivalModel
-            from .survival_models import survival_mixed_model_loglik as _smll
+            SurvivalModel = _survival_module().SurvivalModel
+            _smll = _survival_module().survival_mixed_model_loglik
 
-            # No zero-inflation and no latent classes: censoring is the only
-            # structural-zero mechanism, and the LC path is count-specific.
-            spec = replace(spec, zero_inflated=False, latent_classes=1)
+            # No zero-inflation: censoring is the only structural-zero
+            # mechanism. Latent classes ARE supported (class-specific
+            # duration parameters + optional membership covariates).
+            spec = replace(spec, zero_inflated=False)
             _sm = SurvivalModel(spec=spec, data=data, family=_surv_family,
                                 maxiter=1500, n_restarts=2)
             _sm.fit()
@@ -4042,7 +4072,8 @@ class ExperimentBuilder:
             #                                          TIME ratio (AFT)
             surv_family = str(kwargs.pop("family", "weibull_ph")).lower()
             try:
-                from .survival_models import ALL_SURVIVAL_FAMILIES, PH_FAMILIES
+                ALL_SURVIVAL_FAMILIES = _survival_module().ALL_SURVIVAL_FAMILIES
+                PH_FAMILIES = _survival_module().PH_FAMILIES
             except ImportError:
                 from survival_models import ALL_SURVIVAL_FAMILIES, PH_FAMILIES
             if surv_family not in ALL_SURVIVAL_FAMILIES:
@@ -4471,9 +4502,25 @@ class ExperimentBuilder:
             print(f"  Membership+fixed vars : {n_mem_8}  (role 8)")
 
             if refit:
-                refit_and_print(evaluator, best_solution)
-                save_run_summary_to_txt(evaluator, best_solution,
-                                        algo, seed, config_id)
+                _best_spec = None
+                try:
+                    _best_spec = evaluator.build_spec(best_solution)
+                except Exception:
+                    _best_spec = None
+                _surv = (_survival_family_for(_best_spec.get("model"))
+                         if isinstance(_best_spec, dict) else None)
+                if _surv is not None:
+                    # refit_and_print is wired to the count likelihood and
+                    # raised "Unknown model: weibull_ph" for every survival
+                    # search; refit survival winners on their own likelihood.
+                    _fit = self.fit_manual_model(
+                        manual_spec=_best_spec, model=_best_spec["model"],
+                        R=getattr(evaluator, "R", 200))
+                    print(_fit.get("_summary_text", ""), end="")
+                else:
+                    refit_and_print(evaluator, best_solution)
+                    save_run_summary_to_txt(evaluator, best_solution,
+                                            algo, seed, config_id)
             else:
                 print("  [refit] skipped (refit=False)")
 
@@ -4590,9 +4637,25 @@ class ExperimentBuilder:
             print(f"  Membership+fixed vars : {n_mem_8}  (role 8)")
 
             if refit:
-                refit_and_print(evaluator, best_solution)
-                save_run_summary_to_txt(evaluator, best_solution,
-                                        algo, seed, config_id)
+                _best_spec = None
+                try:
+                    _best_spec = evaluator.build_spec(best_solution)
+                except Exception:
+                    _best_spec = None
+                _surv = (_survival_family_for(_best_spec.get("model"))
+                         if isinstance(_best_spec, dict) else None)
+                if _surv is not None:
+                    # refit_and_print is wired to the count likelihood and
+                    # raised "Unknown model: weibull_ph" for every survival
+                    # search; refit survival winners on their own likelihood.
+                    _fit = self.fit_manual_model(
+                        manual_spec=_best_spec, model=_best_spec["model"],
+                        R=getattr(evaluator, "R", 200))
+                    print(_fit.get("_summary_text", ""), end="")
+                else:
+                    refit_and_print(evaluator, best_solution)
+                    save_run_summary_to_txt(evaluator, best_solution,
+                                            algo, seed, config_id)
 
             metadata["elapsed_seconds"] = _time.time() - _t0
             result = {
