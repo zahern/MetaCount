@@ -2776,6 +2776,30 @@ class ExperimentBuilder:
             stashed = named_df.attrs.get("fit_stats")
             summary = stashed if isinstance(stashed, dict) and stashed else \
                 _fit_stats_from(objective, result, data)
+        # Hierarchical (group + site) random coefficients: the site-level
+        # mean is pinned at 0 inside build_eta, so it is not a free
+        # parameter -- drop it from the table and from k in AIC/BIC.
+        _zm = tuple(getattr(spec, "ind_zero_mean", ()) or ())
+        if _zm and any(_zm):
+            _pinned = {f"mean({n})" for n, z in
+                       zip(spec.random_ind_names, _zm) if z}
+            if named_df is not None and "Parameter" in named_df.columns:
+                _attrs = dict(named_df.attrs)
+                named_df = named_df[~named_df["Parameter"].isin(_pinned)].reset_index(drop=True)
+                named_df.attrs.update(_attrs)
+                named_df["Parameter"] = named_df["Parameter"].map(
+                    lambda p_: (f"site_sd({p_[3:-1]})"
+                                if p_.startswith("sd(") and f"mean({p_[3:-1]})" in _pinned
+                                else p_))
+            if isinstance(summary, dict) and "num_parm" in summary:
+                summary = dict(summary)
+                k_eff = int(summary["num_parm"]) - len(_pinned)
+                ll_ = float(summary.get("loglik", np.nan))
+                n_ = int(summary.get("n_obs", 0) or 0)
+                summary["num_parm"] = k_eff
+                summary["aic"] = 2 * k_eff - 2 * ll_
+                if n_ > 0:
+                    summary["bic"] = k_eff * np.log(n_) - 2 * ll_
         coefs = _named_coefs_from_df(named_df)
         if coefs is None:
             coefs = {"names": [], "params": {}, "bse": {},

@@ -239,6 +239,11 @@ class ModelSpec:
                                       #   tuple of tuples, one per non-reference class (length C-1)
                                       #   e.g. ( (0,), (0,1) ) means class 2 uses var 0; class 3 uses vars 0,1
     class_models:        tuple = ()   # per-class model strings (eg ("poisson","nb"))
+    # ——— HIERARCHICAL (NESTED) RANDOM PARAMETERS ————
+    # One flag per independent random coefficient: True pins its mean to 0
+    # because it is the site-level deviation of a coefficient that is also
+    # random at the group level (manual_spec["nested_rdm_terms"]).
+    ind_zero_mean:       tuple = ()
     min_class_proportion: float = 0.15  # minimum posterior-mean proportion per class (will be scaled by C internally)
     # ——— PER-CLASS COVARIATE SELECTION ————
     class_fixed_idx:     tuple = ()   # per-class column indices into Xf (tuple of tuples)
@@ -422,6 +427,14 @@ def build_jax_data(
     # random elasticity into a random coefficient on centred AADT, adding an
     # implied random intercept of SD = tau * mean(log AADT).
     _scaler = _hpc.compute_scaler(df, _predictor_cols) if standardize else {}
+    # Random-coefficient columns are SCALED but never CENTRED: with a random
+    # slope, beta_i*(x - m)/s is a different model from beta_i*x (centring
+    # adds an implied random intercept beta_i*m/s, e.g. SD = tau*mean(lnAADT)).
+    # Scaling alone is an exact reparameterisation, so estimates map back
+    # to the caller's units and match software that uses raw columns.
+    for _rc in set(random_ind_cols) | set(random_cor_cols) | set(grouped_cols):
+        if _rc in _scaler:
+            _scaler[_rc] = (0.0, _scaler[_rc][1])
     if _scaler:
         df = _hpc.apply_scaler(df, _scaler)
 
@@ -631,6 +644,29 @@ def _validate_role_exclusivity(manual_spec: dict):
     for col in manual_spec.get("gse_cols", []) or []:
         roles[_base(col)].add("gse")
 
+    # Hierarchical random parameters: a variable may be random at the GROUP
+    # level (grouped_terms, carries the mean) AND at the SITE level
+    # (nested_rdm_terms, zero-mean deviation) -- beta_ij = b + s_g u_j +
+    # s_s v_ij. That is identified, unlike listing it in rdm_terms twice.
+    for t in manual_spec.get("nested_rdm_terms", []) or []:
+        _d = str(t).split(":")[1].strip() if ":" in str(t) else "normal"
+        if _d != "normal":
+            raise ValueError(
+                f"nested_rdm_terms must be normal (zero-mean site deviation); got {t!r}")
+    nested = [_base(t) for t in manual_spec.get("nested_rdm_terms", []) or []]
+    grouped_vars = {_base(t) for t in manual_spec.get("grouped_terms", []) or []}
+    bad = [v for v in nested if v not in grouped_vars]
+    if bad:
+        raise ValueError(
+            "nested_rdm_terms must also appear in grouped_terms (the group "
+            f"level carries the mean): {bad}")
+    for v in nested:
+        if roles.get(v, set()) - {"grouped"}:
+            raise ValueError(
+                f"{v!r} is in nested_rdm_terms and also in "
+                f"{sorted(roles[v] - {'grouped'})}; a nested variable may "
+                "only additionally be a grouped term.")
+
     clashing = {v: sorted(r) for v, r in roles.items() if len(r) > 1}
     if clashing:
         raise ValueError(
@@ -663,7 +699,8 @@ def _validate_role_exclusivity(manual_spec: dict):
 def parse_manual_spec(manual_spec: dict):
     _validate_role_exclusivity(manual_spec)
     fixed_cols        = manual_spec.get("fixed_terms", [])
-    rdm_terms         = manual_spec.get("rdm_terms", [])
+    rdm_terms         = list(manual_spec.get("rdm_terms", []) or []) \
+        + list(manual_spec.get("nested_rdm_terms", []) or [])
     rdm_cor_terms     = manual_spec.get("rdm_cor_terms", [])
     grouped_terms     = manual_spec.get("grouped_terms", [])
     hetro_terms       = manual_spec.get("hetro_in_means", [])
@@ -762,6 +799,11 @@ def build_model_from_manual_spec(
     spec       = replace(spec, model=model_type, latent_classes=lc,
                          class_models=class_models,
                          min_class_proportion=min_class_prop)
+    _nested = {str(t).split(":")[0].strip()
+               for t in manual_spec.get("nested_rdm_terms", []) or []}
+    if _nested:
+        spec = replace(spec, ind_zero_mean=tuple(
+            n in _nested for n in spec.random_ind_names))
 
     return data, spec
 
@@ -1100,6 +1142,13 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
             return ll_ind
         return -jnp.sum(ll_ind)
 
+    # Hierarchical random coefficients (group level + nested site level)
+    # need nested simulation; see _nested_hierarchical_loglik.
+    _zm = tuple(getattr(spec, "ind_zero_mean", ()) or ())
+    if (_zm and any(_zm) and spec.Kg > 0 and "group_ids" in data
+            and spec.model in ("poisson", "nb") and not spec.zero_inflated):
+        return _nested_hierarchical_loglik(params, data, spec, indivi)
+
     # â”€â”€ SINGLE-CLASS BRANCH (unchanged from main_hpc) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     blocks = unpack_params(params, spec)
     eta    = build_eta(params, data, spec)
@@ -1199,8 +1248,71 @@ def mixed_model_loglik(params, data, spec: ModelSpec, indivi: bool = False):
         ll_ind = ll_panel.squeeze(-1)
 
     if indivi:
+        # Per-individual marginal contributions (used by LC/EM/prediction).
+        # With grouped coefficients these are site-level marginals; the
+        # exact joint likelihood is the group-level total below.
         return ll_ind
+
+    if spec.Kg > 0 and R > 1 and "group_ids" in data:
+        # Grouped (group-level) random coefficients are SHARED by every
+        # site in a group, so the simulated likelihood must integrate them
+        # at the group level:  L_j = (1/R) sum_r prod_{i in j} f_i(u_jr, v_ir).
+        # Averaging over draws per site (the old behaviour) integrated u
+        # separately for each site, i.e. it estimated an independent
+        # site-level effect, not a group effect. Site-level draws v_ir are
+        # independent per site, so this is an unbiased simulator of the
+        # two-level (hierarchical) integral as well.
+        n_groups = data["draws_g"].shape[0]
+        ll_group_r = jax.ops.segment_sum(ll_panel, data["group_ids"],
+                                         num_segments=n_groups)   # (G, R)
+        ll_group = jsp.special.logsumexp(ll_group_r, axis=-1) - jnp.log(R)
+        return -jnp.sum(ll_group)
     return -jnp.sum(ll_ind)
+
+
+
+_NESTED_INNER_DRAWS = 64
+
+
+def _nested_hierarchical_loglik(params, data, spec, indivi=False):
+    """Simulated LL for coefficients random at the group AND site level.
+
+        beta_ij = b + s_g u_j + s_s v_ij,    u_j, v_ij ~ N(0, 1)
+        L_j = (1/R) sum_r prod_{i in j} (1/S) sum_s f_i(u_jr, v_s)
+
+    The site deviation is integrated *inside* each site (S inner draws)
+    and the shared group effect *outside*, across the group's sites. A
+    joint-draw simulator (one v_ir per outer draw) is unbiased but its
+    variance explodes with the number of sites per group.
+    """
+    blocks = unpack_params(params, spec)
+    eta = build_eta(params, data, spec)
+    if eta.ndim == 2:
+        eta = eta[..., None]
+    R = eta.shape[-1]
+    zm = jnp.array([1.0 if z else 0.0 for z in spec.ind_zero_mean])
+    sd = _positive_scale(blocks["sd_ind"])                       # (Kr_ind,)
+    # site-level deviation part of eta, per draw: x * s_s * v
+    c_v = jnp.einsum("npk,nkr->npr", data["Xr_ind"] * zm[None, None, :],
+                     sd[None, :, None] * data["draws_ind"])      # (N,P,R)
+    eta_b = eta - c_v                                            # group part
+    S = min(R, _NESTED_INNER_DRAWS)
+    eta2 = jnp.clip(eta_b[..., :, None] + c_v[..., None, :S], -25.0, 25.0)
+    y = ensure_3d(data["y"])[..., None]                          # (N,P,1,1)
+    mask = ensure_3d(data["mask"])[..., None]
+    if spec.model == "poisson":
+        ll = poisson_loglik(y, jnp.exp(eta2))
+    else:
+        ll = nb2_loglik(y, eta2, blocks["alpha"])
+    ll_site = jnp.sum(ll * mask, axis=1)                          # (N,R,S)
+    ll_site_r = jsp.special.logsumexp(ll_site, axis=-1) - jnp.log(S)   # (N,R)
+    if indivi:
+        return jsp.special.logsumexp(ll_site_r, axis=-1) - jnp.log(R)
+    n_groups = data["draws_g"].shape[0]
+    ll_group_r = jax.ops.segment_sum(ll_site_r, data["group_ids"],
+                                     num_segments=n_groups)
+    ll_group = jsp.special.logsumexp(ll_group_r, axis=-1) - jnp.log(R)
+    return -jnp.sum(ll_group)
 
 
 _hpc.mixed_model_loglik = mixed_model_loglik

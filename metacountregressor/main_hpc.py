@@ -818,6 +818,11 @@ def build_eta(params, data, spec: ModelSpec):
         if gse_shift is not None:
             _shift_ind = _shift_ind + gse_shift[:, spec.Kr_cor:]
         mean_ind = blocks["mean_ind"]
+        _zm = tuple(getattr(spec, "ind_zero_mean", ()) or ())
+        if _zm and any(_zm):
+            # site-level deviations of hierarchical (group + site) random
+            # coefficients have mean zero; the group level carries the mean
+            mean_ind = mean_ind * jnp.array([0.0 if z else 1.0 for z in _zm])
         mean_ind = mean_ind[None, :] + _shift_ind
 
         sd_ind = blocks["sd_ind"]
@@ -1522,6 +1527,14 @@ def build_jax_data(
     # coefficient on *centred* log(AADT) is not a random elasticity, because
     # centring adds an implied random intercept of SD = tau * mean(log AADT).
     _scaler = compute_scaler(df, _predictor_cols) if standardize else {}
+    # Random-coefficient columns are SCALED but never CENTRED: with a random
+    # slope, beta_i*(x - m)/s is a different model from beta_i*x (centring
+    # adds an implied random intercept beta_i*m/s, e.g. SD = tau*mean(lnAADT)).
+    # Scaling alone is an exact reparameterisation, so estimates map back
+    # to the caller's units and match software that uses raw columns.
+    for _rc in set(random_ind_cols) | set(random_cor_cols) | set(grouped_cols):
+        if _rc in _scaler:
+            _scaler[_rc] = (0.0, _scaler[_rc][1])
     if _scaler:
         df = apply_scaler(df, _scaler)
 
