@@ -4753,11 +4753,20 @@ def unstandardize_summary_df(df_params, scaler, spec):
     df = df_params.copy()
     fixed_set = set(getattr(spec, "fixed_names", ())) - {"__INTERCEPT__"}
 
+    # Every coefficient on a centred column shifts the intercept: fixed
+    # terms AND random-parameter means (independent / correlated / grouped).
+    # Only fixed terms were corrected before, so RP models reported a biased
+    # constant (e.g. Washington Ex 16-3 RPNB: 3.24 vs 2.88).
     intercept_correction = 0.0
     for _, row in df.iterrows():
         name = row["Parameter"]
-        if name in fixed_set and name in scaler:
-            mu_k, sigma_k = scaler[name]
+        inner = None
+        if name in fixed_set:
+            inner = name
+        elif name.startswith(("cor_mean(", "mean(", "group_mean(")):
+            inner = name.split("(", 1)[1].rstrip(")")
+        if inner is not None and inner in scaler:
+            mu_k, sigma_k = scaler[inner]
             intercept_correction += float(row["Estimate"]) * mu_k / sigma_k
 
     for i, row in df.iterrows():
@@ -4792,6 +4801,17 @@ def unstandardize_summary_df(df_params, scaler, spec):
             inner = name.split("(", 1)[1].rstrip(")")
             if inner in scaler:
                 _, s = scaler[inner]
+                df.at[i, "Estimate"] = est / s
+                df.at[i, "Std.Err"] = (se / s) if not nan_se else se
+
+        elif name.startswith("chol(") and "," in name:
+            # beta_raw = beta_std / s_row, so every element of Cholesky row
+            # ``row`` (diagonal and below-diagonal alike) is divided by the
+            # scale of that row's variable. Previously chol(...) entries were
+            # left on the standardised scale.
+            row_var = name[5:-1].split(",")[0].strip()
+            if row_var in scaler:
+                _, s = scaler[row_var]
                 df.at[i, "Estimate"] = est / s
                 df.at[i, "Std.Err"] = (se / s) if not nan_se else se
 

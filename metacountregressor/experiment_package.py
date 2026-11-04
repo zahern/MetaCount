@@ -1544,7 +1544,7 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
             if non_zero:
                 neighbor[i] = np.random.choice(non_zero)
             else:
-                neighbor[i] = 1  # default to fixed
+                continue  # variable may not be activated: try another move
 
         # ── BACKWARD ELIMINATION ──────────────────────────────────
         elif move == "backward" and active_idx:
@@ -1558,7 +1558,9 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
             neighbor[i_out] = 0
             allowed_in = allowed_map.get(var_names[i_in], [0])
             non_zero_in = [r for r in allowed_in if r != 0]
-            neighbor[i_in] = np.random.choice(non_zero_in) if non_zero_in else 1
+            if not non_zero_in:
+                continue
+            neighbor[i_in] = np.random.choice(non_zero_in)
 
         # ── ROLE PROMOTION (upgrade complexity) ───────────────────
         elif move == "promote" and active_idx:
@@ -1727,28 +1729,32 @@ def _generate_neighbor_patched(self, solution, T=None, max_attempts=20, min_acti
             continue
         return neighbor
 
-    # Fallback — always return something different
+    # Fallback — always return something different, honouring allowed
+    # roles and bans, and repaired like every other move. (Previously it
+    # assigned randint(1, 10) roles unchecked, skipped repair, and raised
+    # when fewer than ``min_active`` inactive slots existed.)
+    def _active_role(j):
+        return int(self.sample_allowed_role(j, force_active=True))
+
     neighbor = solution.copy()
     if len(active_idx) > 0 and len(excluded_idx) > 0:
-        # Swap one active for one excluded
         neighbor[np.random.choice(active_idx)] = 0
-        in_idx = np.random.choice(excluded_idx)
-        allowed = allowed_map.get(var_names[in_idx], [0])
-        non_zero = [r for r in allowed if r != 0]
-        neighbor[in_idx] = np.random.choice(non_zero) if non_zero else 1
+        in_idx = int(np.random.choice(excluded_idx))
+        neighbor[in_idx] = _active_role(in_idx)
     elif len(active_idx) >= 2:
-        # Toggle the role of one active variable
-        i = np.random.choice(active_idx)
-        allowed = allowed_map.get(var_names[i], range(10))
+        i = int(np.random.choice(active_idx))
+        allowed = list(allowed_map.get(var_names[i], [0, 1]))
         old = int(neighbor[i])
         possible = [r for r in allowed if r != old]
-        neighbor[i] = np.random.choice(possible) if possible else 0
+        neighbor[i] = int(np.random.choice(possible)) if possible else 0
     else:
-        # Activate at least min_active
-        zero_idx = np.where(neighbor[:D] == 0)[0]
-        activate = np.random.choice(zero_idx, size=min_active, replace=False)
-        neighbor[activate] = np.random.randint(1, 10, size=len(activate))
-    return neighbor
+        zero_idx = [j for j in np.where(neighbor[:D] == 0)[0]
+                    if var_names[j] not in (banned_vars - force_inc)]
+        if zero_idx:
+            k = min(max(min_active - len(active_idx), 1), len(zero_idx))
+            for j in np.random.choice(zero_idx, size=k, replace=False):
+                neighbor[j] = _active_role(int(j))
+    return self.repair(neighbor)
 
 
 _solvers.AdvancedSimulatedAnnealing.generate_neighbor = _generate_neighbor_patched
@@ -2441,6 +2447,14 @@ class ExperimentBuilder:
                     (0.02, 2),
                     (0.01, 3),  # never zero noise except as a last fallback
                     ("force_min_noise", 4),  # last fallback: forcibly add small noise if all else fails
+                    # Spread starts: classes separated in level and slope.
+                    # All starts above sit within ~0.05 of the single-class
+                    # fit, so EM converged to the same nearby optimum (e.g.
+                    # Washington Ex 16-3 LC-NB stopped at -948.35 instead of
+                    # the book's -940.19).
+                    (("spread", 0.5), 5),
+                    (("spread", 1.0), 6),
+                    (("spread", 1.5), 7),
                 ]
                 em_max_iter = 40
                 polish_maxiter = 800
@@ -2468,6 +2482,25 @@ class ExperimentBuilder:
                                 else np.pad(theta_1, (0, k - len(theta_1))) + rng.normal(0.0, 0.05, k)
                                 for k in _class_K_base_fit
                             ])
+                    elif isinstance(noise_scale, tuple) and noise_scale[0] == "spread":
+                        spread = float(noise_scale[1])
+                        _fx = tuple(getattr(spec_1, "fixed_names", ()) or ())
+                        _has_int = bool(_fx) and _fx[0] == "__INTERCEPT__"
+                        _nfix = int(getattr(spec_1, "Kf", 0))
+                        lv = np.linspace(-1.0, 1.0, C) * spread
+                        blocks_ = []
+                        for i, k in enumerate(_class_K_base_fit):
+                            base = (theta_1[:k] if len(theta_1) >= k
+                                    else np.pad(theta_1, (0, k - len(theta_1)))).copy()
+                            j0 = 1 if _has_int else 0
+                            j1 = min(_nfix, k)
+                            # slopes scaled in opposite directions per class,
+                            # intercept shifted to separate low/high means
+                            base[j0:j1] *= (1.0 - 0.5 * lv[i] / max(spread, 1e-9) * min(spread, 1.0))
+                            if _has_int:
+                                base[0] += lv[i]
+                            blocks_.append(base + rng.normal(0.0, 0.05, k))
+                        theta_init = np.concatenate(blocks_)
                     elif noise_scale == "force_min_noise":
                         # forcibly guarantee different initializations
                         theta_init = np.concatenate([
@@ -2937,6 +2970,7 @@ class ExperimentBuilder:
 
         # Build DataFrame and print
         coef_df = pd.DataFrame(coef_rows)
+        coef_df = _add_original_units_column(coef_df, fit_result.get("data"))
 
         print("\n" + "=" * 80)
         print(f"  MODEL COEFFICIENTS  —  {spec.model.upper()} MODEL")
@@ -2961,12 +2995,19 @@ class ExperimentBuilder:
                     print(f"  {str(type_name).upper()} PARAMETERS:")
                     print(f"  {'-' * 76}")
                     for _, row in subset.iterrows():
-                        print(f"    {row['Parameter']:30s} = {row['Estimate']:+.6f}")
+                        print(f"    {row['Parameter']:30s} = {row['Estimate']:+.6f}"
+                              + (f"   (orig. units {row['Estimate_orig']:+.6f})"
+                                 if np.isfinite(row.get("Estimate_orig", np.nan))
+                                 and not np.isclose(row["Estimate_orig"], row["Estimate"])
+                                 else ""))
                     print()
 
         print("=" * 80 + "\n")
 
-        return coef_df[["Parameter", "Type", "Estimate"]]
+        cols = ["Parameter", "Type", "Estimate"]
+        if "Estimate_orig" in coef_df.columns:
+            cols.append("Estimate_orig")
+        return coef_df[cols]
 
     # ── print_cmf_interpretation ────────────────────────────────────
 
@@ -4816,6 +4857,52 @@ def export_spf_per_class(
 # =====================================================================
 # Standalone helper functions (importable from metacountregressor)
 # =====================================================================
+
+
+def _add_original_units_column(coef_df: "pd.DataFrame", data) -> "pd.DataFrame":
+    """Add ``Estimate_orig``: fixed / random-mean coefficients (and the
+    intercept, per latent class) mapped back to the original predictor units.
+
+    The optimiser works on centred/scaled continuous columns
+    (``data['scaler']``); ``Estimate`` keeps those optimiser-scale values.
+    Variance / dispersion / class-logit rows are left as NaN here.
+    """
+    if coef_df is None or len(coef_df) == 0:
+        return coef_df
+    scaler = (data or {}).get("scaler", {}) if isinstance(data, dict) else {}
+    out = coef_df.copy()
+    out["Estimate_orig"] = np.nan
+    if not scaler:
+        mask = out["Type"].astype(str).str.startswith(("Fixed", "Random-Ind", "Random-Cor", "Grouped"))
+        out.loc[mask, "Estimate_orig"] = out.loc[mask, "Estimate"]
+        return out
+    import re as _re
+    def _split(param):
+        m = _re.match(r"^(.*?)(?: \[(Class \d+)\])?$", str(param))
+        return m.group(1), m.group(2)
+    correction: Dict[Optional[str], float] = {}
+    intercept_rows: Dict[Optional[str], int] = {}
+    for i, row in out.iterrows():
+        typ = str(row["Type"])
+        base, cls = _split(row["Parameter"])
+        is_mean = "mean)" in base
+        if not (typ.startswith("Fixed") or (is_mean and typ.startswith(("Random-Ind", "Random-Cor", "Grouped")))):
+            continue
+        var = base.split(" (")[0].strip()
+        if var == "__INTERCEPT__":
+            intercept_rows[cls] = i
+            continue
+        est = float(row["Estimate"])
+        if var in scaler:
+            mu_k, s_k = scaler[var]
+            out.at[i, "Estimate_orig"] = est / s_k
+            correction[cls] = correction.get(cls, 0.0) + est * mu_k / s_k
+        else:
+            out.at[i, "Estimate_orig"] = est
+    for cls, i in intercept_rows.items():
+        out.at[i, "Estimate_orig"] = float(out.at[i, "Estimate"]) - correction.get(cls, 0.0)
+    return out
+
 
 def extract_summary(fit_result: dict) -> dict:
     """Safely extract the summary dict from a fit_manual_model result.

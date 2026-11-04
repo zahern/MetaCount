@@ -257,33 +257,15 @@ class AdvancedSimulatedAnnealing:
             D = self.dim_core
             roles = solution[:D]
 
-            # Rule:
-            # If role 5 exists → must also have at least one 2 or 3
-            if 5 in roles and not (2 in roles or 3 in roles):
-
-                zero_idx = np.where(roles == 0)[0]
-
-                if len(zero_idx) > 0:
-                    # Activate one zero as 2 or 3
-                    roles[np.random.choice(zero_idx)] = np.random.choice([2, 3])
-                else:
-                    # Force-convert one variable
-                    idx = np.random.randint(D)
-                    roles[idx] = np.random.choice([2, 3])
-
-            # Rule:
-            # If role 9 exists → must also have at least one 2, 3, or 4
-            if 9 in roles and not (2 in roles or 3 in roles or 4 in roles):
-
-                zero_idx = np.where(roles == 0)[0]
-
-                if len(zero_idx) > 0:
-                    # Activate one zero as 2, 3, or 4
-                    roles[np.random.choice(zero_idx)] = np.random.choice([2, 3, 4])
-                else:
-                    # Force-convert one variable
-                    idx = np.random.randint(D)
-                    roles[idx] = np.random.choice([2, 3, 4])
+            # Rule: role 5 (heterogeneity in means) needs a random parameter
+            # (2/3); role 9 (heterogeneity in variances) needs one of 2/3/4.
+            # Only variables whose allowed_roles permit the random role (and
+            # that are not banned) may be activated to satisfy the rule; if
+            # none can, the dependent role is dropped instead. (Previously a
+            # random variable was force-converted regardless of its allowed
+            # roles or ban status.)
+            roles = _repair_dependent_role(self, roles, 5, (2, 3))
+            roles = _repair_dependent_role(self, roles, 9, (2, 3, 4))
 
             # Mutual-exclusion repair: keep only the first active in each group
             mutex = getattr(self.evaluator, "mutual_exclusion", None)
@@ -2254,3 +2236,34 @@ class StepwiseStructureSolver:
                 break  # no improvement
 
         return current, current_score
+
+
+def _repair_dependent_role(engine, roles, dep_role, needs):
+    """Make ``dep_role`` valid by activating an allowed random role, else drop it."""
+    roles = np.asarray(roles).copy()
+    if dep_role not in roles or any(r in roles for r in needs):
+        return roles
+    ev = engine.evaluator
+    allowed = getattr(ev, "allowed_roles", {}) or {}
+    banned = getattr(ev, "_banned_variables", set())
+    force_inc = getattr(ev, "_force_included_vars", set())
+    names = list(getattr(ev, "vars", []))
+    cands = []
+    for j in range(len(roles)):
+        if roles[j] == dep_role:
+            continue
+        name = names[j] if j < len(names) else None
+        if name in banned and name not in force_inc:
+            continue
+        ok = [r for r in needs if r in allowed.get(name, needs)]
+        if ok:
+            # prefer currently inactive / fixed slots over other roles
+            cands.append((0 if roles[j] in (0, 1) else 1, j, ok))
+    if cands:
+        best_rank = min(c[0] for c in cands)
+        pool = [c for c in cands if c[0] == best_rank]
+        _, j, ok = pool[np.random.randint(len(pool))]
+        roles[j] = int(np.random.choice(ok))
+    else:
+        roles[roles == dep_role] = 0
+    return roles
