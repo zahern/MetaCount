@@ -636,8 +636,15 @@ def build_cholesky(params, K):
 
 
 
-def random_correlated(mean, chol_params, draws, K, dist_codes):
+def random_correlated(mean, chol_params, draws, K, dist_codes,
+                      row_log_scale=None):
+    """Correlated random coefficients beta_i = mean_i + D_i L v_i.
 
+    ``row_log_scale`` (N, K), when given, is the heterogeneity-in-variances
+    term omega' w_i: D_i = diag(exp(omega' w_i)) rescales each coefficient's
+    row for observation i, so Var(beta_i) = D_i L L' D_i varies across
+    observations while the correlation matrix stays common.
+    """
     L = jnp.zeros((K, K))
     tril = jnp.tril_indices(K)
     L = L.at[tril].set(chol_params)
@@ -646,6 +653,8 @@ def random_correlated(mean, chol_params, draws, K, dist_codes):
     L = L.at[diag].set(_positive_scale(L[diag]))
 
     z_corr = jnp.einsum("ij,njr->nir", L, draws)
+    if row_log_scale is not None:
+        z_corr = z_corr * jnp.exp(jnp.clip(row_log_scale, -12.0, 6.0))[:, :, None]
 
     scale_dummy = jnp.zeros(K)  # not used, embedded in chol
 
@@ -780,19 +789,20 @@ def build_eta(params, data, spec: ModelSpec):
         # For correlated effects, variance heterogeneity affects the Cholesky factor
         # We apply the mean shift across observations to the log-diagonal
         chol = blocks["chol"]
-        if shift_var is not None:
-            # Average variance heterogeneity shift across observations for the Cholesky diagonal
-            shift_var_cor = jnp.mean(shift_var[:, :spec.Kr_cor], axis=0)
-            K = spec.Kr_cor
-            diag_idx = jnp.array([i * (i + 3) // 2 for i in range(K)])
-            chol = chol.at[diag_idx].add(shift_var_cor)
+        # Heterogeneity in variances must be observation-specific. The old
+        # code averaged omega'w_i over ALL observations and added that single
+        # constant to the Cholesky diagonal, so every site had the same
+        # variance (and with centred w the effect was ~0 / unidentified).
+        row_log_scale = (shift_var[:, :spec.Kr_cor]
+                         if shift_var is not None else None)
 
         beta_cor = random_correlated(
             mean_cor,
             chol,
             data["draws_cor"],
             spec.Kr_cor,
-            jnp.array([DIST_MAP[d] for d in spec.random_cor_dists])
+            jnp.array([DIST_MAP[d] for d in spec.random_cor_dists]),
+            row_log_scale=row_log_scale,
         )
 
         eta += jnp.einsum("npk,nkr->npr", data["Xr_cor"], beta_cor)
@@ -847,21 +857,12 @@ def build_eta(params, data, spec: ModelSpec):
                 _shift_g = jnp.einsum("gk,km->gm", _Xh_group, _gamma_g)
                 mean_g = mean_g[None, :] + _shift_g
 
-        if shift_var is not None:
-            # Apply variance heterogeneity shift to grouped log-SDs
-            # Use pre-computed group-level variance heterogeneity shift
-            g_start = spec.Kr_cor + spec.Kr_ind
-            g_end = g_start + spec.Kg
-            
-            # Use pre-computed group-level shift from Xh_var_group
-            Xh_var_group = data.get("Xh_var_group")
-            if Xh_var_group is not None and Xh_var_group.shape[0] > 0 and Xh_var_group.shape[1] > 0:
-                # Xh_var_group has shape (n_groups, Kv)
-                # We need to map this to the grouped random effects
-                # The grouped effects are at position g_start:g_end in random total
-                # For simplicity, apply the same group-level shift to all grouped effects
-                if g_end <= Xh_var_group.shape[1] + g_start:
-                    sd_g = sd_g + Xh_var_group[:, :spec.Kg]
+        # NOTE: there is no estimated parameter for heterogeneity in the
+        # variances of GROUPED coefficients (gamma_var spans only the
+        # correlated + independent coefficients). The previous code added the
+        # raw covariate values in Xh_var_group straight onto the grouped
+        # log-SDs with no coefficient, which distorted the likelihood; that
+        # term is intentionally not applied.
 
         beta_g_all = transform_draws(
             data["draws_g"],
@@ -931,8 +932,13 @@ def transform_draws(draws, mean, scale, dist_codes):
 
     # Triangular (using inverse CDF of symmetric triangular)
     # Assume draws are uniform in (-1,1)
-    u = jsp.stats.norm.cdf(z)
-    beta_tri = mean + scale * (2*u - 1)
+    # Symmetric triangular on [mean - scale, mean + scale] via its inverse
+    # CDF. (The previous mean + scale*(2u - 1) is the UNIFORM inverse CDF,
+    # so "triangular" random parameters were silently uniform.)
+    u = jnp.clip(jsp.stats.norm.cdf(z), 1e-12, 1.0 - 1e-12)
+    t = jnp.where(u < 0.5, jnp.sqrt(2.0 * u) - 1.0,
+                  1.0 - jnp.sqrt(2.0 * (1.0 - u)))
+    beta_tri = mean + scale * t
     
         # Uniform (mean + scale * u) where u in (-1,1)
     u = jsp.stats.norm.cdf(z) * 2 - 1
