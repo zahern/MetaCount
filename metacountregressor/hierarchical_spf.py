@@ -161,6 +161,18 @@ def _normal_draws(n_units: int, k: int, r: int, seed: int) -> np.ndarray:
     return z
 
 
+def _gh_product(k: int, n: int):
+    """Gauss-Hermite product rule for E[f(v)], v ~ N(0, I_k).
+    Returns nodes (k, n**k) and log-weights (n**k,) summing to 1."""
+    x, w = np.polynomial.hermite.hermgauss(n)
+    z, lw = np.sqrt(2.0) * x, np.log(w / np.sqrt(np.pi))
+    grids = np.meshgrid(*([z] * k), indexing="ij")
+    wgrids = np.meshgrid(*([lw] * k), indexing="ij")
+    nodes = np.stack([g.ravel() for g in grids])
+    logw = np.sum(np.stack([g.ravel() for g in wgrids]), axis=0)
+    return jnp.asarray(nodes), jnp.asarray(logw)
+
+
 # ----------------------------------------------------------------------
 # model
 # ----------------------------------------------------------------------
@@ -168,11 +180,34 @@ class HierarchicalSPF:
     """Fit a :class:`HierarchicalSPFSpec` by (simulated) maximum likelihood."""
 
     def __init__(self, spec: HierarchicalSPFSpec, R: int = 200,
-                 inner_draws: int = 100, seed: int = 0):
+                 inner_draws: int = 100, seed: int = 0,
+                 site_integration: str = "auto", group_integration: str = "simulation",
+                 quad_nodes: Optional[int] = None, draw_chunk: int = 64):
+        """
+        site_integration : "auto" | "quadrature" | "simulation"
+            How the site-level random parameters are integrated. "auto"
+            uses Gauss-Hermite product quadrature when there are at most
+            two site-level random parameters (the integrand is a product
+            over only a site's few years, so 12-20 nodes per dimension are
+            as accurate as hundreds of draws), else Halton simulation with
+            ``inner_draws`` (or ``R`` without group effects) draws.
+        group_integration : "simulation" | "quadrature"
+            Group-level integral. Simulation (``R`` draws) is the safe
+            default: the integrand is a product over every site in the
+            group, so it is sharply peaked and plain Gauss-Hermite needs
+            many nodes. "quadrature" is allowed for one group-level
+            random parameter.
+        quad_nodes : nodes per dimension (default 16 for 1-D, 8 for 2-D).
+        draw_chunk : draws evaluated together (vectorised) per step.
+        """
         self.spec = spec
         self.R = int(R)
         self.S = int(inner_draws)
         self.seed = int(seed)
+        self.site_integration = site_integration
+        self.group_integration = group_integration
+        self.quad_nodes = quad_nodes
+        self.draw_chunk = int(draw_chunk)
         self.result_ = None
 
     # -- data ----------------------------------------------------------
@@ -222,10 +257,47 @@ class HierarchicalSPF:
         self._site_rand, self._group_rand = site_rand, group_rand
         self._y_lgamma = jnp.asarray(gammaln(y + 1.0))
         Ks, Kg = len(site_rand), len(group_rand)
-        S = self.S if (Ks and Kg) else self.R
-        self._Ssite = S
-        self._Vs = jnp.asarray(_normal_draws(I, Ks, S, self.seed + 11))
-        self._Ug = jnp.asarray(_normal_draws(self._G, Kg, self.R, self.seed + 29))
+
+        # Linear-predictor designs, so the per-draw work is only the random
+        # deviations:  ln A = XA @ coef,  expo_m = E_m @ coef.
+        XA = np.zeros((N, P)); XA[:, 0] = 1.0
+        E = np.zeros((len(sp.aadt_cols), N, P))
+        j = 1
+        for k in range(len(sp.a_terms)):
+            XA[:, j] = Xa[:, k]; j += 1
+        for mi, m in enumerate(sp.aadt_cols):
+            E[mi, :, j] = 1.0; j += 1
+            for q in range(Zb[mi].shape[1]):
+                E[mi, :, j] = Zb[mi][:, q]; j += 1
+        self._XA, self._E = jnp.asarray(XA), jnp.asarray(E)
+        sr, gr = np.array(site_rand, int), np.array(group_rand, int)
+        self._XA_s, self._E_s = jnp.asarray(XA[:, sr]), jnp.asarray(E[:, :, sr])
+        self._XA_g, self._E_g = jnp.asarray(XA[:, gr]), jnp.asarray(E[:, :, gr])
+
+        # site-level integration nodes
+        mode = self.site_integration
+        if mode == "auto":
+            mode = "quadrature" if 0 < Ks <= 2 else "simulation"
+        if mode == "quadrature" and Ks > 3:
+            raise ValueError("quadrature supports at most 3 site-level random parameters")
+        self._site_mode = mode if Ks else None
+        if Ks and mode == "quadrature":
+            n = self.quad_nodes or {1: 16, 2: 8, 3: 6}[Ks]
+            self._Vq, self._lwq = _gh_product(Ks, n)
+            self._Ssite = self._Vq.shape[1]
+        elif Ks:
+            S = self.S if Kg else self.R
+            self._Ssite = S
+            self._Vs = jnp.asarray(_normal_draws(I, Ks, S, self.seed + 11))
+        # group-level integration nodes
+        gmode = self.group_integration if Kg else None
+        if gmode == "quadrature" and Kg > 1:
+            raise ValueError("group quadrature supports one group-level random parameter")
+        self._group_mode = gmode
+        if Kg and gmode == "quadrature":
+            self._Uq, self._lwg = _gh_product(Kg, self.quad_nodes or 24)
+        elif Kg:
+            self._Ug = jnp.asarray(_normal_draws(self._G, Kg, self.R, self.seed + 29))
         return y
 
     # -- parameter layout ------------------------------------------------
@@ -274,92 +346,98 @@ class HierarchicalSPF:
         return L.at[d].set(jnp.exp(L[d]))
 
     # -- likelihood pieces ----------------------------------------------
-    def _ln_mu(self, coef):
-        """coef: (N, P) per-row coefficients -> (N,) ln mu."""
-        d, sp, lab = self._d, self.spec, self._labels
-        ln_mu = coef[:, 0] + d["offset"]
-        j = 1
-        for k in range(len(sp.a_terms)):
-            ln_mu = ln_mu + coef[:, j] * d["Xa"][:, k]
-            j += 1
-        for m in range(len(sp.aadt_cols)):
-            b0 = coef[:, j]; j += 1
-            zs = d["Zb"][m]
-            lin = jnp.zeros_like(b0)
-            for q in range(zs.shape[1]):
-                lin = lin + coef[:, j] * zs[:, q]
-                j += 1
-            if sp.exponent_form == "exp":
-                B = jnp.exp(b0 + lin)          # b0 holds log b0
-            else:
-                B = b0 + lin
-            ln_mu = ln_mu + B * d["lnaadt"][:, m]
-        return jnp.clip(ln_mu, -30.0, 30.0)
-
-    def _row_ll(self, ln_mu, ln_disp):
-        y = self._d["y"]
+    def _ll_rows(self, lnA, expo, ln_disp, const):
+        """Row log-likelihoods for any trailing draw shape.
+        lnA: (N, ...), expo: (M, N, ...), const: (N,) draw-free NB terms."""
+        lnaadt = self._d["lnaadt"]                                   # (N, M)
+        extra = (None,) * (lnA.ndim - 1)
+        B = jnp.exp(expo) if self.spec.exponent_form == "exp" else expo
+        ln_mu = lnA + jnp.sum(B * lnaadt.T[(slice(None), slice(None)) + extra], axis=0)
+        ln_mu = jnp.clip(ln_mu, -30.0, 30.0)
+        y = self._d["y"][(slice(None),) + extra]
         if self.spec.family == "poisson":
-            return y * ln_mu - jnp.exp(ln_mu) - self._y_lgamma
-        a = jnp.exp(jnp.clip(ln_disp, -20.0, 10.0))
-        inv = 1.0 / a
-        # NB2:  Var = mu + a mu^2  (log-space, stable)
-        log1p_amu = jnp.logaddexp(0.0, jnp.log(a) + ln_mu)
-        return (gammaln(y + inv) - gammaln(inv) - self._y_lgamma
-                - inv * log1p_amu + y * (jnp.log(a) + ln_mu - log1p_amu))
+            return y * ln_mu - jnp.exp(ln_mu) + const[(slice(None),) + extra]
+        la = jnp.clip(ln_disp, -20.0, 10.0)
+        log1p_amu = jnp.logaddexp(0.0, la + ln_mu)
+        return const[(slice(None),) + extra] - jnp.exp(-la) * log1p_amu + \
+            y * (la + ln_mu - log1p_amu)
 
     def negloglik(self, p):
         lay = self._layout()
         d = self._d
         theta = p[lay["theta"][0]:lay["theta"][1]]
         ln_disp = p[lay["ln_disp"][0]] if "ln_disp" in lay else 0.0
-        N, P, I, G = self._N, self._P, self._I, self._G
+        I, G = self._I, self._G
         Ks, Kg = len(self._site_rand), len(self._group_rand)
-        base = jnp.broadcast_to(theta, (N, P))
         site_idx = d["site_idx"]
+        y = d["y"]
+        # draw-invariant pieces, computed once per evaluation
+        if self.spec.family == "poisson":
+            const = -self._y_lgamma
+        else:
+            inv = jnp.exp(-jnp.clip(ln_disp, -20.0, 10.0))
+            const = gammaln(y + inv) - gammaln(inv) - self._y_lgamma
+        lnA0 = self._XA @ theta + d["offset"]                        # (N,)
+        expo0 = jnp.einsum("mnp,p->mn", self._E, theta)              # (M,N)
 
         if Ks == 0 and Kg == 0:
-            return -jnp.sum(self._row_ll(self._ln_mu(base), ln_disp))
+            return -jnp.sum(self._ll_rows(lnA0, expo0, ln_disp, const))
 
-        sel_s = jnp.zeros((Ks, P)).at[jnp.arange(Ks), jnp.array(self._site_rand, int)].set(1.0) \
-            if Ks else None
-        sel_g = jnp.zeros((Kg, P)).at[jnp.arange(Kg), jnp.array(self._group_rand, int)].set(1.0) \
-            if Kg else None
+        L = self._site_chol(p) if Ks else None
 
-        def site_ll_given(coef_rows, v_sites):
-            """Per-site log of (1/S) sum_s prod_t f, given site draws
-            v_sites (I, Ks, S); coef_rows (N, P) w/o site part."""
-            L = self._site_chol(p)                                  # (Ks,Ks)
-            dev = jnp.einsum("ab,ibs->ias", L, v_sites)             # (I,Ks,S)
-            dev_rows = dev[site_idx]                                # (N,Ks,S)
-            def one_s(s):
-                c = coef_rows + dev_rows[:, :, s] @ sel_s
-                return jax.ops.segment_sum(
-                    self._row_ll(self._ln_mu(c), ln_disp), site_idx,
-                    num_segments=I)                                 # (I,)
-            per = jax.lax.map(jax.checkpoint(one_s),
-                              jnp.arange(v_sites.shape[-1]))        # (S,I)
-            return logsumexp(per, axis=0) - jnp.log(per.shape[0])  # (I,)
+        def site_loglik(lnA, expo):
+            """(I,) log of the site-level integral given (N,) lnA, (M,N) expo."""
+            if self._site_mode == "quadrature":
+                dev = L @ self._Vq                                     # (Ks,S)
+                lnA_s = lnA[:, None] + self._XA_s @ dev                # (N,S)
+                expo_s = expo[..., None] + jnp.einsum("mnk,ks->mns", self._E_s, dev)
+                ll = self._ll_rows(lnA_s, expo_s, ln_disp, const)      # (N,S)
+                per = jax.ops.segment_sum(ll, site_idx, num_segments=I)  # (I,S)
+                return logsumexp(per + self._lwq[None, :], axis=1)
+            V = self._Vs                                               # (I,Ks,S)
+            S = V.shape[-1]
+            c = max(1, min(self.draw_chunk, S))
+            n_chunks = -(-S // c)
+            pad = n_chunks * c - S
+            Vp = jnp.concatenate([V, jnp.zeros(V.shape[:2] + (pad,))], axis=-1) if pad else V
+            Vc = Vp.reshape(I, Ks, n_chunks, c).transpose(2, 0, 1, 3)  # (C,I,Ks,c)
+
+            def chunk(Vk):
+                dev = jnp.einsum("ab,ibs->ias", L, Vk)[site_idx]       # (N,Ks,c)
+                lnA_s = lnA[:, None] + jnp.einsum("nk,nks->ns", self._XA_s, dev)
+                expo_s = expo[..., None] + jnp.einsum("mnk,nks->mns", self._E_s, dev)
+                ll = self._ll_rows(lnA_s, expo_s, ln_disp, const)
+                return jax.ops.segment_sum(ll, site_idx, num_segments=I)  # (I,c)
+            per = jax.lax.map(jax.checkpoint(chunk), Vc)               # (C,I,c)
+            per = per.transpose(1, 0, 2).reshape(I, -1)[:, :S]
+            return logsumexp(per, axis=1) - jnp.log(S)
 
         if Kg == 0:
-            return -jnp.sum(site_ll_given(base, self._Vs))
+            return -jnp.sum(site_loglik(lnA0, expo0))
 
-        sd_g = jnp.exp(p[lay["group"][0]:lay["group"][1]])         # (Kg,)
-        U = self._Ug                                                # (G,Kg,R)
+        sd_g = jnp.exp(p[lay["group"][0]:lay["group"][1]])            # (Kg,)
         g_row = d["g_idx_row"]
+        if self._group_mode == "quadrature":
+            nodes, lw = self._Uq[0], self._lwg                       # (Q,), (Q,)
+            draws = jnp.broadcast_to(nodes[None, None, :], (G, 1, nodes.shape[0]))
+        else:
+            draws, lw = self._Ug, None                               # (G,Kg,R)
 
-        def one_r(r):
-            dev_g = (sd_g[None, :] * U[:, :, r])[g_row] @ sel_g     # (N,P)
-            coef = base + dev_g
+        def one_r(u_r):                                               # (G,Kg)
+            dev_g = (sd_g[None, :] * u_r)[g_row]                      # (N,Kg)
+            lnA = lnA0 + jnp.sum(self._XA_g * dev_g, axis=1)
+            expo = expo0 + jnp.einsum("mnk,nk->mn", self._E_g, dev_g)
             if Ks:
-                ll_site = site_ll_given(coef, self._Vs)             # (I,)
+                ll_site = site_loglik(lnA, expo)
             else:
                 ll_site = jax.ops.segment_sum(
-                    self._row_ll(self._ln_mu(coef), ln_disp), site_idx,
-                    num_segments=I)
-            return jax.ops.segment_sum(ll_site, d["g_idx_site"],
-                                       num_segments=G)              # (G,)
-        per_r = jax.lax.map(jax.checkpoint(one_r), jnp.arange(U.shape[-1]))
-        ll_g = logsumexp(per_r, axis=0) - jnp.log(per_r.shape[0])
+                    self._ll_rows(lnA, expo, ln_disp, const), site_idx, num_segments=I)
+            return jax.ops.segment_sum(ll_site, d["g_idx_site"], num_segments=G)
+        per_r = jax.lax.map(jax.checkpoint(one_r), draws.transpose(2, 0, 1))  # (R,G)
+        if lw is None:
+            ll_g = logsumexp(per_r, axis=0) - jnp.log(per_r.shape[0])
+        else:
+            ll_g = logsumexp(per_r + lw[:, None], axis=0)
         return -jnp.sum(ll_g)
 
     # -- fitting ----------------------------------------------------------
@@ -449,12 +527,15 @@ class HierarchicalSPF:
         res = self._optimize(self.negloglik, p0, maxiter)
         p_hat = np.asarray(res.x, float)
         cov, se = None, np.full(len(p_hat), np.nan)
-        if compute_se or not (self._site_rand or self._group_rand):
-            # Newton polish needs the Hessian; for fixed models it is cheap,
-            # so always polish them (ln a0 / elasticity collinearity).
+        is_random = bool(self._site_rand or self._group_rand)
+        if compute_se or not is_random:
             hess = jax.jit(jax.hessian(self.negloglik))
-            p_hat, f_hat = self._newton_polish(p_hat, float(res.fun), hess)
-            res.fun = f_hat
+            if not is_random:
+                # Newton polish (ln a0 / elasticity collinearity). Only for
+                # fixed models: each Hessian of a simulated likelihood costs
+                # several gradient evaluations, and the polish could need 20.
+                p_hat, f_hat = self._newton_polish(p_hat, float(res.fun), hess)
+                res.fun = f_hat
             if compute_se:
                 H = np.asarray(hess(jnp.asarray(p_hat)))
                 H = 0.5 * (H + H.T)

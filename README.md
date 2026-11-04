@@ -599,9 +599,16 @@ variable between Component A and an exponent, change a coefficient's random
 level, switch exponent form), then a greedy pass from the best structure,
 then a final refit with `final_R` draws. On simulated data with a known
 structure (A = LANES, exponent = URBAN, site-random elasticity, two
-irrelevant candidates) it ranks the true structure first. Two-level
-(group + site) models need roughly 1000 outer draws for unbiased variance
-estimates.
+irrelevant candidates) it ranks the true structure first.
+
+Integration is chosen for speed and accuracy: site-level random parameters
+(up to two, or three) are integrated with Gauss–Hermite product quadrature
+by default (`site_integration="auto"`), which is more accurate than 64
+simulation draws at a fraction of the cost; group-level parameters use
+Halton simulation with `R` draws (the group integrand is sharply peaked, so
+use roughly 1000 draws for unbiased group variances in final fits). Draws
+are evaluated in vectorised chunks with gradient checkpointing, so memory
+stays bounded.
 
 ### Duration models
 
