@@ -50,7 +50,7 @@ jobs:
       # stacked-CMF multiplication caveats, the SparseEA-AGDS search that
       # selects the terms, the cross-family rule that decides which CMFs survive
       # a change of count family (NB2 vs NB1 vs Poisson), and the exclusion of
-      # nested or duplicated candidate terms from the search.
+      # nested, duplicated or re-encoded candidate terms from the search.
       - name: Run CMF tests
         run: |
           python -m pytest \
@@ -61,5 +61,7 @@ jobs:
             tests/test_cmf_combine.py \
             tests/test_cmf_family_sensitivity.py \
             tests/test_cmf_forbidden_pairs.py \
+            tests/test_cmf_tier_restriction.py \
+            tests/test_cmf_variation_screen.py \
             tests/test_cmf_agds_search.py \
             -q --durations=10

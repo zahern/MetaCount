@@ -33,15 +33,137 @@ def _is_binary(series) -> bool:
     return len(values) > 0 and bool(np.isin(values, (0.0, 1.0)).all())
 
 
+# A binary that is an interval of a continuous column is only evidence of a
+# dummy/continuous pair if the continuous column has levels to be discretised.
+# Below this many distinct values a dummy can line up with an interval by
+# coincidence - a 4-level variable offers only a handful of possible blocks.
+MIN_DISCRETISED_LEVELS = 8
+
+
+def _interval_encoding(x, b, min_levels=MIN_DISCRETISED_LEVELS):
+    """Is the indicator ``b`` exactly an interval of the values in ``x``?
+
+    Returns ``{"lo", "hi", "lower_tail", "upper_tail", "levels"}`` or None.
+
+    Exact, not approximate.  Every distinct value of ``x`` must map to a single
+    class of ``b`` - so one tie straddling the cut rules the pair out, because
+    ``b`` is then not a function of ``x`` - and the values with ``b = 1`` must
+    form one contiguous run once ``x`` is sorted.  That single test covers a
+    threshold (``x >= c``), its reverse, and an interior band
+    (``c1 <= x <= c2``), without enumerating the forms.
+    """
+    x = np.asarray(x, dtype=float)
+    b = np.asarray(b, dtype=float) > 0
+    ok = np.isfinite(x)
+    x, b = x[ok], b[ok]
+    if x.size < min_levels or b.all() or not b.any():
+        return None
+    order = np.argsort(x, kind="mergesort")
+    xs, bs = x[order], b[order]
+    uniq, starts = np.unique(xs, return_index=True)
+    if uniq.size < min_levels:
+        return None
+    groups = np.repeat(np.arange(uniq.size),
+                       np.diff(np.append(starts, xs.size)))
+    # b must be constant within each distinct x value, else it is not a
+    # deterministic function of x and the two are merely correlated.
+    by_level = pd.Series(bs).groupby(groups)
+    if bool((by_level.nunique() > 1).any()):
+        return None
+    vals = by_level.first().to_numpy()
+    ones = np.flatnonzero(vals)
+    if ones.size == 0 or ones.size == uniq.size:
+        return None
+    if ones[-1] - ones[0] + 1 != ones.size:
+        return None                      # more than one block: not an interval
+    return {
+        "lo": float(uniq[ones[0]]),
+        "hi": float(uniq[ones[-1]]),
+        "lower_tail": bool(ones[0] == 0),
+        "upper_tail": bool(ones[-1] == uniq.size - 1),
+        "levels": int(uniq.size),
+    }
+
+
+def derive_indicator_pairs(data, variables, min_levels=MIN_DISCRETISED_LEVELS):
+    """Binary candidate terms that are a discretised copy of a continuous one.
+
+    ``HSP = 1[SP >= 100]`` is a dummy for its own parent.  Fitted together, the
+    coefficient on either is identified only off the other's functional form,
+    and the search has no way to know which of the two to charge for the
+    information - so a BIC penalty on both is double counting.  The rule is
+    exact: the indicator has to be reproducible from the continuous column on
+    every row, which is what makes it a re-encoding rather than a correlate.
+
+    Returns dicts with ``reason="encoded"``, ``a`` the indicator and ``b`` its
+    parent (matching the ``nested`` convention, where ``a`` is the redundant
+    term).
+    """
+    cols = [v for v in variables if v in data.columns]
+    if not cols:
+        return []
+    X = data[cols].astype(float)
+    binary = [c for c in cols if _is_binary(X[c])]
+    parents = [c for c in cols if c not in binary]
+    found = []
+    for b in binary:
+        for a in parents:
+            enc = _interval_encoding(X[a], X[b] > 0, min_levels)
+            if enc is None:
+                continue
+            if enc["lower_tail"] and enc["upper_tail"]:
+                continue                 # both tails: neither tail, impossible
+            if enc["upper_tail"]:
+                rule = f"{a} >= {enc['lo']:g}"
+            elif enc["lower_tail"]:
+                rule = f"{a} <= {enc['hi']:g}"
+            else:
+                rule = f"{enc['lo']:g} <= {a} <= {enc['hi']:g}"
+            found.append({
+                "a": b, "b": a, "reason": "encoded",
+                "detail": (f"{b} is exactly '{rule}' ({enc['levels']} distinct "
+                           f"values of {a}), so it re-encodes {a} rather than "
+                           f"measuring a separate effect"),
+            })
+    return found
+
+
+def correlation_report(data, variables, threshold=0.80):
+    """Candidate pairs whose absolute correlation reaches ``threshold``.
+
+    Reported rather than forbidden: two correlated regressors are not
+    automatically redundant, and which one to drop is a modelling decision.
+    The report exists so the decision is made with the number visible.  Use
+    ``corr_threshold`` on :func:`derive_forbidden_pairs` to enforce a cut.
+
+    Returns dicts ``{"a", "b", "r"}`` worst first.
+    """
+    from itertools import combinations
+
+    cols = [v for v in variables if v in data.columns]
+    if len(cols) < 2:
+        return []
+    corr = data[cols].astype(float).corr()
+    out = []
+    for a, b in combinations(cols, 2):
+        r = corr.loc[a, b]
+        if np.isfinite(r) and abs(r) >= float(threshold):
+            out.append({"a": a, "b": b, "r": float(r)})
+    return sorted(out, key=lambda p: -abs(p["r"]))
+
+
 def derive_forbidden_pairs(data, variables, corr_threshold=None):
     """Candidate pairs that must not be selected together, derived from the data.
 
-    Two ways a pair can be unidentifiable side by side:
+    Three ways a pair can be unidentifiable side by side:
 
     * **nesting.**  For two 0/1 indicators, if every row with ``A = 1`` also has
       ``B = 1`` (and not conversely), ``A``'s effect is already inside ``B``'s:
       the pair spans the same rows and the coefficient on ``A`` has nothing of
       its own to explain.  This is the `Curve` inside `Curve50` case.
+    * **re-encoding** (see :func:`derive_indicator_pairs`).  A 0/1 term that is
+      exactly an interval of a continuous candidate in the same list is that
+      candidate's dummy; fitting both charges the same information twice.
     * **near-duplication** (opt-in via ``corr_threshold``).  ``|r|`` above the
       threshold is the continuous analogue; it is off by default because
       correlated regressors are not automatically redundant, whereas nesting
@@ -51,7 +173,8 @@ def derive_forbidden_pairs(data, variables, corr_threshold=None):
     recomputed on a different sample, cannot silently keep a stale exclusion.
 
     Returns a list of dicts ``{"a", "b", "reason", "detail"}`` where ``a`` is
-    the nested term for ``reason="nested"`` (``a`` implies ``b``).
+    the redundant term: for ``reason="nested"`` it implies ``b``, and for
+    ``reason="encoded"`` it is the dummy that copies ``b``.
     """
     from itertools import combinations, permutations
 
@@ -92,6 +215,11 @@ def derive_forbidden_pairs(data, variables, corr_threshold=None):
                 "a": a, "b": b, "reason": "duplicate",
                 "detail": f"{a} and {b} are the same indicator on every row",
             })
+
+    # A dummy and the continuous column it discretises cannot both carry a
+    # coefficient: the pair spends two parameters on one piece of information.
+    for item in derive_indicator_pairs(X, cols):
+        found.setdefault(tuple(sorted((item["a"], item["b"]))), item)
 
     if corr_threshold is not None:
         corr = X.corr().abs()
@@ -145,7 +273,7 @@ class CMFAGDSObjective:
     def __init__(self, data, variables, max_terms=8, min_lower=0, R=100, n_hops=1,
                  allow_models=MODELS, allow_dists=DISTS, allow_rho=RHOS,
                  integration="halton", seed=0, instance_name="run_agds_cmf",
-                 max_time=1e9, forbid_together=None):
+                 max_time=1e9, forbid_together=None, upper_only=None):
         self.data = data
         self.variables = list(variables)
         self.K = len(self.variables)
@@ -173,12 +301,24 @@ class CMFAGDSObjective:
         # min_lower: a violating layout is never scored, so the search cannot
         # report one as its winner.
         self.forbid_together = normalise_forbidden(forbid_together)
+        # Terms whose effect is taken not to scale with AADT: they may only be
+        # fitted in the upper tier, where the coefficient is a plain CMF rather
+        # than a modifier of the AADT elasticity.  The gene domain removes the
+        # choice from the search, and ``decode`` enforces it again so a layout
+        # written by hand cannot quietly put one in the lower tier.
+        upper_only = {str(v) for v in (upper_only or ())}
+        unknown = upper_only - {str(v) for v in self.variables}
+        if unknown:
+            raise ValueError(
+                f"upper_only names not among the candidates: {sorted(unknown)}")
+        self.upper_only = frozenset(upper_only)
         self.cache = {}
         K = self.K
         dist_vals = [0] + list(range(1, len(self.allow_dists) + 1))
         self._discrete_values = (
             [[0, 1] for _ in range(K)]                    # include
-            + [[1, 2] for _ in range(K)]                  # tier
+            + [[1] if str(v) in self.upper_only else [1, 2]
+               for v in self.variables]                   # tier
             + [list(dist_vals) for _ in range(K)]         # fixed / random+dist
             + [list(range(1, len(self.allow_models) + 1))]  # model
             + [list(range(len(self.allow_rho)))]          # rho index
@@ -220,7 +360,8 @@ class CMFAGDSObjective:
     def decode(self, layout):
         K = self.K
         inc = [int(layout[i]) for i in range(K)]
-        tier = [int(layout[K + i]) for i in range(K)]
+        tier = [1 if str(v) in self.upper_only else int(layout[K + i])
+                for i, v in enumerate(self.variables)]
         dst = [int(layout[2 * K + i]) for i in range(K)]
         model = self.allow_models[int(layout[3 * K]) - 1]
         rho = self.allow_rho[int(layout[3 * K + 1])]
@@ -450,8 +591,123 @@ def sigma_boundary_lrt(data, spec, R=300, integration="halton", ll_full=None,
     return out
 
 
+def tier_screen(data, variables, R=20, delta=2.0, model="poisson",
+                integration="halton"):
+    """Candidates with no evidence of shifting the AADT elasticity.
+
+    Fits each candidate alone in the upper tier and alone in the lower tier and
+    compares BIC.  Only a *clear* preference for the upper tier (BIC lower by at
+    least ``delta`` on the same rows) is reported as ``upper-only``; anything
+    closer stays eligible for either tier.
+
+    The asymmetry is deliberate.  This is a screen, not a test: on a dataset with
+    a few hundred crashes it has little power, so treating a failed-to-detect
+    interaction as absent would push most candidates out of the only tier that
+    makes the model hierarchical.  Requiring the data to prefer upper instead
+    means the rule can only fire where the lower placement is actively worse.
+
+    Returns ``{variable: {"bic_upper", "bic_lower", "delta", "verdict"}}`` with
+    verdict one of ``upper`` / ``either`` / ``failed``.
+    """
+    out = {}
+    base = dict(model=model, rho=0.0)
+    for v in variables:
+        if v not in data.columns:
+            continue
+        specs = {
+            "upper": {**base, "upper": [v], "lower": [],
+                      "rand_upper": [False], "rand_lower": [],
+                      "dist_upper": ["normal"], "dist_lower": []},
+            "lower": {**base, "upper": [], "lower": [v],
+                      "rand_upper": [], "rand_lower": [False],
+                      "dist_upper": [], "dist_lower": ["normal"]},
+        }
+        rec = {}
+        for where, spec in specs.items():
+            try:
+                rec[where] = float(refit_and_report(
+                    data, spec, R=R, integration=integration, lrt=False).bic)
+            except Exception as exc:                # pragma: no cover - diagnostic
+                rec[where] = float("nan")
+                print(f"  [tier] {v} could not be fitted in the {where} tier: {exc}")
+        if not (np.isfinite(rec["upper"]) and np.isfinite(rec["lower"])):
+            out[v] = {**rec, "delta": float("nan"), "verdict": "failed"}
+            continue
+        gap = rec["upper"] - rec["lower"]      # < 0 means upper fits better
+        out[v] = {**rec, "delta": float(gap),
+                  "verdict": "upper" if gap <= -float(delta) else "either"}
+    return out
+
+
+def aadt_variation_screen(data, variables, R=20, alpha=0.05, delta=2.0,
+                          model="poisson", integration="halton"):
+    """Does each candidate's effect actually vary with AADT?
+
+    ``tier_screen`` asks *where* a term fits better; this asks whether it varies
+    at all, which is the prior question.  For each candidate it nests the upper-only
+    fit inside the fit where the same term also enters the lower tier — the
+    coefficient that multiplies ``log(AADT)`` — so the additional parameter *is*
+    the interaction.  One parameter, one likelihood-ratio test:
+
+    * ``varying``  — the interaction is significant (p < ``alpha``) **and** BIC
+      improves on the upper-only fit;
+    * ``weak``     — significant by the LR test but not worth the BIC penalty;
+    * ``none``     — no evidence the effect scales with traffic;
+    * ``failed`` / ``unsupported`` — the comparison could not be made, or the term
+      has too few observations in its minority class to say anything.
+
+    Splitting ``weak`` out matters: with n in the thousands the BIC penalty
+    (~log n per parameter) is far stricter than p < 0.05, so a term can be
+    nominally significant and still not earn its place.
+
+    Fits carry no random parameters, so they are deterministic: the result does
+    not depend on ``R`` or the draws.
+    """
+    out = {}
+    for v in variables:
+        if v not in data.columns:
+            continue
+        col = pd.to_numeric(data[v], errors="coerce").to_numpy(float)
+        col = col[np.isfinite(col)]
+        if col.size == 0 or np.ptp(col) == 0:
+            out[v] = {"verdict": "unsupported", "reason": "no variation"}
+            continue
+        if _is_binary(pd.Series(col)):
+            minority = int(min((col > 0).sum(), (col == 0).sum()))
+            if minority < 10:
+                out[v] = {"verdict": "unsupported",
+                          "reason": f"only {minority} rows in the minority class"}
+                continue
+        base = dict(model=model, rho=0.0)
+        spec_a = {**base, "upper": [v], "lower": [], "rand_upper": [False],
+                  "rand_lower": [], "dist_upper": ["normal"], "dist_lower": []}
+        spec_b = {**base, "upper": [v], "lower": [v], "rand_upper": [False],
+                  "rand_lower": [False], "dist_upper": ["normal"],
+                  "dist_lower": ["normal"]}
+        try:
+            fa = refit_and_report(data, spec_a, R=R, integration=integration, lrt=False)
+            fb = refit_and_report(data, spec_b, R=R, integration=integration, lrt=False)
+        except Exception as exc:                    # pragma: no cover - diagnostic
+            out[v] = {"verdict": "failed", "reason": str(exc)}
+            continue
+        lr = 2.0 * (float(fb.ll) - float(fa.ll))
+        p = float(chi2.sf(max(lr, 0.0), 1)) if np.isfinite(lr) else float("nan")
+        dbic = float(fb.bic) - float(fa.bic)        # < 0: interaction earns its keep
+        if not np.isfinite(p):
+            verdict = "failed"
+        elif p < alpha and dbic < 0:
+            verdict = "varying"
+        elif p < alpha:
+            verdict = "weak"
+        else:
+            verdict = "none"
+        out[v] = {"verdict": verdict, "lr": lr, "p": p, "delta_bic": dbic,
+                  "bic_upper": float(fa.bic), "bic_both": float(fb.bic)}
+    return out
+
+
 def refit_and_report(data, spec, R=300, integration="halton", lrt=False,
-                     forbid_together=None):
+                     forbid_together=None, upper_only=None):
     """Final fit of a winning specification with inference, identification
     check, CMF catalogue and AADT attribution.
 
@@ -465,6 +721,13 @@ def refit_and_report(data, spec, R=300, integration="halton", lrt=False,
         raise ValueError(
             f"specification selects {bad[0]} and {bad[1]} together; that pair "
             "is unidentifiable side by side (see derive_forbidden_pairs)")
+    if upper_only:
+        stray = sorted(set(map(str, spec.get("lower", []))) & set(map(str, upper_only)))
+        if stray:
+            raise ValueError(
+                f"specification puts {stray} in the lower (AADT-dependent) tier, "
+                "but they are declared upper-only: their effect is not modelled "
+                "as scaling with AADT")
     from .cmf_catalogue import build_cmf_catalogue
     ru, rl = spec["rand_upper"], spec["rand_lower"]
     ordered = [d for d, r in zip(spec["dist_upper"], ru) if r] + \

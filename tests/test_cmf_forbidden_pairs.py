@@ -19,7 +19,9 @@ import pytest
 
 from metacountregressor.cmf_agds_search import (
     CMFAGDSObjective,
+    correlation_report,
     derive_forbidden_pairs,
+    derive_indicator_pairs,
     find_violation,
     normalise_forbidden,
 )
@@ -88,6 +90,98 @@ def test_pairs_may_be_given_as_dicts_or_tuples():
     assert normalise_forbidden([("A", "B")]) == [frozenset({"A", "B"})]
     with pytest.raises(ValueError):
         normalise_forbidden([("A",)])
+
+
+def _speed_frame():
+    """A continuous speed limit with dummies that encode it.
+
+    ``HSP`` is a threshold on ``SP``; ``MSP`` is an interior band.  ``RSHS`` is
+    the trap: it *looks* like a speed dummy but is a conjunction with a road
+    type, so it is not reproducible from ``SP`` alone.
+    """
+    sp = np.array([40, 50, 60, 70, 80, 90, 100, 110] * 5, float)
+    rural = np.tile([0.0, 1.0, 0.0, 1.0, 0.0], 8)[:sp.size]
+    return pd.DataFrame({
+        "SP": sp,
+        "HSP": (sp >= 100).astype(float),
+        "MSP": ((sp >= 50) & (sp < 100)).astype(float),
+        "Rural": rural,
+        "RSHS": ((rural > 0) & (sp >= 100)).astype(float),
+    })
+
+
+def test_a_threshold_dummy_is_matched_to_its_continuous_parent():
+    df = _speed_frame()
+    pairs = derive_indicator_pairs(df, ["SP", "HSP", "MSP"])
+    hsp = [p for p in pairs if p["a"] == "HSP"]
+    assert len(hsp) == 1
+    # a is the redundant term, b its parent - same convention as nesting.
+    assert hsp[0]["b"] == "SP"
+    assert hsp[0]["reason"] == "encoded"
+    assert "SP >= 100" in hsp[0]["detail"]
+
+
+def test_an_interior_band_dummy_is_matched_too():
+    # MSP is not a tail, so a threshold-only test would miss it.
+    pairs = derive_indicator_pairs(_speed_frame(), ["SP", "MSP"])
+    assert len(pairs) == 1 and pairs[0]["a"] == "MSP"
+    assert "50 <= SP <= 90" in pairs[0]["detail"]
+
+
+def test_a_conjunction_dummy_is_not_treated_as_a_re_encoding():
+    # RSHS = rural & high speed: high speed does not make RSHS=1, so the pair
+    # is a genuine interaction and must stay selectable.
+    df = _speed_frame()
+    assert [p for p in derive_indicator_pairs(df, ["SP", "RSHS"])] == []
+    # ...and it is not swallowed by the binary-binary rules either.
+    assert [p for p in derive_forbidden_pairs(df, ["SP", "RSHS", "HSP"])
+            if {p["a"], p["b"]} == {"SP", "RSHS"}] == []
+
+
+def test_a_block_on_a_few_levels_is_ignored_as_coincidence():
+    # Four lanes values offer only a handful of possible blocks, so a dummy on
+    # one of them is as likely to be chance as design.
+    lanes = np.array([1.0, 2.0, 3.0, 4.0] * 10)
+    df = pd.DataFrame({"Nlanes": lanes, "LanesOne": (lanes == 1).astype(float)})
+    assert derive_indicator_pairs(df, ["Nlanes", "LanesOne"]) == []
+
+
+def test_a_tie_straddling_the_cut_rules_out_re_encoding():
+    # b alternates within every value of x, so b is not a function of x: it is
+    # a correlate, not a re-encoding, and only the opt-in rule should touch it.
+    x = np.array([1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0,
+                  5.0, 5.0, 6.0, 6.0, 7.0, 7.0, 8.0, 8.0])
+    b = np.array([0.0, 1.0] * 8)
+    df = pd.DataFrame({"X": x, "B": b})
+    assert derive_indicator_pairs(df, ["X", "B"]) == []
+    assert [p["reason"] for p in
+            derive_forbidden_pairs(df, ["X", "B"], corr_threshold=0.0)] == ["correlated"]
+
+
+def test_the_dummy_and_its_parent_cannot_both_be_selected():
+    df = _speed_frame()
+    pairs = derive_forbidden_pairs(df, ["SP", "HSP", "MSP", "Rural"])
+    encoded = {frozenset((p["a"], p["b"])) for p in pairs
+               if p["reason"] == "encoded"}
+    assert frozenset(("HSP", "SP")) in encoded
+    assert find_violation({"upper": ["HSP"], "lower": ["SP"]}, pairs) is not None
+    assert find_violation({"upper": ["HSP"], "lower": ["Rural"]}, pairs) is None
+
+
+def test_correlation_is_reported_worst_first_without_forbidding():
+    rng = np.random.default_rng(3)
+    n = 60
+    width = rng.uniform(2.0, 12.0, n)
+    df = pd.DataFrame({"WIDTH": width,
+                       "NEAR": width * 2.0 + 1e-9,
+                       "MID": width * 0.9 + rng.normal(0, 1.0, n),
+                       "NOISE": rng.normal(0, 1.0, n)})
+    report = correlation_report(df, list(df.columns), threshold=0.8)
+    assert report[0]["r"] > 0.999 and {report[0]["a"], report[0]["b"]} == {"WIDTH", "NEAR"}
+    assert all(abs(p["r"]) >= 0.8 for p in report)
+    assert "NOISE" not in {p["a"] for p in report} | {p["b"] for p in report}
+    # Reporting is not forbidding: the default derivation leaves them selectable.
+    assert derive_forbidden_pairs(df, ["WIDTH", "NEAR"]) == []
 
 
 def test_the_objective_rejects_a_violating_layout_before_fitting(monkeypatch):
