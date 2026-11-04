@@ -128,3 +128,38 @@ def test_spec_validation():
     df2.loc[0, "AADT_MAJ"] = 0.0
     with pytest.raises(ValueError, match="positive"):
         HierarchicalSPF(_spec())._prepare(df2, "Y")
+
+
+def _one_aadt(n_sites=300, years=5, seed=11):
+    rng = np.random.default_rng(seed)
+    aadt = np.exp(rng.normal(8.8, 0.7, n_sites))
+    lanes = rng.integers(2, 5, n_sites).astype(float)
+    urb = (rng.random(n_sites) < 0.5).astype(float)
+    ln_len = np.log(rng.uniform(0.2, 2.0, n_sites))
+    s = np.repeat(np.arange(n_sites), years)
+    df = pd.DataFrame(dict(SITE=s, DIST=s % 15, AADT=aadt[s], LANES=lanes[s],
+                           URBAN=urb[s], LNLEN=ln_len[s]))
+    lmu = -6.0 - 0.15 * df.LANES + 0.75 * np.exp(0.12 * df.URBAN) * np.log(df.AADT) + df.LNLEN
+    df["Y"] = rng.poisson(rng.gamma(1 / 0.3, 0.3 * np.exp(lmu))).astype(float)
+    return df
+
+
+@pytest.mark.parametrize("random,correlated", [
+    ({}, False),
+    ({"alpha[LANES]": "site", "b0[AADT]": "site"}, True),
+    ({"b0[AADT]": "group"}, False),
+    ({"b0[AADT]": "both", "alpha[LANES]": "site"}, False),
+])
+def test_single_aadt_supports_every_flavour(random, correlated):
+    df = _one_aadt()
+    spec = HierarchicalSPFSpec(aadt_cols=["AADT"], a_terms=["LANES"],
+                               b_terms={"AADT": ["URBAN"]}, exponent_form="exp",
+                               site_col="SITE", group_col="DIST", offset_col="LNLEN",
+                               random=random, correlated=correlated)
+    fit = fit_hierarchical_spf(df, "Y", spec, R=40, inner_draws=16, maxiter=300)
+    s = fit.summary().set_index("parameter")
+    assert np.isfinite(s.attrs["loglik"])
+    assert s.loc["b0[AADT]", "estimate"] == pytest.approx(0.75, abs=0.15)
+    assert s.loc["alpha[LANES]", "estimate"] == pytest.approx(-0.15, abs=0.1)
+    if correlated:
+        assert fit.site_covariance().shape == (2, 2)
