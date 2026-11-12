@@ -1,8 +1,14 @@
+from types import SimpleNamespace
+
 import numpy as np
 import jax.numpy as jnp
 
 from metacountregressor.adaptive_search import IdentifiabilityChecker
-from metacountregressor.main_hpc import ModelSpec, compute_standard_errors
+from metacountregressor.main_hpc import (
+    ModelSpec,
+    compute_standard_errors,
+    print_summary,
+)
 
 
 def test_standard_errors_report_negative_curvature_without_ridge_masking():
@@ -17,6 +23,27 @@ def test_standard_errors_report_negative_curvature_without_ridge_masking():
     assert diagnostics["unreliable_indices"] == [1]
     assert np.isfinite(float(se[0]))
     assert np.isnan(float(se[1]))
+
+
+def test_print_summary_does_not_turn_nan_se_into_p_one():
+    spec = ModelSpec(
+        Kf=1, Kr_ind=1, Kr_cor=0, Kg=0, Kh=0, model="poisson",
+        fixed_names=("x",), random_ind_names=("r",),
+        random_ind_dists=("normal",),
+    )
+    data = {"y": np.zeros((8, 1), dtype=float)}
+    result = SimpleNamespace(params=np.array([0.5, 0.0, -7.0], dtype=float))
+    se = np.array([0.1, np.nan, 0.01], dtype=float)
+
+    df = print_summary(
+        result, lambda p: 0.0, data, spec, None, se=se, return_df=True
+    )
+
+    assert df is not None
+    row = df[df["Parameter"] == "mean(r)"].iloc[0]
+    assert np.isnan(float(row["Std.Err"]))
+    assert np.isnan(float(row["z-value"]))
+    assert np.isnan(float(row["p-value"]))
 
 
 def test_checker_labels_contiguous_random_mean_and_sd_blocks():

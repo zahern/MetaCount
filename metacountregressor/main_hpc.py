@@ -3609,6 +3609,7 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
     parte_applied = False
     params_raw    = params_mle      # default: show MLE params
     corrected_ll  = None
+    se_diagnostics = None
 
     if objective is not None and param_index is not None and se is None:
         try:
@@ -3627,10 +3628,10 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
     if not parte_applied:
         params_raw = params_mle
         if se is None:
-            se_raw = np.asarray(
-                compute_standard_errors(result.params, objective),
-                dtype=np.float64,
+            se_raw_j, se_diagnostics = compute_standard_errors(
+                result.params, objective, return_diagnostics=True
             )
+            se_raw = np.asarray(se_raw_j, dtype=np.float64)
         else:
             se_raw = se
 
@@ -3757,14 +3758,16 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
     if _scaler:
         df = unstandardize_summary_df(df, _scaler, spec)
 
-    # Recompute z and p (after possible back-transformation)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        df["z-value"] = np.where(
-            df["Std.Err"] > 1e-15,
-            df["Estimate"] / df["Std.Err"],
-            0.0,
-        )
-    df["p-value"] = 2 * (1 - stats.norm.cdf(np.abs(df["z-value"])))
+    # Recompute z and p (after possible back-transformation).  A NaN SE
+    # means the parameter is not identified in this fit; leave z and p as
+    # NaN instead of reporting the misleading p=1.0 produced by z=0.
+    _est = pd.to_numeric(df["Estimate"], errors="coerce").to_numpy(dtype=float)
+    _se = pd.to_numeric(df["Std.Err"], errors="coerce").to_numpy(dtype=float)
+    _z = np.full(_est.shape, np.nan, dtype=float)
+    _identified = np.isfinite(_se) & (_se > 1e-15)
+    _z[_identified] = _est[_identified] / _se[_identified]
+    df["z-value"] = _z
+    df["p-value"] = 2 * (1 - stats.norm.cdf(np.abs(_z)))
     # ==========================================================
     # CLEAN DISPLAY (remove raw columns)
     # ==========================================================
@@ -3840,6 +3843,33 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
         eval_ll = corrected_ll if (parte_applied and corrected_ll is not None) else mle_ll
         aic = 2*k - 2*eval_ll
         bic = k * np.log(n) - 2*eval_ll
+
+        # Keep the fit statistics attached to the named DataFrame.  This is
+        # what ExperimentBuilder.fit_manual_model() promotes into
+        # fit["summary"], so callers can reject non-identified fits instead
+        # of treating NaN SEs as p=1.0.
+        fit_stats = {
+            "loglik": mle_ll,
+            "num_parm": k,
+            "n_obs": n,
+            "aic": 2 * k - 2 * mle_ll,
+            "bic": k * np.log(n) - 2 * mle_ll,
+        }
+        if eval_ll != mle_ll:
+            fit_stats["loglik_parte"] = eval_ll
+            fit_stats["aic_parte"] = aic
+            fit_stats["bic_parte"] = bic
+        if se_diagnostics is not None:
+            _diag = dict(se_diagnostics)
+            _unreliable = list(_diag.get("unreliable_indices", []))
+            _diag["unreliable_parameters"] = [
+                names[i] for i in _unreliable if 0 <= i < len(names)
+            ]
+            fit_stats["se_reliable"] = not bool(_unreliable)
+            fit_stats["n_unreliable_se"] = len(_unreliable)
+            fit_stats["se_diagnostics"] = _diag
+            df.attrs["se_diagnostics"] = _diag
+        df.attrs["fit_stats"] = fit_stats
 
         print("\n------------------------------------------------")
         print(f"Log-Likelihood (MLE):              {mle_ll:>14.4f}")
