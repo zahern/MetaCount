@@ -1,0 +1,1549 @@
+Metadata-Version: 2.4
+Name: metacountregressor
+Version: 1.0.214
+Summary: JAX-first hierarchical search and fitting for count, CMF, duration, linear, and survival models.
+Author: Zeke Ahern, Paul Corry, Alexander Paz
+License:                     GNU GENERAL PUBLIC LICENSE
+                               Version 3, 29 June 2007
+        
+         Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+         Everyone is permitted to copy and distribute verbatim copies
+         of this license document, but changing it is not allowed.
+        
+                                    Preamble
+        
+          The GNU General Public License is a free, copyleft license for
+        software and other kinds of works.
+        
+          The licenses for most software and other practical works are designed
+        to take away your freedom to share and change the works.  By contrast,
+        the GNU General Public License is intended to guarantee your freedom to
+        share and change all versions of a program--to make sure it remains free
+        software for all its users.  We, the Free Software Foundation, use the
+        GNU General Public License for most of our software; it applies also to
+        any other work released this way by its authors.  You can apply it to
+        your programs, too.
+        
+          When we speak of free software, we are referring to freedom, not
+        price.  Our General Public Licenses are designed to make sure that you
+        have the freedom to distribute copies of free software (and charge for
+        them if you wish), that you receive source code or can get it if you
+        want it, that you can change the software or use pieces of it in new
+        free programs, and that you know you can do these things.
+        
+          To protect your rights, we need to prevent others from denying you
+        these rights or asking you to surrender the rights.  Therefore, you have
+        certain responsibilities if you distribute copies of the software, or if
+        you modify it: responsibilities to respect the freedom of others.
+        
+          For example, if you distribute copies of such a program, whether
+        gratis or for a fee, you must pass on to the recipients the same
+        freedoms that you received.  You must make sure that they, too, receive
+        or can get the source code.  And you must show them these terms so they
+        know their rights.
+        
+          Developers that use the GNU GPL protect your rights with two steps:
+        (1) assert copyright on the software, and (2) offer you this License
+        giving you legal permission to copy, distribute and/or modify it.
+        
+          For the developers' and authors' protection, the GPL clearly explains
+        that there is no warranty for this free software.  For both users' and
+        authors' sake, the GPL requires that modified versions be marked as
+        changed, so that their problems will not be attributed erroneously to
+        authors of previous versions.
+        
+          Some devices are designed to deny users access to install or run
+        modified versions of the software inside them, although the manufacturer
+        can do so.  This is fundamentally incompatible with the aim of
+        protecting users' freedom to change the software.  The systematic
+        pattern of such abuse occurs in the area of products for individuals to
+        use, which is precisely where it is most unacceptable.  Therefore, we
+        have designed this version of the GPL to prohibit the practice for those
+        products.  If such problems arise substantially in other domains, we
+        stand ready to extend this provision to those domains in future versions
+        of the GPL, as needed to protect the freedom of users.
+        
+          Finally, every program is threatened constantly by software patents.
+        States should not allow patents to restrict development and use of
+        software on general-purpose computers, but in those that do, we wish to
+        avoid the special danger that patents applied to a free program could
+        make it effectively proprietary.  To prevent this, the GPL assures that
+        patents cannot be used to render the program non-free.
+        
+          The precise terms and conditions for copying, distribution and
+        modification follow.
+        
+                               TERMS AND CONDITIONS
+        
+          0. Definitions.
+        
+          "This License" refers to version 3 of the GNU General Public License.
+        
+          "Copyright" also means copyright-like laws that apply to other kinds of
+        works, such as semiconductor masks.
+        
+          "The Program" refers to any copyrightable work licensed under this
+        License.  Each licensee is addressed as "you".  "Licensees" and
+        "recipients" may be individuals or organizations.
+        
+          To "modify" a work means to copy from or adapt all or part of the work
+        in a fashion requiring copyright permission, other than the making of an
+        exact copy.  The resulting work is called a "modified version" of the
+        earlier work or a work "based on" the earlier work.
+        
+          A "covered work" means either the unmodified Program or a work based
+        on the Program.
+        
+          To "propagate" a work means to do anything with it that, without
+        permission, would make you directly or secondarily liable for
+        infringement under applicable copyright law, except executing it on a
+        computer or modifying a private copy.  Propagation includes copying,
+        distribution (with or without modification), making available to the
+        public, and in some countries other activities as well.
+        
+          To "convey" a work means any kind of propagation that enables other
+        parties to make or receive copies.  Mere interaction with a user through
+        a computer network, with no transfer of a copy, is not conveying.
+        
+          An interactive user interface displays "Appropriate Legal Notices"
+        to the extent that it includes a convenient and prominently visible
+        feature that (1) displays an appropriate copyright notice, and (2)
+        tells the user that there is no warranty for the work (except to the
+        extent that warranties are provided), that licensees may convey the
+        work under this License, and how to view a copy of this License.  If
+        the interface presents a list of user commands or options, such as a
+        menu, a prominent item in the list meets this criterion.
+        
+          1. Source Code.
+        
+          The "source code" for a work means the preferred form of the work
+        for making modifications to it.  "Object code" means any non-source
+        form of a work.
+        
+          A "Standard Interface" means an interface that either is an official
+        standard defined by a recognized standards body, or, in the case of
+        interfaces specified for a particular programming language, one that
+        is widely used among developers working in that language.
+        
+          The "System Libraries" of an executable work include anything, other
+        than the work as a whole, that (a) is included in the normal form of
+        packaging a Major Component, but which is not part of that Major
+        Component, and (b) serves only to enable use of the work with that
+        Major Component, or to implement a Standard Interface for which an
+        implementation is available to the public in source code form.  A
+        "Major Component", in this context, means a major essential component
+        (kernel, window system, and so on) of the specific operating system
+        (if any) on which the executable work runs, or a compiler used to
+        produce the work, or an object code interpreter used to run it.
+        
+          The "Corresponding Source" for a work in object code form means all
+        the source code needed to generate, install, and (for an executable
+        work) run the object code and to modify the work, including scripts to
+        control those activities.  However, it does not include the work's
+        System Libraries, or general-purpose tools or generally available free
+        programs which are used unmodified in performing those activities but
+        which are not part of the work.  For example, Corresponding Source
+        includes interface definition files associated with source files for
+        the work, and the source code for shared libraries and dynamically
+        linked subprograms that the work is specifically designed to require,
+        such as by intimate data communication or control flow between those
+        subprograms and other parts of the work.
+        
+          The Corresponding Source need not include anything that users
+        can regenerate automatically from other parts of the Corresponding
+        Source.
+        
+          The Corresponding Source for a work in source code form is that
+        same work.
+        
+          2. Basic Permissions.
+        
+          All rights granted under this License are granted for the term of
+        copyright on the Program, and are irrevocable provided the stated
+        conditions are met.  This License explicitly affirms your unlimited
+        permission to run the unmodified Program.  The output from running a
+        covered work is covered by this License only if the output, given its
+        content, constitutes a covered work.  This License acknowledges your
+        rights of fair use or other equivalent, as provided by copyright law.
+        
+          You may make, run and propagate covered works that you do not
+        convey, without conditions so long as your license otherwise remains
+        in force.  You may convey covered works to others for the sole purpose
+        of having them make modifications exclusively for you, or provide you
+        with facilities for running those works, provided that you comply with
+        the terms of this License in conveying all material for which you do
+        not control copyright.  Those thus making or running the covered works
+        for you must do so exclusively on your behalf, under your direction
+        and control, on terms that prohibit them from making any copies of
+        your copyrighted material outside their relationship with you.
+        
+          Conveying under any other circumstances is permitted solely under
+        the conditions stated below.  Sublicensing is not allowed; section 10
+        makes it unnecessary.
+        
+          3. Protecting Users' Legal Rights From Anti-Circumvention Law.
+        
+          No covered work shall be deemed part of an effective technological
+        measure under any applicable law fulfilling obligations under article
+        11 of the WIPO copyright treaty adopted on 20 December 1996, or
+        similar laws prohibiting or restricting circumvention of such
+        measures.
+        
+          When you convey a covered work, you waive any legal power to forbid
+        circumvention of technological measures to the extent such circumvention
+        is effected by exercising rights under this License with respect to
+        the covered work, and you disclaim any intention to limit operation or
+        modification of the work as a means of enforcing, against the work's
+        users, your or third parties' legal rights to forbid circumvention of
+        technological measures.
+        
+          4. Conveying Verbatim Copies.
+        
+          You may convey verbatim copies of the Program's source code as you
+        receive it, in any medium, provided that you conspicuously and
+        appropriately publish on each copy an appropriate copyright notice;
+        keep intact all notices stating that this License and any
+        non-permissive terms added in accord with section 7 apply to the code;
+        keep intact all notices of the absence of any warranty; and give all
+        recipients a copy of this License along with the Program.
+        
+          You may charge any price or no price for each copy that you convey,
+        and you may offer support or warranty protection for a fee.
+        
+          5. Conveying Modified Source Versions.
+        
+          You may convey a work based on the Program, or the modifications to
+        produce it from the Program, in the form of source code under the
+        terms of section 4, provided that you also meet all of these conditions:
+        
+            a) The work must carry prominent notices stating that you modified
+            it, and giving a relevant date.
+        
+            b) The work must carry prominent notices stating that it is
+            released under this License and any conditions added under section
+            7.  This requirement modifies the requirement in section 4 to
+            "keep intact all notices".
+        
+            c) You must license the entire work, as a whole, under this
+            License to anyone who comes into possession of a copy.  This
+            License will therefore apply, along with any applicable section 7
+            additional terms, to the whole of the work, and all its parts,
+            regardless of how they are packaged.  This License gives no
+            permission to license the work in any other way, but it does not
+            invalidate such permission if you have separately received it.
+        
+            d) If the work has interactive user interfaces, each must display
+            Appropriate Legal Notices; however, if the Program has interactive
+            interfaces that do not display Appropriate Legal Notices, your
+            work need not make them do so.
+        
+          A compilation of a covered work with other separate and independent
+        works, which are not by their nature extensions of the covered work,
+        and which are not combined with it such as to form a larger program,
+        in or on a volume of a storage or distribution medium, is called an
+        "aggregate" if the compilation and its resulting copyright are not
+        used to limit the access or legal rights of the compilation's users
+        beyond what the individual works permit.  Inclusion of a covered work
+        in an aggregate does not cause this License to apply to the other
+        parts of the aggregate.
+        
+          6. Conveying Non-Source Forms.
+        
+          You may convey a covered work in object code form under the terms
+        of sections 4 and 5, provided that you also convey the
+        machine-readable Corresponding Source under the terms of this License,
+        in one of these ways:
+        
+            a) Convey the object code in, or embodied in, a physical product
+            (including a physical distribution medium), accompanied by the
+            Corresponding Source fixed on a durable physical medium
+            customarily used for software interchange.
+        
+            b) Convey the object code in, or embodied in, a physical product
+            (including a physical distribution medium), accompanied by a
+            written offer, valid for at least three years and valid for as
+            long as you offer spare parts or customer support for that product
+            model, to give anyone who possesses the object code either (1) a
+            copy of the Corresponding Source for all the software in the
+            product that is covered by this License, on a durable physical
+            medium customarily used for software interchange, for a price no
+            more than your reasonable cost of physically performing this
+            conveying of source, or (2) access to copy the
+            Corresponding Source from a network server at no charge.
+        
+            c) Convey individual copies of the object code with a copy of the
+            written offer to provide the Corresponding Source.  This
+            alternative is allowed only occasionally and noncommercially, and
+            only if you received the object code with such an offer, in accord
+            with subsection 6b.
+        
+            d) Convey the object code by offering access from a designated
+            place (gratis or for a charge), and offer equivalent access to the
+            Corresponding Source in the same way through the same place at no
+            further charge.  You need not require recipients to copy the
+            Corresponding Source along with the object code.  If the place to
+            copy the object code is a network server, the Corresponding Source
+            may be on a different server (operated by you or a third party)
+            that supports equivalent copying facilities, provided you maintain
+            clear directions next to the object code saying where to find the
+            Corresponding Source.  Regardless of what server hosts the
+            Corresponding Source, you remain obligated to ensure that it is
+            available for as long as needed to satisfy these requirements.
+        
+            e) Convey the object code using peer-to-peer transmission, provided
+            you inform other peers where the object code and Corresponding
+            Source of the work are being offered to the general public at no
+            charge under subsection 6d.
+        
+          A separable portion of the object code, whose source code is excluded
+        from the Corresponding Source as a System Library, need not be
+        included in conveying the object code work.
+        
+          A "User Product" is either (1) a "consumer product", which means any
+        tangible personal property which is normally used for personal, family,
+        or household purposes, or (2) anything designed or sold for incorporation
+        into a dwelling.  In determining whether a product is a consumer product,
+        doubtful cases shall be resolved in favor of coverage.  For a particular
+        product received by a particular user, "normally used" refers to a
+        typical or common use of that class of product, regardless of the status
+        of the particular user or of the way in which the particular user
+        actually uses, or expects or is expected to use, the product.  A product
+        is a consumer product regardless of whether the product has substantial
+        commercial, industrial or non-consumer uses, unless such uses represent
+        the only significant mode of use of the product.
+        
+          "Installation Information" for a User Product means any methods,
+        procedures, authorization keys, or other information required to install
+        and execute modified versions of a covered work in that User Product from
+        a modified version of its Corresponding Source.  The information must
+        suffice to ensure that the continued functioning of the modified object
+        code is in no case prevented or interfered with solely because
+        modification has been made.
+        
+          If you convey an object code work under this section in, or with, or
+        specifically for use in, a User Product, and the conveying occurs as
+        part of a transaction in which the right of possession and use of the
+        User Product is transferred to the recipient in perpetuity or for a
+        fixed term (regardless of how the transaction is characterized), the
+        Corresponding Source conveyed under this section must be accompanied
+        by the Installation Information.  But this requirement does not apply
+        if neither you nor any third party retains the ability to install
+        modified object code on the User Product (for example, the work has
+        been installed in ROM).
+        
+          The requirement to provide Installation Information does not include a
+        requirement to continue to provide support service, warranty, or updates
+        for a work that has been modified or installed by the recipient, or for
+        the User Product in which it has been modified or installed.  Access to a
+        network may be denied when the modification itself materially and
+        adversely affects the operation of the network or violates the rules and
+        protocols for communication across the network.
+        
+          Corresponding Source conveyed, and Installation Information provided,
+        in accord with this section must be in a format that is publicly
+        documented (and with an implementation available to the public in
+        source code form), and must require no special password or key for
+        unpacking, reading or copying.
+        
+          7. Additional Terms.
+        
+          "Additional permissions" are terms that supplement the terms of this
+        License by making exceptions from one or more of its conditions.
+        Additional permissions that are applicable to the entire Program shall
+        be treated as though they were included in this License, to the extent
+        that they are valid under applicable law.  If additional permissions
+        apply only to part of the Program, that part may be used separately
+        under those permissions, but the entire Program remains governed by
+        this License without regard to the additional permissions.
+        
+          When you convey a copy of a covered work, you may at your option
+        remove any additional permissions from that copy, or from any part of
+        it.  (Additional permissions may be written to require their own
+        removal in certain cases when you modify the work.)  You may place
+        additional permissions on material, added by you to a covered work,
+        for which you have or can give appropriate copyright permission.
+        
+          Notwithstanding any other provision of this License, for material you
+        add to a covered work, you may (if authorized by the copyright holders of
+        that material) supplement the terms of this License with terms:
+        
+            a) Disclaiming warranty or limiting liability differently from the
+            terms of sections 15 and 16 of this License; or
+        
+            b) Requiring preservation of specified reasonable legal notices or
+            author attributions in that material or in the Appropriate Legal
+            Notices displayed by works containing it; or
+        
+            c) Prohibiting misrepresentation of the origin of that material, or
+            requiring that modified versions of such material be marked in
+            reasonable ways as different from the original version; or
+        
+            d) Limiting the use for publicity purposes of names of licensors or
+            authors of the material; or
+        
+            e) Declining to grant rights under trademark law for use of some
+            trade names, trademarks, or service marks; or
+        
+            f) Requiring indemnification of licensors and authors of that
+            material by anyone who conveys the material (or modified versions of
+            it) with contractual assumptions of liability to the recipient, for
+            any liability that these contractual assumptions directly impose on
+            those licensors and authors.
+        
+          All other non-permissive additional terms are considered "further
+        restrictions" within the meaning of section 10.  If the Program as you
+        received it, or any part of it, contains a notice stating that it is
+        governed by this License along with a term that is a further
+        restriction, you may remove that term.  If a license document contains
+        a further restriction but permits relicensing or conveying under this
+        License, you may add to a covered work material governed by the terms
+        of that license document, provided that the further restriction does
+        not survive such relicensing or conveying.
+        
+          If you add terms to a covered work in accord with this section, you
+        must place, in the relevant source files, a statement of the
+        additional terms that apply to those files, or a notice indicating
+        where to find the applicable terms.
+        
+          Additional terms, permissive or non-permissive, may be stated in the
+        form of a separately written license, or stated as exceptions;
+        the above requirements apply either way.
+        
+          8. Termination.
+        
+          You may not propagate or modify a covered work except as expressly
+        provided under this License.  Any attempt otherwise to propagate or
+        modify it is void, and will automatically terminate your rights under
+        this License (including any patent licenses granted under the third
+        paragraph of section 11).
+        
+          However, if you cease all violation of this License, then your
+        license from a particular copyright holder is reinstated (a)
+        provisionally, unless and until the copyright holder explicitly and
+        finally terminates your license, and (b) permanently, if the copyright
+        holder fails to notify you of the violation by some reasonable means
+        prior to 60 days after the cessation.
+        
+          Moreover, your license from a particular copyright holder is
+        reinstated permanently if the copyright holder notifies you of the
+        violation by some reasonable means, this is the first time you have
+        received notice of violation of this License (for any work) from that
+        copyright holder, and you cure the violation prior to 30 days after
+        your receipt of the notice.
+        
+          Termination of your rights under this section does not terminate the
+        licenses of parties who have received copies or rights from you under
+        this License.  If your rights have been terminated and not permanently
+        reinstated, you do not qualify to receive new licenses for the same
+        material under section 10.
+        
+          9. Acceptance Not Required for Having Copies.
+        
+          You are not required to accept this License in order to receive or
+        run a copy of the Program.  Ancillary propagation of a covered work
+        occurring solely as a consequence of using peer-to-peer transmission
+        to receive a copy likewise does not require acceptance.  However,
+        nothing other than this License grants you permission to propagate or
+        modify any covered work.  These actions infringe copyright if you do
+        not accept this License.  Therefore, by modifying or propagating a
+        covered work, you indicate your acceptance of this License to do so.
+        
+          10. Automatic Licensing of Downstream Recipients.
+        
+          Each time you convey a covered work, the recipient automatically
+        receives a license from the original licensors, to run, modify and
+        propagate that work, subject to this License.  You are not responsible
+        for enforcing compliance by third parties with this License.
+        
+          An "entity transaction" is a transaction transferring control of an
+        organization, or substantially all assets of one, or subdividing an
+        organization, or merging organizations.  If propagation of a covered
+        work results from an entity transaction, each party to that
+        transaction who receives a copy of the work also receives whatever
+        licenses to the work the party's predecessor in interest had or could
+        give under the previous paragraph, plus a right to possession of the
+        Corresponding Source of the work from the predecessor in interest, if
+        the predecessor has it or can get it with reasonable efforts.
+        
+          You may not impose any further restrictions on the exercise of the
+        rights granted or affirmed under this License.  For example, you may
+        not impose a license fee, royalty, or other charge for exercise of
+        rights granted under this License, and you may not initiate litigation
+        (including a cross-claim or counterclaim in a lawsuit) alleging that
+        any patent claim is infringed by making, using, selling, offering for
+        sale, or importing the Program or any portion of it.
+        
+          11. Patents.
+        
+          A "contributor" is a copyright holder who authorizes use under this
+        License of the Program or a work on which the Program is based.  The
+        work thus licensed is called the contributor's "contributor version".
+        
+          A contributor's "essential patent claims" are all patent claims
+        owned or controlled by the contributor, whether already acquired or
+        hereafter acquired, that would be infringed by some manner, permitted
+        by this License, of making, using, or selling its contributor version,
+        but do not include claims that would be infringed only as a
+        consequence of further modification of the contributor version.  For
+        purposes of this definition, "control" includes the right to grant
+        patent sublicenses in a manner consistent with the requirements of
+        this License.
+        
+          Each contributor grants you a non-exclusive, worldwide, royalty-free
+        patent license under the contributor's essential patent claims, to
+        make, use, sell, offer for sale, import and otherwise run, modify and
+        propagate the contents of its contributor version.
+        
+          In the following three paragraphs, a "patent license" is any express
+        agreement or commitment, however denominated, not to enforce a patent
+        (such as an express permission to practice a patent or covenant not to
+        sue for patent infringement).  To "grant" such a patent license to a
+        party means to make such an agreement or commitment not to enforce a
+        patent against the party.
+        
+          If you convey a covered work, knowingly relying on a patent license,
+        and the Corresponding Source of the work is not available for anyone
+        to copy, free of charge and under the terms of this License, through a
+        publicly available network server or other readily accessible means,
+        then you must either (1) cause the Corresponding Source to be so
+        available, or (2) arrange to deprive yourself of the benefit of the
+        patent license for this particular work, or (3) arrange, in a manner
+        consistent with the requirements of this License, to extend the patent
+        license to downstream recipients.  "Knowingly relying" means you have
+        actual knowledge that, but for the patent license, your conveying the
+        covered work in a country, or your recipient's use of the covered work
+        in a country, would infringe one or more identifiable patents in that
+        country that you have reason to believe are valid.
+        
+          If, pursuant to or in connection with a single transaction or
+        arrangement, you convey, or propagate by procuring conveyance of, a
+        covered work, and grant a patent license to some of the parties
+        receiving the covered work authorizing them to use, propagate, modify
+        or convey a specific copy of the covered work, then the patent license
+        you grant is automatically extended to all recipients of the covered
+        work and works based on it.
+        
+          A patent license is "discriminatory" if it does not include within
+        the scope of its coverage, prohibits the exercise of, or is
+        conditioned on the non-exercise of one or more of the rights that are
+        specifically granted under this License.  You may not convey a covered
+        work if you are a party to an arrangement with a third party that is
+        in the business of distributing software, under which you make payment
+        to the third party based on the extent of your activity of conveying
+        the work, and under which the third party grants, to any of the
+        parties who would receive the covered work from you, a discriminatory
+        patent license (a) in connection with copies of the covered work
+        conveyed by you (or copies made from those copies), or (b) primarily
+        for and in connection with specific products or compilations that
+        contain the covered work, unless you entered into that arrangement,
+        or that patent license was granted, prior to 28 March 2007.
+        
+          Nothing in this License shall be construed as excluding or limiting
+        any implied license or other defenses to infringement that may
+        otherwise be available to you under applicable patent law.
+        
+          12. No Surrender of Others' Freedom.
+        
+          If conditions are imposed on you (whether by court order, agreement or
+        otherwise) that contradict the conditions of this License, they do not
+        excuse you from the conditions of this License.  If you cannot convey a
+        covered work so as to satisfy simultaneously your obligations under this
+        License and any other pertinent obligations, then as a consequence you may
+        not convey it at all.  For example, if you agree to terms that obligate you
+        to collect a royalty for further conveying from those to whom you convey
+        the Program, the only way you could satisfy both those terms and this
+        License would be to refrain entirely from conveying the Program.
+        
+          13. Use with the GNU Affero General Public License.
+        
+          Notwithstanding any other provision of this License, you have
+        permission to link or combine any covered work with a work licensed
+        under version 3 of the GNU Affero General Public License into a single
+        combined work, and to convey the resulting work.  The terms of this
+        License will continue to apply to the part which is the covered work,
+        but the special requirements of the GNU Affero General Public License,
+        section 13, concerning interaction through a network will apply to the
+        combination as such.
+        
+          14. Revised Versions of this License.
+        
+          The Free Software Foundation may publish revised and/or new versions of
+        the GNU General Public License from time to time.  Such new versions will
+        be similar in spirit to the present version, but may differ in detail to
+        address new problems or concerns.
+        
+          Each version is given a distinguishing version number.  If the
+        Program specifies that a certain numbered version of the GNU General
+        Public License "or any later version" applies to it, you have the
+        option of following the terms and conditions either of that numbered
+        version or of any later version published by the Free Software
+        Foundation.  If the Program does not specify a version number of the
+        GNU General Public License, you may choose any version ever published
+        by the Free Software Foundation.
+        
+          If the Program specifies that a proxy can decide which future
+        versions of the GNU General Public License can be used, that proxy's
+        public statement of acceptance of a version permanently authorizes you
+        to choose that version for the Program.
+        
+          Later license versions may give you additional or different
+        permissions.  However, no additional obligations are imposed on any
+        author or copyright holder as a result of your choosing to follow a
+        later version.
+        
+          15. Disclaimer of Warranty.
+        
+          THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY
+        APPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT
+        HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY
+        OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,
+        THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+        PURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM
+        IS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF
+        ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
+        
+          16. Limitation of Liability.
+        
+          IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
+        WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS
+        THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY
+        GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE
+        USE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF
+        DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD
+        PARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS),
+        EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF
+        SUCH DAMAGES.
+        
+          17. Interpretation of Sections 15 and 16.
+        
+          If the disclaimer of warranty and limitation of liability provided
+        above cannot be given local legal effect according to their terms,
+        reviewing courts shall apply local law that most closely approximates
+        an absolute waiver of all civil liability in connection with the
+        Program, unless a warranty or assumption of liability accompanies a
+        copy of the Program in return for a fee.
+        
+                             END OF TERMS AND CONDITIONS
+        
+                    How to Apply These Terms to Your New Programs
+        
+          If you develop a new program, and you want it to be of the greatest
+        possible use to the public, the best way to achieve this is to make it
+        free software which everyone can redistribute and change under these terms.
+        
+          To do so, attach the following notices to the program.  It is safest
+        to attach them to the start of each source file to most effectively
+        state the exclusion of warranty; and each file should have at least
+        the "copyright" line and a pointer to where the full notice is found.
+        
+            <one line to give the program's name and a brief idea of what it does.>
+            Copyright (C) <year>  <name of author>
+        
+            This program is free software: you can redistribute it and/or modify
+            it under the terms of the GNU General Public License as published by
+            the Free Software Foundation, either version 3 of the License, or
+            (at your option) any later version.
+        
+            This program is distributed in the hope that it will be useful,
+            but WITHOUT ANY WARRANTY; without even the implied warranty of
+            MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+            GNU General Public License for more details.
+        
+            You should have received a copy of the GNU General Public License
+            along with this program.  If not, see <https://www.gnu.org/licenses/>.
+        
+        Also add information on how to contact you by electronic and paper mail.
+        
+          If the program does terminal interaction, make it output a short
+        notice like this when it starts in an interactive mode:
+        
+            <program>  Copyright (C) <year>  <name of author>
+            This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
+            This is free software, and you are welcome to redistribute it
+            under certain conditions; type `show c' for details.
+        
+        The hypothetical commands `show w' and `show c' should show the appropriate
+        parts of the General Public License.  Of course, your program's commands
+        might be different; for a GUI interface, you would use an "about box".
+        
+          You should also get your employer (if you work as a programmer) or school,
+        if any, to sign a "copyright disclaimer" for the program, if necessary.
+        For more information on this, and how to apply and follow the GNU GPL, see
+        <https://www.gnu.org/licenses/>.
+        
+          The GNU General Public License does not permit incorporating your program
+        into proprietary programs.  If your program is a subroutine library, you
+        may consider it more useful to permit linking proprietary applications with
+        the library.  If this is what you want to do, use the GNU Lesser General
+        Public License instead of this License.  But first, please read
+        <https://www.gnu.org/licenses/why-not-lgpl.html>.
+        
+Project-URL: Homepage, https://github.com/zahern/MetaCount
+Project-URL: Bug Tracker, https://github.com/zahern/MetaCount/issues
+Project-URL: Tutorials, https://github.com/zahern/MetaCount#tutorials--resources
+Project-URL: Documentation, https://github.com/zahern/MetaCount/blob/master/README.md
+Project-URL: Changelog, https://github.com/zahern/MetaCount/releases
+Keywords: count regression,mixed models,negative binomial,poisson,random effects,metaheuristic,traffic safety,survival analysis,aft models,activity generation,competing hazard
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering :: Mathematics
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+Requires-Dist: numpy<3,>=1.26.4
+Requires-Dist: scipy<2,>=1.11
+Requires-Dist: pandas<4,>=2.1
+Requires-Dist: psutil>=5.9
+Requires-Dist: scikit-learn<2,>=1.3
+Requires-Dist: statsmodels<1,>=0.14
+Requires-Dist: texttable>=1.7
+Requires-Dist: tabulate>=0.9
+Requires-Dist: latextable>=1.0
+Requires-Dist: requests>=2.31
+Requires-Dist: numexpr>=2.8
+Requires-Dist: networkx>=3.0
+Requires-Dist: matplotlib>=3.7
+Requires-Dist: seaborn>=0.13
+Requires-Dist: jax>=0.4.30
+Requires-Dist: jaxlib>=0.4.30
+Requires-Dist: jaxopt>=0.8.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: tqdm>=4.65
+Provides-Extra: numba
+Requires-Dist: numba<1.0,>=0.59; extra == "numba"
+Provides-Extra: bayesian
+Requires-Dist: pymc<7.0,>=5.0; extra == "bayesian"
+Requires-Dist: arviz<1.0,>=0.17; extra == "bayesian"
+Provides-Extra: gpu
+Requires-Dist: jax[cuda12]>=0.4.30; extra == "gpu"
+Requires-Dist: jaxlib[cuda12]>=0.4.30; extra == "gpu"
+Provides-Extra: gis
+Requires-Dist: geopandas>=0.14; extra == "gis"
+Requires-Dist: shapely>=2.0; extra == "gis"
+Requires-Dist: rasterio>=1.3; extra == "gis"
+Requires-Dist: pyproj>=3.5; extra == "gis"
+Requires-Dist: xarray>=2023.6; extra == "gis"
+Requires-Dist: pyarrow>=14.0; extra == "gis"
+Requires-Dist: tables>=3.7; extra == "gis"
+Requires-Dist: openmatrix>=0.3.5; extra == "gis"
+Requires-Dist: larch>=6.0; extra == "gis"
+Provides-Extra: optim
+Requires-Dist: ortools>=9.8; extra == "optim"
+Provides-Extra: cli
+Requires-Dist: rich>=13.0; extra == "cli"
+Requires-Dist: typer>=0.9; extra == "cli"
+Provides-Extra: visualizer
+Requires-Dist: flask<4.0,>=2.3; extra == "visualizer"
+Requires-Dist: geopandas>=0.14; extra == "visualizer"
+Provides-Extra: full
+Requires-Dist: metacountregressor[gis]; extra == "full"
+Requires-Dist: metacountregressor[optim]; extra == "full"
+Requires-Dist: metacountregressor[cli]; extra == "full"
+Requires-Dist: matsim-python<1.0,>=0.1; extra == "full"
+Requires-Dist: flask<4.0,>=2.3; extra == "full"
+Provides-Extra: dev
+Requires-Dist: pytest<9.0,>=7.0; extra == "dev"
+Requires-Dist: pytest-cov<5.0,>=4.0; extra == "dev"
+Requires-Dist: black<25.0,>=23.0; extra == "dev"
+Requires-Dist: ruff<1.0,>=0.4; extra == "dev"
+Requires-Dist: mypy<2.0,>=1.5; extra == "dev"
+Requires-Dist: pre-commit<4.0,>=3.0; extra == "dev"
+Provides-Extra: docs
+Requires-Dist: sphinx<8.0,>=7.0; extra == "docs"
+Requires-Dist: sphinx-rtd-theme<2.0,>=1.3; extra == "docs"
+Requires-Dist: myst-parser<3.0,>=2.0; extra == "docs"
+Dynamic: license-file
+
+# metacountregressor
+
+A JAX-first Python package for hierarchical model fitting and metaheuristic-driven model structure search.  Supports count, CMF, duration, and linear models with random parameters, latent classes, zero-inflation, and heterogeneity in means — all with one unified API.
+
+---
+
+## Table of Contents
+
+- [Install](#install)
+- [Experiment copilot CLI](#experiment-copilot-cli)
+- [Tutorials & resources](#tutorials--resources)
+- [Quick Start](#quick-start)
+- [What the package does](#what-the-package-does)
+- [Data loaders](#data-loaders)
+- [ExperimentBuilder API](#experimentbuilder-api)
+- [ModelConstraints API](#modelconstraints-api)
+- [Role codes](#role-codes)
+- [Search algorithms](#search-algorithms)
+- [Model families](#model-families)
+  - [Count models](#count-models-poisson--negative-binomial)
+  - [CMF models](#cmf-models)
+  - [Duration models](#duration-models)
+  - [Linear models](#linear-models)
+- [Latent class models](#latent-class-models)
+- [Output and saving results](#output-and-saving-results)
+- [Help system](#help-system)
+- [Running on HPC clusters](#running-on-hpc-clusters)
+- [Getting help](#getting-help)
+
+---
+
+## Install
+
+```bash
+pip install metacountregressor
+pip install jax jaxlib jaxopt   # JAX backend
+```
+
+Quick import check:
+
+```bash
+python -c "from metacountregressor import __version__, load_example16_3_raw_data; print(__version__, load_example16_3_raw_data().shape)"
+```
+
+### Experiment copilot CLI
+
+From version **1.0.214**, the installed package includes an interactive
+experiment-setup wizard. No separate `metacount-copilot` package is needed:
+
+```bash
+metacount-copilot
+```
+
+or:
+
+```python
+from metacountregressor import run_cli
+run_cli()
+```
+
+The wizard reads your data file, asks for the response and model family,
+proposes a pruned variable catalogue and a tiered constraint hierarchy, then
+supports `/run`, `/diagnose`, `/apply`, and `/rerun` from the same prompt. It
+can also drive the Delphos RL search:
+
+```bash
+python -m metacountregressor.copilot
+```
+
+### GPU acceleration (optional)
+
+The package runs on CPU out of the box and **automatically uses a GPU when
+JAX can see one** — no code changes required.  Install the CUDA flavour of
+JAX instead of the CPU wheel:
+
+```bash
+pip install -U "jax[cuda]"
+```
+
+Verify what the package picked up:
+
+```python
+from metacountregressor import device_summary
+print(device_summary())
+# e.g. metacountregressor JAX 0.6.2 | backend=cuda | devices=[CpuDevice(id=0), CudaDevice(id=0)] | x64=True | gpu_preallocate=False
+```
+
+Behaviour and controls:
+
+| Concern | Default | Override |
+| ------- | ------- | -------- |
+| Platform choice | Auto-detect (GPU if visible, else CPU) | `METACOUNT_JAX_PLATFORM=cpu\|gpu\|tpu` or `configure_jax(platform='cpu')` |
+| Float precision | float64 enabled (required by the estimators) | — |
+| GPU memory | Grows on demand — safe for shared clusters (XLA's default grabs ~75% of VRAM up front) | `METACOUNT_GPU_PREALLOCATE=1` for exclusive nodes |
+| GPU out-of-memory | Fits transparently retry once after clearing JAX caches, then fall back to the CPU device instead of crashing the search | — |
+
+Transient GPU failures never poison a structure search: candidate structures
+that fail *only* because of device memory are retried, not blacklisted.
+
+---
+
+## Tutorials & resources
+
+Everything you need to learn the package in one place.
+
+### Bundled notebook tutorials
+
+Six tutorial notebooks ship **inside the wheel** and use the bundled
+Example 16-3 crash-frequency dataset, so every cell runs out of the box —
+no need to source your own data. Copy them into your working directory:
+
+```python
+from metacountregressor import get_templates
+get_templates()          # copies all six .ipynb files to the current folder
+```
+
+| # | Notebook | What you learn | Time |
+| --- | -------- | -------------- | ---- |
+| 00 | [00_quickstart.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/00_quickstart.ipynb) | Install, load bundled data, first search run end-to-end | ~10 min |
+| 01 | [01_crash_frequency_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/01_crash_frequency_search.ipynb) | Mixed Negative Binomial search — constraints, roles, re-fit with more draws | ~20 min |
+| 02 | [02_latent_class_fc_validation.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/02_latent_class_fc_validation.ipynb) | 2-class latent class model — fit, extract class probabilities, validate against functional class | ~20 min |
+| 03 | [03_cmf_aadt_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/03_cmf_aadt_search.ipynb) | CMF model — baseline + AADT-interaction structure search | ~20 min |
+| 04 | [04_linear_speed_prediction.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/04_linear_speed_prediction.ipynb) | Gaussian linear model search (platform speed prediction) | ~20 min |
+| 05 | [05_batch_script_tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) | Batch scripts, parallel seeds, PBS/SLURM HPC job templates, result collection | ~30 min |
+
+Browse them online in the [templates folder](https://github.com/zahern/MetaCount/tree/master/metacountregressor/metacountregressor/templates) or open locally:
+
+```bash
+jupyter lab   # after get_templates(), the notebooks are in your working directory
+```
+
+### Worked example scripts & extended walkthroughs
+
+| Resource | Format | Link |
+| -------- | ------ | ---- |
+| Hierarchical CMF tutorial (full worked analysis) | Python script | [examples/manual_hierarchical_cmf_tutorial.py](https://github.com/zahern/MetaCount/blob/master/metacountregressor/examples/manual_hierarchical_cmf_tutorial.py) |
+| Hierarchical CMF narrative guide | Markdown | [examples/TUTORIAL_HIERARCHICAL_CMF.md](https://github.com/zahern/MetaCount/blob/master/metacountregressor/examples/TUTORIAL_HIERARCHICAL_CMF.md) |
+| General tutorial (search → fit → interpret) | Jupyter notebook | [Tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/Tutorial.ipynb) |
+| Batch / HPC workflow deep dive | Jupyter notebook | [Tutorial_Batch.ipynb](https://github.com/zahern/MetaCount/blob/master/Tutorial_Batch.ipynb) |
+| Batch / HPC workflow deep dive | Markdown | [Tutorial_Batch.md](https://github.com/zahern/MetaCount/blob/master/Tutorial_Batch.md) |
+
+### Built-in help system (no internet needed)
+
+Every workflow has a printable guide built into the package:
+
+```python
+from metacountregressor import get_help
+
+get_help()                    # list all available topics
+```
+
+| Topic | Contents |
+| ----- | -------- |
+| `get_help('roles')` | Role-code reference (0–8) and random-parameter distributions |
+| `get_help('constraints')` | Full `ModelConstraints` API with examples |
+| `get_help('metaheuristics')` | SA / DE / HS comparison and tuning parameters |
+| `get_help('crash_frequency')` | End-to-end count-model workflow |
+| `get_help('latent_class')` | Latent-class workflow incl. class-probability extraction |
+| `get_help('cmf')` | Crash Modification Factor workflows (both routes) |
+| `get_help('linear')` | Gaussian linear model workflow |
+| `get_help('duration')` | Duration / survival model workflow |
+| `get_help('batch')` | Batch scripts, walltime detection, PBS/SLURM templates |
+
+### Other resources
+
+- **Source code & issue tracker:** [github.com/zahern/MetaCount](https://github.com/zahern/MetaCount)
+- **Report a bug / request a feature:** [GitHub Issues](https://github.com/zahern/MetaCount/issues)
+- **Release history:** [PyPI release history](https://pypi.org/project/metacountregressor/#history)
+- **Example datasets:** bundled loaders are documented in [Data loaders](#data-loaders) below; every loader returns a plain `pandas.DataFrame`.
+
+---
+
+## Quick Start
+
+```python
+import numpy as np
+from metacountregressor import (
+    ExperimentBuilder,
+    ModelConstraints,
+    SearchOutputConfig,
+    load_example16_3_model_data,
+    get_help,
+)
+
+# ── 1. Load the bundled crash-frequency dataset ──────────────────────────────
+df = load_example16_3_model_data()
+exposure = df['LENGTH'] * df['AADT'] * 365 / 1e8
+df['OFFSET'] = np.log(exposure.clip(lower=1e-9))
+
+# ── 2. Build constraints ──────────────────────────────────────────────────────
+c = (
+    ModelConstraints()
+    .force_include('OFFSET')
+    .no_zi('LENGTH', 'CURVES', 'WIDTH', 'SLOPE')
+    .no_random('URB')
+    .allow_random('CURVES', distributions=['lognormal'])
+    .mutual_exclusion(['SPEED', 'CURVES'])   # at most one active at a time
+)
+
+# ── 3. Create the experiment ──────────────────────────────────────────────────
+builder = ExperimentBuilder(df, id_col='ID', y_col='FREQ', offset_col='OFFSET')
+builder.describe()              # print data summary
+get_help('crash_frequency')     # print end-to-end workflow guide
+
+# ── 4. Build the structure evaluator ─────────────────────────────────────────
+evaluator = builder.build_evaluator(
+    variables=['AADT', 'LENGTH', 'SPEED', 'CURVES', 'URB', 'AVEPRE'],
+    constraints=c,
+    default_roles=[0, 1, 2, 3, 5],
+    max_latent_classes=1,
+    R=200,
+)
+
+# ── 5. Run the search ─────────────────────────────────────────────────────────
+result = builder.run(
+    evaluator,
+    algo='sa',          # 'sa' | 'de' | 'hs'
+    max_iter=1000,
+    seed=42,
+    output_config=SearchOutputConfig(output_dir='results', experiment_name='demo'),
+)
+print('Best BIC:', result['best_score'])
+print('Saved to:', result.get('saved_to'))
+
+# ── 6. Re-fit with more draws ─────────────────────────────────────────────────
+fit = builder.fit_manual_model(manual_spec=result['model_spec'], model='nb', R=500)
+print(fit)
+```
+
+### Use your own data
+
+Keep the Quick Start structure and change only the data mapping:
+
+| Quick Start piece | Replace with your data |
+| --- | --- |
+| `load_example16_3_model_data()` | `pd.read_csv('my_segments.csv')` |
+| `id_col='ID'` | your row-identifier column |
+| `y_col='FREQ'` | your outcome column (counts, durations, speeds…) |
+| `offset_col='OFFSET'` | your log-exposure column, or `None` |
+| `group_id_col='FC'` | your grouping column, or `None` |
+| `variables=[...]` | your candidate predictor columns |
+
+```python
+import pandas as pd
+from metacountregressor import ExperimentBuilder
+
+df = pd.read_csv('my_segments.csv')
+builder = ExperimentBuilder(
+    df=df,
+    id_col='site_id',
+    y_col='crashes',
+    offset_col='log_exposure',   # or None
+    group_id_col='road_class',   # or None
+)
+builder.describe()   # check column types before searching
+```
+
+For a first run on your data, keep the search small — `default_roles=[0, 1, 2]`,
+`R=50`, `max_iter=20` — then refit the winning specification with a larger
+`R` for final standard errors. Pick the worked notebook matching your outcome
+from [Tutorials & resources](#tutorials--resources) and mirror its constraint
+block.
+
+---
+
+## What the package does
+
+`metacountregressor` solves two related problems:
+
+1. **Structure search** — automatically discover which variables to include, whether each coefficient should be fixed or random, and whether the model needs latent classes, zero-inflation, or heterogeneity in means.  The search is driven by metaheuristic algorithms (SA, DE, HS) that minimise BIC.
+
+2. **Model estimation** — fit the discovered (or manually specified) model structure using JAX-accelerated simulation-based maximum likelihood with Halton draws.
+
+The same API handles crash-frequency count models, CMF (Crash Modification Factor) models, duration models, and linear (Gaussian) models.
+
+---
+
+## Data loaders
+
+All loaders return a `pandas.DataFrame`.
+
+```python
+from metacountregressor import (
+    load_example16_3_raw_data,      # Example 16-3: original 31 columns
+    load_example16_3_model_data,    # + OFFSET, FC_ENCODED, FC_LABEL
+    load_example_crash_data,        # alias for load_example16_3_model_data
+    load_example_duration_data,     # synthetic duration target from Ex 16-3
+    load_example_linear_data,       # synthetic linear target from Ex 16-3
+    load_example_platform_speed_data,           # speed relative to platform
+    load_example_platform_gap_duration_data,    # time until next speeding event
+    load_example_panel_data,        # panel-structure example
+)
+```
+
+### Example 16-3 columns
+
+`load_example16_3_raw_data()` returns the original source columns:
+
+| Group | Columns |
+| ------- | ------- |
+| Identifiers | `ID` |
+| Outcome | `FREQ` |
+| Geometry | `LENGTH`, `WIDTH`, `INCLANES`, `DECLANES`, `MEDWIDTH`, `MIMEDSH`, `MXMEDSH` |
+| Speed / grade | `SPEED`, `MIGRADE`, `MXGRADE`, `MXGRDIFF`, `SLOPE` |
+| Traffic | `AADT`, `SINGLE`, `DOUBLE`, `TRAIN`, `PEAKHR`, `ADTLANE` |
+| Road class | `URB`, `FC`, `ACCESS`, `TANGENT`, `CURVES`, `MINRAD`, `GRADEBR` |
+| Friction / weather | `FRICTION`, `INTECHAG`, `AVEPRE`, `AVESNOW` |
+
+`load_example16_3_model_data()` adds `OFFSET`, `FC_ENCODED`, `FC_LABEL`.
+
+---
+
+## ExperimentBuilder API
+
+```python
+from metacountregressor import ExperimentBuilder
+
+builder = ExperimentBuilder(
+    df=df,
+    id_col='ID',           # required — observation identifier
+    y_col='FREQ',          # required — outcome variable
+    offset_col='OFFSET',   # optional — log-exposure offset (count models)
+    group_id_col='FC',     # optional — group/panel identifier
+)
+```
+
+### Key methods
+
+| Method | Purpose |
+| -------- | ------- |
+| `builder.describe()` | Print data summary: N, outcome stats, variable types |
+| `builder.suggest_config(max_latent_classes=2)` | Print recommended ExperimentBuilder settings |
+| `builder.build_evaluator(...)` | Build a structure evaluator (see below) |
+| `builder.build_count_evaluator(...)` | Shortcut for count models |
+| `builder.run(evaluator, algo, max_iter, seed, ...)` | Run metaheuristic search |
+| `builder.run_search(evaluator, ...)` | Alias for `run()` |
+| `builder.make_manual_spec(...)` | Build a model spec dict manually |
+| `builder.fit_manual_model(manual_spec, model, R)` | Fit a manually specified structure |
+| `builder.build_bayesian_model(search_result, ...)` | Compile the selected structure into a PyMC model |
+| `builder.compute_latent_class_probabilities(fit, true_class_col)` | Get class membership probabilities |
+| `ExperimentBuilder.get_family_capabilities()` | Static: list supported model families |
+| `ExperimentBuilder.get_search_argument_guide()` | Static: full argument documentation |
+
+### build_evaluator arguments
+
+```python
+evaluator = builder.build_evaluator(
+    variables=['AADT', 'LENGTH', 'SPEED', 'CURVES'],   # candidate columns
+    constraints=c,                                       # ModelConstraints object
+    model_family='count',          # 'count' | 'cmf' | 'duration' | 'linear'
+    default_roles=[0, 1, 2, 3, 5], # roles the search may assign
+    max_latent_classes=2,          # 1 = standard, 2 = allow LC
+    mode='single',                 # 'single' = minimise BIC
+    R=200,                         # Halton simulation draws
+    # CMF-only arguments:
+    aadt_col='AADT',
+    baseline_vars=['URB', 'ACCESS'],
+    local_vars=['CURVES', 'WIDTH'],
+    # Duration-only:
+    budget_col='AADT',
+)
+```
+
+---
+
+## ModelConstraints API
+
+`ModelConstraints` restricts which roles and distributions each variable may take.
+All methods return `self` for chaining.
+
+```python
+from metacountregressor import ModelConstraints
+
+c = (
+    ModelConstraints()
+    .force_include('OFFSET')                          # cannot be excluded
+    .force_fixed('AADT')                              # only fixed or excluded
+    .no_zi('LENGTH', 'CURVES', 'SLOPE', 'WIDTH')      # cannot be ZI term
+    .no_random('URB', 'GRADEBR')                      # no random parameter
+    .allow_random('CURVES', distributions=['lognormal'])  # restrict distribution
+    .membership_only('FC_ENCODED')                    # drives class prob only
+    .allow_membership('SPEED')                        # may also enter membership
+    .outcome_only('AADT')                             # no membership role
+    .exclude('YEAR', 'ID')                            # removed from search
+    .mutual_exclusion(['SPEED', 'SPEED_50'])          # never both in the model
+    .set_roles('WIDTH', [0, 1, 2])                    # low-level override
+)
+
+print(c)           # display all constraints
+c.summary()        # same as print(c)
+```
+
+## Bayesian Compilation
+
+The Bayesian compiler preserves the selected structure from a completed JAX
+search and rebuilds its likelihood in PyMC. Install it as an optional extra:
+
+```bash
+python -m pip install "metacountregressor[bayesian]"
+```
+
+Then compile and sample without rerunning the structural search:
+
+```python
+result = builder.run_search(evaluator, algo='sa', max_iter=3000, seed=7)
+bayesian = builder.build_bayesian_model(result)
+idata = bayesian.sample(draws=1000, tune=1000, chains=4, target_accept=0.9)
+```
+
+The first compiler covers count/CMF, Gaussian linear, Tobit, and duration
+models, including independent, grouped, and correlated random parameters,
+heterogeneity, zero inflation, and latent classes. Count searches marked as
+negative binomial compile to the mean-linked negative-binomial Lindley (NBL)
+likelihood; use `model='nbl'` for an explicit specification. Legacy CMF
+results can be compiled with `CMFExperimentBuilder.build_bayesian_model(...)`;
+pass `id_col` when random effects should vary by panel unit. Pavement's combined
+regression/Markov/hazard search and multivariate copula results are rejected
+explicitly until their full joint likelihoods have dedicated compilers.
+
+For NBL, the conditional model is negative binomial with success probability
+`exp(-U)` and `U ~ Lindley(theta)`. The compiler uses the closed-form marginal
+likelihood and sets `r = mu / h(theta)`, so `mu=exp(X beta + offset)` remains
+the marginal mean. It samples `theta = 2 + theta_excess` to ensure finite
+variance. Adjust the prior with `priors={'nbl_theta_scale': 2.0}`.
+
+`mutual_exclusion` prevents multicollinearity or redundancy by ensuring at most one variable per group is active.  Pass multiple groups for multiple exclusivity rules:
+
+```python
+c = ModelConstraints().mutual_exclusion(
+    ['SPEED', 'SPEED_50'],        # speed definitions
+    ['AADT', 'ADTLANE'],          # traffic volume measures
+    ['TANGENT', 'CURVES'],        # alignment descriptors
+)
+```
+
+Get detailed API documentation:
+
+```python
+from metacountregressor import get_help
+get_help('constraints')
+```
+
+---
+
+## Role codes
+
+| Code | Name | Description |
+| ---- | ---- | ----------- |
+| `0` | Excluded | Variable not in the model |
+| `1` | Fixed | Same coefficient for every observation |
+| `2` | Random (ind.) | Individual random effect, independent draws |
+| `3` | Random (corr.) | Individual random effect, correlated with others |
+| `4` | Grouped | Group-level random effect (shared within group) |
+| `5` | Heterogeneity | Explains variation in random-parameter means |
+| `6` | Zero Inflation | Enters the zero-inflation probability equation |
+| `7` | Membership only | Drives latent-class probability — not the outcome |
+| `8` | Membership + Fixed | Drives class membership AND has class-specific outcome effect |
+
+Random-parameter distributions: `normal`, `lognormal`, `triangular`, `uniform`.
+
+```python
+get_help('roles')   # full reference with examples
+```
+
+---
+
+## Search algorithms
+
+| Alias | Algorithm | Best for |
+| ----- | --------- | -------- |
+| `'sa'` | Simulated Annealing | Robust default — escapes local minima via cooling schedule |
+| `'de'` | Differential Evolution | Thorough population-based search — use when SA converges early |
+| `'hs'` | Harmony Search | Fast initial convergence — good for a quick first pass |
+
+```python
+# Run the same evaluator with different algorithms
+result_sa = builder.run(evaluator, algo='sa', max_iter=2000, seed=42)
+result_de = builder.run(evaluator, algo='de', max_iter=2000, seed=42)
+result_hs = builder.run(evaluator, algo='hs', max_iter=2000, seed=42)
+```
+
+```python
+get_help('metaheuristics')   # full parameter reference
+```
+
+---
+
+## Model families
+
+### Count models (Poisson / Negative Binomial)
+
+```python
+evaluator = builder.build_count_evaluator(
+    variables=['AADT', 'LENGTH', 'SPEED', 'CURVES', 'URB', 'AVEPRE'],
+    constraints=c,
+    default_roles=[0, 1, 2, 3, 5],
+    max_latent_classes=1,
+    R=200,
+)
+result = builder.run(evaluator, algo='sa', max_iter=2000, seed=42)
+fit = builder.fit_manual_model(manual_spec=result['model_spec'], model='nb', R=500)
+```
+
+Manual spec:
+
+```python
+spec = builder.make_manual_spec(
+    fixed_terms=['AADT', 'LENGTH', 'SPEED'],
+    rdm_terms=['CURVES:normal'],
+    rdm_cor_terms=['TANGENT:normal', 'SLOPE:lognormal'],
+    hetro_in_means=['AVEPRE'],
+    zi_terms=['ACCESS'],
+    membership_terms=['URB'],
+    dispersion=1,
+    latent_classes=2,
+)
+fit = builder.fit_manual_model(manual_spec=spec, model='nb', R=200)
+```
+
+### CMF models
+
+```python
+from metacountregressor import CMFExperimentBuilder
+
+cmf = CMFExperimentBuilder(
+    df=df,
+    y_col='FREQ',
+    aadt_col='AADT',
+    baseline_vars=['URB', 'ACCESS', 'GRADEBR', 'CURVES'],
+    local_vars=['CURVES', 'WIDTH'],
+)
+
+# Route A: full JAX flexibility (random params, LC, ZI)
+builder_jax, evaluator_jax, meta = cmf.build_jax_count_evaluator(
+    id_col='ID', offset_col='OFFSET', constraints=c, max_latent_classes=1, R=200)
+result = builder_jax.run(evaluator_jax, algo='sa', max_iter=500, seed=42)
+
+# Route B: classic GA search (fast, two-component structure)
+search = cmf.run_search(R=200)
+fit = cmf.fit_best_model(search, final_R=500)
+cmf.print_report(search, fit)
+```
+
+```python
+get_help('cmf')   # full workflow guide
+```
+
+### Duration models
+
+```python
+from metacountregressor import load_example_duration_data
+
+duration_df = load_example_duration_data()
+duration_builder = ExperimentBuilder(
+    df=duration_df, id_col='ID', y_col='DURATION', group_id_col='FC')
+
+evaluator = duration_builder.build_evaluator(
+    variables=['WIDTH', 'CURVES', 'SLOPE', 'URB', 'FC_ENCODED'],
+    model_family='duration',
+    default_roles=[0, 1, 2, 3],
+    max_latent_classes=1, R=200,
+)
+result = duration_builder.run(evaluator, algo='sa', max_iter=500, seed=42)
+fit = duration_builder.fit_manual_model(manual_spec=result['model_spec'],
+                                        model='lognormal', R=500)
+```
+
+### Linear models
+
+```python
+from metacountregressor import load_example_platform_speed_data
+
+speed_df = load_example_platform_speed_data()
+speed_builder = ExperimentBuilder(
+    df=speed_df, id_col='PLATFORM_ID', y_col='SPEED', offset_col=None)
+
+evaluator = speed_builder.build_evaluator(
+    variables=['DIST_TO_PLATFORM', 'POSTED_SPEED', 'APPROACH_ACCEL',
+               'PLATFORM_HEIGHT', 'PLATFORM_WIDTH'],
+    model_family='linear',
+    default_roles=[0, 1, 2, 3],   # no ZI for linear
+    max_latent_classes=1, R=200,
+)
+result = speed_builder.run(evaluator, algo='sa', max_iter=500, seed=42)
+fit = speed_builder.fit_manual_model(manual_spec=result['model_spec'],
+                                     model='gaussian', R=500)
+```
+
+---
+
+## Latent class models
+
+```python
+# 1. Constrain FC_ENCODED to drive class membership only
+c = (
+    ModelConstraints()
+    .membership_only('FC_ENCODED')
+    .force_include('OFFSET')
+    .no_zi('LENGTH', 'CURVES', 'WIDTH', 'SLOPE')
+    .no_random('URB', 'GRADEBR')
+)
+
+# 2. Build LC evaluator (max_latent_classes=2, include roles 7 & 8)
+evaluator = builder.build_evaluator(
+    variables=['URB', 'ACCESS', 'GRADEBR', 'CURVES', 'LENGTH',
+               'SPEED', 'WIDTH', 'SLOPE', 'AVEPRE', 'FC_ENCODED'],
+    constraints=c,
+    default_roles=[0, 1, 2, 3, 5, 7, 8],
+    max_latent_classes=2,
+    R=150,
+)
+
+# 3. Run search
+result = builder.run(evaluator, algo='sa', max_iter=500, seed=1)
+
+# 4. Manually fit a specific structure
+spec = builder.make_manual_spec(
+    fixed_terms=['AADT', 'SPEED', 'LENGTH'],
+    rdm_cor_terms=['CURVES:normal', 'SLOPE:normal'],
+    hetro_in_means=['AVEPRE'],
+    membership_terms=['URB', 'ACCESS', 'GRADEBR'],
+    dispersion=1, latent_classes=2,
+)
+fit = builder.fit_manual_model(manual_spec=spec, model='nb', R=200)
+
+# 5. Extract class membership probabilities
+class_probs = builder.compute_latent_class_probabilities(
+    fit, true_class_col='FC_ENCODED')
+print(class_probs.head())
+
+# 6. Compare predicted class vs actual FC
+class_probs['predicted'] = (
+    class_probs[['class_1_prob', 'class_2_prob']].to_numpy().argmax(axis=1))
+agreement = (class_probs['predicted'] == class_probs['FC_ENCODED']).mean()
+print(f'Agreement with FC: {agreement:.1%}')
+```
+
+Pre-specified reference model:
+
+```python
+from metacountregressor import (
+    load_book_latent_class_spec, describe_book_latent_class_spec)
+
+describe_book_latent_class_spec()
+spec = load_book_latent_class_spec()
+fit = builder.fit_manual_model(manual_spec=spec, model='nb', R=200)
+```
+
+```python
+get_help('latent_class')   # full workflow guide
+```
+
+---
+
+## Output and saving results
+
+```python
+from metacountregressor import SearchOutputConfig
+
+output_config = SearchOutputConfig(
+    output_dir='results',
+    experiment_name='example16_3_count',
+    search_description='NB count model search on Example 16-3',
+    save_json=True,
+)
+
+result = builder.run(evaluator, algo='sa', max_iter=2000,
+                     output_config=output_config)
+print('Saved to:', result.get('saved_to'))
+```
+
+Each saved JSON contains: experiment name, description, model family, algorithm, best BIC, and the best structural specification.
+
+Collect results from multiple runs:
+
+```python
+import json, pathlib
+
+results = sorted(
+    [json.load(open(f)) for f in pathlib.Path('results').glob('*.json')],
+    key=lambda r: r.get('best_score', float('inf'))
+)
+print('Best BIC:', results[0]['best_score'])
+print('Algorithm:', results[0]['algorithm'])
+```
+
+---
+
+## Help system
+
+The package includes a built-in interactive help system:
+
+```python
+from metacountregressor import get_help
+
+get_help()                    # list all topics
+get_help('roles')             # role code table + distributions
+get_help('constraints')       # ModelConstraints API
+get_help('metaheuristics')    # algorithm comparison and parameters
+get_help('crash_frequency')   # count model workflow
+get_help('latent_class')      # latent class workflow
+get_help('cmf')               # CMF workflow
+get_help('linear')            # linear model workflow
+get_help('duration')          # duration model workflow
+get_help('batch')             # batch script and HPC guide
+```
+
+---
+
+## Running on HPC clusters
+
+### Automatic walltime detection
+
+On PBS/Torque or SLURM, the package reads the scheduler walltime automatically and uses it as a `max_time` limit — the search stops cleanly before the job is killed.
+
+| Scheduler | Environment variable | Format |
+| --------- | ------------------- | ------ |
+| PBS/Torque | `PBS_WALLTIME` | `HH:MM:SS` |
+| SLURM | `SLURM_TIME_LIMIT` | seconds or `HH:MM:SS` |
+
+Set manually for local testing:
+
+```python
+result = builder.run(evaluator, algo='sa', max_iter=99999, max_time=3600)
+```
+
+### PBS job script
+
+```bash
+#!/bin/bash
+#PBS -N metacount_sa
+#PBS -l nodes=1:ppn=4
+#PBS -l walltime=04:00:00
+#PBS -l mem=16gb
+#PBS -j oe
+#PBS -o logs/sa_seed42.log
+
+module load python/3.11
+cd $PBS_O_WORKDIR
+source venv/bin/activate
+
+# Walltime auto-detected from PBS_WALLTIME
+python run_experiment.py sa 42 200 99999
+```
+
+### SLURM job array
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=metacount
+#SBATCH --nodes=1
+#SBATCH --ntasks=4
+#SBATCH --time=04:00:00
+#SBATCH --mem=16G
+#SBATCH --output=logs/%j.log
+#SBATCH --array=1-10
+
+module load python/3.11
+source venv/bin/activate
+
+python run_experiment.py sa $SLURM_ARRAY_TASK_ID 200 99999
+```
+
+See [05_batch_script_tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) for a complete worked example including a reusable `run_experiment.py` template and result-collection scripts.
+
+```python
+get_help('batch')   # inline guide
+```
+
+---
+
+## Getting help
+
+- Revisit the [Tutorials & resources](#tutorials--resources) section — the six bundled notebooks cover the full API surface with runnable examples.
+- Ask the package itself: `get_help()` lists every built-in guide.
+- Found a bug or want a feature? Open an issue at [github.com/zahern/MetaCount/issues](https://github.com/zahern/MetaCount/issues).
+
+If you use `metacountregressor` in research, please cite the package:
+
+```bibtex
+@software{metacountregressor,
+  author  = {Ahern, Zeke and Corry, Paul and Paz, Alexander},
+  title   = {metacountregressor: JAX-first hierarchical search and fitting
+             for count, CMF, duration, and linear models},
+  url     = {https://github.com/zahern/MetaCount},
+}
+```

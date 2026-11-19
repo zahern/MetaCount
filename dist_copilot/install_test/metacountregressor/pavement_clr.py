@@ -1,0 +1,2017 @@
+"""
+Pavement Clusterwise Linear Regression (CLR) with Temporal Error Structures
+============================================================================
+Extends metacountregressor with a specialized SA-based CLR framework for
+pavement deterioration modelling.
+
+Models the power (log-log) deterioration equation:
+    ln(PSI) = β₀ + Σᵢ βᵢ ln(xᵢ) + Σⱼ γⱼ Dⱼ + εₜ
+
+where ε can follow i.i.d. (OLS), AR(1), AR(2), random walk, or near-unit-root structure.
+
+Key classes
+-----------
+PavementCLROptimizer
+    SA-based simultaneous cluster assignment + variable selection, minimising BIC.
+
+PavementTemporalComparison
+    Fits and compares four temporal error models within the same CLR structure.
+
+Helper functions
+----------------
+fit_cluster_ols / fit_cluster_ar1 / fit_cluster_ar2 / fit_cluster_random_walk / fit_cluster_nur
+    Per-cluster model fitters (log-transformed data assumed as input).
+"""
+
+from __future__ import annotations
+
+import warnings
+from itertools import combinations as _it_comb
+from math import log, exp, pi, sqrt
+from typing import Optional, Sequence
+
+import numpy as np
+import pandas as pd
+from scipy.optimize import minimize as _scipy_minimize
+from scipy.stats import t as _tdist
+
+try:
+    import jax
+    import jax.numpy as jnp
+    JAX_PRESENT = True
+except ImportError:
+    jax = None
+    jnp = np
+    JAX_PRESENT = False
+
+__all__ = [
+    "PavementCLROptimizer",
+    "PavementTemporalComparison",
+    "fit_cluster_ols",
+    "fit_cluster_ar1",
+    "fit_cluster_ar2",
+    "fit_cluster_random_walk",
+    "fit_cluster_nur",
+    "log_transform_pavement",
+    "forecast_deterioration",
+    "forecast_to_threshold",
+    "warm_up_numba_kernels",
+]
+
+
+# ============================================================
+# JAX helpers — JIT-compiled log-likelihoods for temporal models
+# (same pattern as bivariate_copula.py: jit + grad, scipy as solver)
+# ============================================================
+
+if JAX_PRESENT:
+
+    @jax.jit
+    def _jax_ar1_neg_ll(beta, rho_raw, log_sig, X, y,
+                        prev_idx, next_idx, seg_start_idx):
+        # Transition indices and segment-start indices have different
+        # lengths, so they are passed as separate arrays (the previous
+        # single stacked array could not be built).
+        rho = jnp.clip(rho_raw, -0.999, 0.999)
+        sigma2 = jnp.exp(2.0 * log_sig)
+        resid = y - X @ beta
+        innov = resid[next_idx] - rho * resid[prev_idx]
+        n_transitions = prev_idx.shape[0]
+        ll_transitions = (
+            0.5 * n_transitions * jnp.log(2.0 * jnp.pi * sigma2)
+            + 0.5 * jnp.sum(innov * innov) / sigma2
+        )
+        var_init = sigma2 / jnp.maximum(1.0 - rho * rho, 1e-10)
+        r_first = resid[seg_start_idx]
+        ll_init = jnp.sum(
+            0.5 * jnp.log(2.0 * jnp.pi * var_init) + 0.5 * r_first * r_first / var_init
+        )
+        return ll_transitions + ll_init
+
+    @jax.jit
+    def _jax_nur_neg_ll(beta, rho, log_sig, mu, X, y, seg_starts, seg_ends):
+        sigma2 = jnp.exp(2.0 * log_sig)
+        n = y.shape[0]
+        resid = y - mu - X @ beta
+        rho_clip = jnp.clip(rho, 0.85, 1.0)
+        lagged = jnp.where(jnp.arange(n) > 0, y[jnp.maximum(jnp.arange(n) - 1, 0)], mu)
+        lagged = jnp.where(jnp.isin(jnp.arange(n), seg_starts), mu, lagged)
+        innov = y - rho_clip * lagged - (1.0 - rho_clip) * mu - X @ beta
+        ll_main = 0.5 * n * jnp.log(2.0 * jnp.pi * sigma2) + 0.5 * jnp.sum(innov * innov) / sigma2
+        var_init = sigma2 / jnp.maximum(1.0 - rho_clip * rho_clip, 1e-10)
+        r_init = y[seg_starts] - mu - X[seg_starts] @ beta
+        ll_init = jnp.sum(
+            0.5 * jnp.log(2.0 * jnp.pi * var_init) + 0.5 * r_init * r_init / var_init
+        )
+        return ll_main + ll_init
+
+
+# ============================================================
+# Optional Numba kernels
+#
+# The temporal MLE objectives below are minimised by scipy.optimize with
+# plain NumPy callbacks; their Python-level loops over segments/time
+# dominate the fit.  Numba compiles them once and reuses the machine code
+# for every optimiser iteration.  Numba is optional — when it is not
+# installed the original NumPy implementations run unchanged.
+# ============================================================
+
+try:
+    from numba import njit as _njit
+    NUMBA_AVAILABLE = True
+except ImportError:  # pragma: no cover - numba is optional
+    NUMBA_AVAILABLE = False
+
+    def _njit(*args, **kwargs):
+        if len(args) == 1 and callable(args[0]) and not kwargs:
+            return args[0]
+
+        def _decorator(func):
+            return func
+
+        return _decorator
+
+
+@_njit(cache=True)
+def _nur_neg_ll_kernel(params, X, y, seg_starts, seg_ends, lo, hi):
+    """Numba version of the near-unit-root negative log-likelihood."""
+    p = X.shape[1]
+    beta = params[:p]
+    rho = lo + (hi - lo) / (1.0 + np.exp(-params[p]))
+    sigma2 = np.exp(2.0 * params[p + 1])
+    mu = params[p + 2]
+    two_sigma2 = 2.0 * sigma2
+    log_2pi_sigma2 = np.log(2.0 * np.pi * sigma2)
+    total = 0.0
+    for s in range(seg_starts.shape[0]):
+        i0 = seg_starts[s]
+        i1 = seg_ends[s]
+        T = i1 - i0 + 1
+        for t in range(i0, i1 + 1):
+            xb = 0.0
+            for k in range(p):
+                xb += X[t, k] * beta[k]
+            if t == i0:
+                r = y[t] - mu - xb
+            else:
+                r = y[t] - rho * y[t - 1] - (1.0 - rho) * mu - xb
+            total += r * r / two_sigma2
+        total += 0.5 * (T - 1) * log_2pi_sigma2
+        if abs(rho) < 0.999:
+            var_init = sigma2 / max(1.0 - rho * rho, 1e-10)
+            xb0 = 0.0
+            for k in range(p):
+                xb0 += X[i0, k] * beta[k]
+            r0 = y[i0] - mu - xb0
+            total += 0.5 * np.log(2.0 * np.pi * var_init) + 0.5 * r0 * r0 / var_init
+    return total
+
+
+@_njit(cache=True)
+def _nur_predict_kernel(beta, rho, mu, X, y, seg_starts, seg_ends):
+    """Numba version of the NUR prediction reconstruction."""
+    n = X.shape[0]
+    p = X.shape[1]
+    est = np.empty(n)
+    for s in range(seg_starts.shape[0]):
+        i0 = seg_starts[s]
+        i1 = seg_ends[s]
+        for t in range(i0, i1 + 1):
+            xb = 0.0
+            for k in range(p):
+                xb += X[t, k] * beta[k]
+            if t == i0:
+                est[t] = mu + xb
+            else:
+                est[t] = rho * y[t - 1] + (1.0 - rho) * mu + xb
+    return est
+
+
+@_njit(cache=True)
+def _ar1_seg_indices_kernel(seg_ids):
+    """Numba version of the AR(1) transition / segment-start index builder.
+
+    Segment starts for singleton segments are omitted so the JAX and NumPy
+    AR(1) likelihoods treat panels of length < 2 identically.
+    """
+    n = seg_ids.shape[0]
+    prev_idx = np.empty(max(n - 1, 0), dtype=np.int64)
+    next_idx = np.empty(max(n - 1, 0), dtype=np.int64)
+    seg_start_idx = np.empty(n, dtype=np.int64)
+    n_tr = 0
+    n_start = 0
+    for i in range(n - 1):
+        if seg_ids[i] == seg_ids[i + 1]:
+            prev_idx[n_tr] = i
+            next_idx[n_tr] = i + 1
+            n_tr += 1
+    for i in range(n):
+        if i == 0 or seg_ids[i] != seg_ids[i - 1]:
+            if i + 1 < n and seg_ids[i] == seg_ids[i + 1]:
+                seg_start_idx[n_start] = i
+                n_start += 1
+    return prev_idx[:n_tr], next_idx[:n_tr], seg_start_idx[:n_start]
+
+
+def warm_up_numba_kernels() -> bool:
+    """Force one-time compilation of the Numba kernels.
+
+    Call this before a parallel section so the first kernel invocation does
+    not happen concurrently in several worker threads.  Idempotent and a
+    no-op when Numba is unavailable; returns True when kernels are active.
+    """
+    if not NUMBA_AVAILABLE:
+        return False
+    X = np.zeros((2, 1), dtype=float)
+    y = np.zeros(2, dtype=float)
+    starts = np.array([0], dtype=np.int64)
+    ends = np.array([1], dtype=np.int64)
+    _nur_neg_ll_kernel(np.zeros(3, dtype=float), X, y, starts, ends, 0.85, 1.0)
+    _nur_predict_kernel(np.zeros(1, dtype=float), 0.9, 0.0, X, y, starts, ends)
+    _ar1_seg_indices_kernel(np.array([0, 0], dtype=np.int64))
+    return True
+
+
+def _build_ar1_seg_indices(seg_ids: np.ndarray) -> tuple:
+    seg_ids = np.asarray(seg_ids, dtype=np.int64)
+    if NUMBA_AVAILABLE:
+        return _ar1_seg_indices_kernel(seg_ids)
+    n = len(seg_ids)
+    next_idx = []; prev_idx = []; seg_start_idx = []
+    for i in range(n - 1):
+        if seg_ids[i] == seg_ids[i + 1]:
+            next_idx.append(i + 1); prev_idx.append(i)
+    for i in range(n):
+        if i == 0 or seg_ids[i] != seg_ids[i - 1]:
+            if i + 1 < n and seg_ids[i] == seg_ids[i + 1]:
+                seg_start_idx.append(i)
+    return (np.array(prev_idx, dtype=np.int32),
+            np.array(next_idx, dtype=np.int32),
+            np.array(seg_start_idx, dtype=np.int32))
+
+
+# ============================================================
+# Data transformation
+# ============================================================
+
+
+# Data transformation
+# ============================================================
+
+def log_transform_pavement(
+    df: pd.DataFrame,
+    psi_col: str = "psi",
+    continuous_cols: Optional[list[str]] = None,
+) -> pd.DataFrame:
+    """
+    Apply log transform to PSI and continuous predictors.
+
+    This converts the power-form model to a linear model in log space:
+        ln(PSI) = β₀ + Σᵢ βᵢ ln(xᵢ) + categorical + ε
+
+    Parameters
+    ----------
+    df : DataFrame
+        Original (untransformed) pavement data.
+    psi_col : str
+        Name of the PSI column.
+    continuous_cols : list[str], optional
+        Continuous predictor column names to log-transform.
+        If None, all non-categorical float columns (except IDs/time) are used.
+
+    Returns
+    -------
+    DataFrame with ln(PSI) and ln(continuous predictors). Zero values are
+    replaced with NaN before logging and then filled with 0.
+    """
+    df = df.copy()
+    cols_to_log = [psi_col] + (continuous_cols or [])
+    for col in cols_to_log:
+        if col not in df.columns:
+            continue
+        vals = df[col].astype(float)
+        vals = vals.replace(0.0, np.nan)
+        df[col] = np.log(vals)
+    return df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
+# ============================================================
+# OLS utilities (pure NumPy, no JAX dependency)
+# ============================================================
+
+def _solve_ols(X: np.ndarray, y: np.ndarray):
+    beta = np.linalg.lstsq(X, y, rcond=None)[0]
+    y_hat = X @ beta
+    resid = y - y_hat
+    rss = float(np.sum(resid ** 2))
+    return beta, resid, rss
+
+
+def _fit_lm(X: np.ndarray, y: np.ndarray, col_names: list[str]):
+    n, p = X.shape
+    if n <= p:
+        return None
+    beta, resid, rss = _solve_ols(X, y)
+    tss = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1.0 - rss / tss if tss > 1e-15 else 0.0
+    df_resid = max(n - p, 1)
+    adj_r2 = 1.0 - (1.0 - r2) * (n - 1) / df_resid
+    sigma2 = rss / df_resid
+    XtX_inv = np.linalg.pinv(X.T @ X)
+    se = np.sqrt(np.maximum(np.diag(XtX_inv) * sigma2, 0.0))
+    t_stats = np.divide(beta, se, out=np.zeros_like(beta), where=se > 0)
+    p_vals = 2.0 * (1.0 - _tdist.cdf(np.abs(t_stats), df=df_resid))
+    return {
+        "coefficients": beta,
+        "coeff_dict": {col_names[i]: float(beta[i]) for i in range(len(col_names))},
+        "residuals": resid,
+        "rss": rss,
+        "tss": tss,
+        "r2": r2,
+        "adj_r2": adj_r2,
+        "se": se,
+        "p_values": p_vals,
+        "n": n,
+        "df_resid": df_resid,
+        "col_names": list(col_names),
+    }
+
+
+def _bic(n: int, p: int, rss: float) -> float:
+    if n <= 0 or rss <= 0:
+        return np.inf
+    sigma2 = rss / n
+    return n + n * log(2 * pi) + n * log(sigma2) + p * log(max(n, 1))
+
+
+def _conditional_rss(fit: dict, temporal_model: str, df_log: pd.DataFrame,
+                     segment_col: str) -> tuple:
+    """One-step-ahead RSS on the conditional sample (t >= 2 per segment).
+
+    Every temporal spec is scored on log-PSI LEVELS using the observed prior
+    level, so BIC values are comparable across error structures when the
+    temporal model is itself a decision variable in the SA search.
+    """
+    resid = np.asarray(fit.get("residuals", []), dtype=float)
+    if resid.size == 0 or resid.size != len(df_log):
+        return np.nan, 0
+    seg_ids = df_log[segment_col].values.astype(int)
+    model = str(temporal_model).strip().lower()
+    e = np.full(resid.size, np.nan, dtype=float)
+    for s in np.unique(seg_ids):
+        idx = np.where(seg_ids == s)[0]
+        if len(idx) < 2:
+            continue
+        r = resid[idx]
+        vals = np.empty(len(r), dtype=float)
+        if model == "ar1":
+            rho = float(fit.get("rho_ar1", 0.0))
+            for t in range(len(r)):
+                vals[t] = np.nan if t == 0 else r[t] - rho * r[t - 1]
+        elif model == "ar2":
+            phi1 = float(fit.get("rho_ar2_1", 0.0))
+            phi2 = float(fit.get("rho_ar2_2", 0.0))
+            for t in range(len(r)):
+                if t == 0:
+                    vals[t] = np.nan
+                else:
+                    lag2 = r[t - 2] if t >= 2 else 0.0
+                    vals[t] = r[t] - phi1 * r[t - 1] - phi2 * lag2
+        else:
+            vals = r.copy()
+            vals[0] = np.nan
+        e[idx] = vals
+    mask = np.isfinite(e)
+    if not mask.any():
+        return np.nan, 0
+    return float(np.sum(e[mask] ** 2)), int(mask.sum())
+
+
+def _build_design_matrix(
+    df_log: pd.DataFrame,
+    psi_col: str,
+    selected_vars: list[str],
+    all_vars: list[str],
+    cat_vars: set[str],
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    n = len(df_log)
+    y = df_log[psi_col].values.astype(float)
+    col_names = ["Intercept"]
+    X_blocks = [np.ones((n, 1))]
+    for vname in selected_vars:
+        vals = df_log[vname].values.astype(float)
+        if vname in cat_vars:
+            uniq = sorted(set(vals))
+            if len(uniq) >= 2:
+                for lev in uniq[1:]:
+                    X_blocks.append((vals == lev).astype(float).reshape(-1, 1))
+                    col_names.append(f"{vname}_{int(lev)}")
+        else:
+            X_blocks.append(vals.reshape(-1, 1))
+            col_names.append(vname)
+    return np.column_stack(X_blocks), y, col_names
+
+
+def _calc_vif(X_no_intercept: np.ndarray, col_names: list[str]) -> dict:
+    n, p = X_no_intercept.shape
+    if p < 2:
+        return {}
+    vif = {}
+    for i, name in enumerate(col_names):
+        y_i = X_no_intercept[:, i]
+        X_oth = np.delete(X_no_intercept, i, axis=1)
+        X_reg = np.column_stack([np.ones(n), X_oth])
+        try:
+            b = np.linalg.lstsq(X_reg, y_i, rcond=None)[0]
+        except np.linalg.LinAlgError:
+            vif[name] = np.inf
+            continue
+        ss_res = np.sum((y_i - X_reg @ b) ** 2)
+        ss_tot = np.sum((y_i - y_i.mean()) ** 2)
+        r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-15 else 0.0
+        vif[name] = 1.0 / (1.0 - r2) if r2 < 1.0 else np.inf
+    return vif
+
+
+# ============================================================
+# Per-cluster model fitters
+# ============================================================
+
+def fit_cluster_ols(
+    df_log: pd.DataFrame,
+    psi_col: str,
+    variable_names: list[str],
+    categorical_vars: set[str],
+    level_of_significance: float = 0.05,
+    max_vif: float = 10.0,
+) -> Optional[dict]:
+    """
+    Fit an OLS cluster model with VIF screening and all-significant subset selection.
+
+    Parameters
+    ----------
+    df_log : DataFrame
+        Log-transformed cluster data (ln PSI as dependent variable).
+    psi_col : str
+        Name of the (already log-transformed) PSI column.
+    variable_names : list[str]
+        All candidate predictor names.
+    categorical_vars : set[str]
+        Subset of variable_names that are categorical.
+    level_of_significance : float
+        p-value threshold for coefficient significance.
+    max_vif : float
+        VIF threshold; variables exceeding this are iteratively removed.
+
+    Returns
+    -------
+    dict with keys: coefficients, coeff_dict, r2, adj_r2, rss, bic,
+    col_names, variables_used, n, p_values, se.
+    None if no valid model found.
+    """
+    active = list(variable_names)
+
+    # Drop categorical vars with < 2 levels in this cluster
+    for i, vname in enumerate(variable_names):
+        if vname in categorical_vars:
+            if df_log[vname].nunique() < 2:
+                active[i] = None
+
+    # Iterative VIF removal
+    prev_na = -1
+    while True:
+        used = [nm for nm in active if nm is not None]
+        if len(used) < 1:
+            return None
+        cur_na = sum(1 for x in active if x is None)
+        if cur_na == prev_na:
+            break
+        prev_na = cur_na
+        X, y, col_names = _build_design_matrix(df_log, psi_col, used, variable_names, categorical_vars)
+        if X.shape[0] <= X.shape[1]:
+            return None
+        vif = _calc_vif(X[:, 1:], col_names[1:])
+        if not vif:
+            break
+        max_v = max(vif.values())
+        if max_v <= max_vif:
+            break
+        worst = max(vif, key=vif.get)
+        for i, nm in enumerate(active):
+            if nm is None:
+                continue
+            if nm in categorical_vars and worst.startswith(nm + "_"):
+                active[i] = None
+                break
+            if worst == nm:
+                active[i] = None
+                break
+
+    used = [nm for nm in active if nm is not None]
+    if len(used) < 1:
+        return None
+
+    # All-subsets BIC search with significance constraint
+    all_combos = []
+    for r in range(1, len(used) + 1):
+        all_combos.extend(_it_comb(used, r))
+
+    results = []
+    for combo in all_combos:
+        X, y, col_names = _build_design_matrix(
+            df_log, psi_col, list(combo), variable_names, categorical_vars)
+        if X.shape[0] <= X.shape[1]:
+            continue
+        mf = _fit_lm(X, y, col_names)
+        if mf is None:
+            continue
+        bic_val = _bic(mf["n"], len(mf["coefficients"]), mf["rss"])
+        results.append((bic_val, mf, list(combo)))
+
+    if not results:
+        return None
+    results.sort(key=lambda x: x[0])
+    for bic_val, mf, combo in results:
+        if max(mf["p_values"]) <= level_of_significance:
+            mf["variables_used"] = combo
+            mf["bic"] = bic_val
+            return mf
+    return None
+
+
+def fit_cluster_ar1(
+    df_log: pd.DataFrame,
+    psi_col: str,
+    variable_names: list[str],
+    categorical_vars: set[str],
+    segment_col: str = "sample_id",
+    regularization_strength: float = 1e-4,
+    coefficient_bound: float = 20.0,
+) -> Optional[dict]:
+    """
+    Fit an AR(1) error model per cluster via maximum likelihood.
+
+    Model: ε_t = ρ ε_{t-1} + ν_t,  ν_t ~ N(0, σ²_ν)
+    where ε_t = ln(PSI_t) - X_t β
+
+    Parameters
+    ----------
+    df_log : DataFrame
+        Log-transformed cluster data.
+    psi_col : str
+        Name of the ln(PSI) column.
+    variable_names : list[str]
+        All candidate predictor names.
+    categorical_vars : set[str]
+        Subset of variable_names that are categorical.
+    segment_col : str
+        Column identifying pavement segments (panel structure).
+
+    Returns
+    -------
+    dict with r2, adj_r2, rss, bic, rho_ar1, sigma_ar1, and model_type.
+    """
+    X, y, col_names = _build_design_matrix(
+        df_log, psi_col, variable_names, variable_names, categorical_vars)
+    n, p = X.shape
+    if n <= p + 2:
+        return None
+    if regularization_strength < 0 or coefficient_bound <= 0:
+        raise ValueError("regularization_strength must be non-negative and coefficient_bound positive")
+
+    ols = _fit_lm(X, y, col_names)
+    if ols is None:
+        return None
+    beta0 = ols["coefficients"][:p].copy()
+    sigma0 = sqrt(max(ols["rss"] / (n - p), 1e-8))
+
+    seg_ids = df_log[segment_col].values.astype(int)
+    x0 = np.zeros(p + 2)
+    x0[:p] = beta0
+    x0[p] = 0.5
+    x0[p + 1] = log(max(sigma0, 1e-4))
+
+    if JAX_PRESENT:
+        prev_idx, next_idx, seg_start_idx = _build_ar1_seg_indices(seg_ids)
+        prev_j = jnp.asarray(prev_idx, dtype=jnp.int32)
+        next_j = jnp.asarray(next_idx, dtype=jnp.int32)
+        start_j = jnp.asarray(seg_start_idx, dtype=jnp.int32)
+        X_j = jnp.asarray(X); y_j = jnp.asarray(y)
+
+        def neg_ll_jax(params):
+            likelihood = _jax_ar1_neg_ll(
+                params[:p], params[p], params[p + 1], X_j, y_j,
+                prev_j, next_j, start_j)
+            return likelihood + regularization_strength * jnp.sum(params[1:p] ** 2)
+
+        jax_ok = False
+        try:
+            g = jax.jit(jax.grad(neg_ll_jax))
+            def obj(par):
+                return float(neg_ll_jax(jnp.asarray(par))), np.asarray(g(jnp.asarray(par)))
+            res = _scipy_minimize(obj, x0, jac=True, method="L-BFGS-B",
+                                   bounds=[(-coefficient_bound, coefficient_bound)] * p
+                                   + [(-0.999, 0.999), (-10, 10)],
+                                   options={"maxiter": 300, "ftol": 1e-7})
+            params = res.x
+            beta, rho_raw, log_sig = params[:p], params[p], params[p + 1]
+            rho = float(np.clip(rho_raw, -0.999, 0.999))
+            sigma = float(np.exp(log_sig))
+            jax_ok = True
+        except Exception:
+            pass
+
+    if not JAX_PRESENT or not jax_ok:
+        unique_segs = np.unique(seg_ids)
+        seg_idx = {s: np.where(seg_ids == s)[0] for s in unique_segs}
+
+        def neg_ll(params):
+            beta_p = params[:p]
+            rho_p = np.clip(params[p], -0.999, 0.999)
+            log_sig_p = params[p + 1]
+            sigma2 = np.exp(2 * log_sig_p)
+            resid = y - X @ beta_p
+            total = 0.0
+            for s, idx in seg_idx.items():
+                r = resid[idx]
+                T = len(r)
+                if T < 2:
+                    continue
+                innovations = r[1:] - rho_p * r[:-1]
+                total += 0.5 * (T - 1) * log(2 * pi * sigma2)
+                total += 0.5 * np.sum(innovations ** 2) / sigma2
+                var_init = sigma2 / max(1.0 - rho_p ** 2, 1e-10)
+                total += 0.5 * log(2 * pi * var_init) + 0.5 * r[0] ** 2 / var_init
+            return total + regularization_strength * np.sum(beta_p[1:p] ** 2)
+
+        try:
+            res = _scipy_minimize(neg_ll, x0, method="L-BFGS-B",
+                                   bounds=[(-coefficient_bound, coefficient_bound)] * p
+                                   + [(-0.999, 0.999), (-10, 10)],
+                                   options={"maxiter": 300, "ftol": 1e-7})
+            params = res.x
+        except Exception:
+            return None
+        beta, rho_raw, log_sig = params[:p], params[p], params[p + 1]
+        rho = float(np.clip(rho_raw, -0.999, 0.999))
+        sigma = float(np.exp(log_sig))
+
+    resid = y - X @ beta
+    rss = float(np.sum(resid ** 2))
+    tss = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1.0 - rss / max(tss, 1e-15)
+    n_params = p + 2
+    bic_val = _bic(n, n_params, rss)
+
+    return {
+        "coefficients": beta,
+        "coeff_dict": {col_names[i]: float(beta[i]) for i in range(len(col_names))},
+        "residuals": resid,
+        "rss": rss,
+        "tss": tss,
+        "r2": r2,
+        "adj_r2": 1.0 - (1.0 - r2) * (n - 1) / max(n - n_params, 1),
+        "se": np.full(p, np.nan),
+        "p_values": np.full(p, np.nan),
+        "n": n,
+        "col_names": col_names,
+        "variables_used": list(variable_names),
+        "rho_ar1": rho,
+        "sigma_ar1": sigma,
+        "bic": bic_val,
+        "n_params_total": n_params,
+        "regularization": "ridge",
+        "regularization_strength": regularization_strength,
+        "coefficient_bound": coefficient_bound,
+        "model_type": "AR(1)",
+    }
+
+
+def _ar2_phi_from_raw(raw_phi1: float, raw_phi2: float) -> tuple[float, float]:
+    """Map unconstrained partial autocorrelations to stationary AR(2) terms."""
+    kappa1 = float(np.tanh(raw_phi1))
+    kappa2 = float(np.tanh(raw_phi2))
+    return kappa1 * (1.0 - kappa2), kappa2
+
+
+def _ar2_initial_covariance(phi1: float, phi2: float, sigma2: float) -> Optional[np.ndarray]:
+    """Return the stationary covariance of the first two AR(2) errors."""
+    system = np.array([
+        [1.0 - phi2 * phi2, -phi1 * (1.0 + phi2)],
+        [-phi1, 1.0 - phi2],
+    ])
+    try:
+        gamma0, gamma1 = np.linalg.solve(system, np.array([sigma2, 0.0]))
+    except np.linalg.LinAlgError:
+        return None
+    covariance = np.array([[gamma0, gamma1], [gamma1, gamma0]], dtype=float)
+    if not np.all(np.isfinite(covariance)):
+        return None
+    if np.min(np.linalg.eigvalsh(covariance)) <= 1e-12:
+        return None
+    return covariance
+
+
+def fit_cluster_ar2(
+    df_log: pd.DataFrame,
+    psi_col: str,
+    variable_names: list[str],
+    categorical_vars: set[str],
+    segment_col: str = "sample_id",
+    regularization_strength: float = 1e-4,
+    coefficient_bound: float = 20.0,
+) -> Optional[dict]:
+    """
+    Fit a stationary AR(2) error model per cluster via maximum likelihood.
+
+    Model: ``epsilon_t = phi1 * epsilon_(t-1) + phi2 * epsilon_(t-2) + nu_t``.
+    The optimizer works with two unconstrained partial autocorrelations, which
+    guarantees a stationary AR(2) process for every trial point.
+    """
+    X, y, col_names = _build_design_matrix(
+        df_log, psi_col, variable_names, variable_names, categorical_vars)
+    n, p = X.shape
+    if n <= p + 3:
+        return None
+    if regularization_strength < 0 or coefficient_bound <= 0:
+        raise ValueError("regularization_strength must be non-negative and coefficient_bound positive")
+
+    ols = _fit_lm(X, y, col_names)
+    if ols is None:
+        return None
+    beta0 = ols["coefficients"][:p].copy()
+    sigma0 = sqrt(max(ols["rss"] / max(n - p, 1), 1e-8))
+
+    seg_ids = df_log[segment_col].values.astype(int)
+    segment_indices = [np.where(seg_ids == sid)[0] for sid in np.unique(seg_ids)]
+    x0 = np.zeros(p + 3)
+    x0[:p] = beta0
+    x0[p] = np.arctanh(0.5)
+    x0[p + 1] = np.arctanh(0.2)
+    x0[p + 2] = log(max(sigma0, 1e-4))
+
+    def neg_ll(params: np.ndarray) -> float:
+        beta = params[:p]
+        phi1, phi2 = _ar2_phi_from_raw(params[p], params[p + 1])
+        sigma2 = float(np.exp(2.0 * params[p + 2]))
+        initial_cov = _ar2_initial_covariance(phi1, phi2, sigma2)
+        if initial_cov is None:
+            return 1e100
+        sign, logdet = np.linalg.slogdet(initial_cov)
+        if sign <= 0 or not np.isfinite(logdet):
+            return 1e100
+        total = 0.0
+        resid = y - X @ beta
+        for idx in segment_indices:
+            length = len(idx)
+            if length == 0:
+                continue
+            r = resid[idx]
+            if length == 1:
+                total += 0.5 * (log(2.0 * pi * initial_cov[0, 0]) + r[0] ** 2 / initial_cov[0, 0])
+                continue
+            first = r[:2]
+            total += 0.5 * (2.0 * log(2.0 * pi) + logdet + first @ np.linalg.solve(initial_cov, first))
+            if length > 2:
+                innovations = r[2:] - phi1 * r[1:-1] - phi2 * r[:-2]
+                total += 0.5 * ((length - 2) * log(2.0 * pi * sigma2)
+                                + np.sum(innovations ** 2) / sigma2)
+            return float(total + regularization_strength * np.sum(beta[1:p] ** 2))
+
+    try:
+        res = _scipy_minimize(
+            neg_ll,
+            x0,
+            method="L-BFGS-B",
+            bounds=[(-coefficient_bound, coefficient_bound)] * p
+            + [(-5.0, 5.0), (-5.0, 5.0), (-10.0, 10.0)],
+            options={"maxiter": 400, "ftol": 1e-8},
+        )
+    except Exception:
+        return None
+    if not np.all(np.isfinite(res.x)):
+        return None
+
+    params = res.x
+    beta = params[:p]
+    phi1, phi2 = _ar2_phi_from_raw(params[p], params[p + 1])
+    sigma = float(np.exp(params[p + 2]))
+    resid = y - X @ beta
+    y_hat = np.full(n, np.nan)
+    for idx in segment_indices:
+        r = resid[idx]
+        for pos, row_idx in enumerate(idx):
+            if pos == 0:
+                ar_part = 0.0
+            elif pos == 1:
+                ar_part = phi1 * r[0]
+            else:
+                ar_part = phi1 * r[pos - 1] + phi2 * r[pos - 2]
+            y_hat[row_idx] = X[row_idx] @ beta + ar_part
+
+    tss = float(np.sum((y - y.mean()) ** 2))
+    rss = float(np.sum((y - y_hat) ** 2))
+    r2 = 1.0 - rss / max(tss, 1e-15)
+    n_params = p + 3
+    return {
+        "coefficients": beta,
+        "coeff_dict": {col_names[i]: float(beta[i]) for i in range(len(col_names))},
+        "residuals": resid,
+        "rss": rss,
+        "tss": tss,
+        "r2": r2,
+        "adj_r2": 1.0 - (1.0 - r2) * (n - 1) / max(n - n_params, 1),
+        "se": np.full(p, np.nan),
+        "p_values": np.full(p, np.nan),
+        "n": n,
+        "col_names": col_names,
+        "variables_used": list(variable_names),
+        "phi_ar2": (phi1, phi2),
+        "rho_ar2_1": phi1,
+        "rho_ar2_2": phi2,
+        "sigma_ar2": sigma,
+        "bic": _bic(n, n_params, rss),
+        "n_params_total": n_params,
+        "regularization": "ridge",
+        "regularization_strength": regularization_strength,
+        "coefficient_bound": coefficient_bound,
+        "model_type": "AR(2)",
+    }
+
+
+def fit_cluster_random_walk(
+    df_log: pd.DataFrame,
+    psi_col: str,
+    variable_names: list[str],
+    categorical_vars: set[str],
+    segment_col: str = "sample_id",
+    regularization_strength: float = 1e-4,
+    coefficient_bound: float = 20.0,
+) -> Optional[dict]:
+    """
+    Fit a random walk with drift model per cluster (first-difference form).
+
+    Model (first-differenced):
+        Δln(PSI_t) = δ + ΔX_t β + ε_t,  ε_t ~ N(0, σ²)
+
+    The drift δ captures systematic deterioration trend.
+    OLS on first differences — no numerical optimisation required.
+
+    Returns
+    -------
+    dict with r2 on original scale, bic on differenced scale, drift_rw.
+    """
+    X_full, y_full, col_names = _build_design_matrix(
+        df_log, psi_col, variable_names, variable_names, categorical_vars)
+
+    seg_ids = df_log[segment_col].values.astype(int)
+    unique_segs = np.unique(seg_ids)
+
+    dy_list, dX_list = [], []
+    for s in unique_segs:
+        idx = np.where(seg_ids == s)[0]
+        if len(idx) < 2:
+            continue
+        dy_list.append(y_full[idx[1:]] - y_full[idx[:-1]])
+        dX_list.append(X_full[idx[1:], :] - X_full[idx[:-1], :])
+
+    if not dy_list:
+        return None
+
+    Dy = np.concatenate(dy_list)
+    DX = np.concatenate(dX_list, axis=0)
+    n_diff = len(Dy)
+    if regularization_strength < 0 or coefficient_bound <= 0:
+        raise ValueError("regularization_strength must be non-negative and coefficient_bound positive")
+
+    # Differenced intercept column is all-zero → becomes the drift
+    DX_noint = DX[:, 1:]  # drop original intercept (all zeros after differencing)
+    X_diff = np.column_stack([np.ones(n_diff), DX_noint])
+    p_diff = X_diff.shape[1]
+
+    try:
+        penalty = np.eye(p_diff)
+        penalty[0, 0] = 0.0
+        beta_diff = np.linalg.solve(
+            X_diff.T @ X_diff + regularization_strength * penalty,
+            X_diff.T @ Dy,
+        )
+        beta_diff = np.clip(beta_diff, -coefficient_bound, coefficient_bound)
+    except np.linalg.LinAlgError:
+        return None
+
+    drift = float(beta_diff[0])
+    beta_rw = beta_diff[1:]
+    resid_diff = Dy - X_diff @ beta_diff
+    rss_diff = float(np.sum(resid_diff ** 2))
+    tss_diff = float(np.sum((Dy - Dy.mean()) ** 2))
+    r2_diff = 1.0 - rss_diff / max(tss_diff, 1e-15)
+    n_params = p_diff + 1  # include sigma
+
+    # Reconstruct original-scale predictions for interpretable R²
+    y_hat = np.full(len(y_full), np.nan)
+    for s in unique_segs:
+        idx = np.where(seg_ids == s)[0]
+        if len(idx) < 1:
+            continue
+        y_hat[idx[0]] = y_full[idx[0]]
+        for t in range(1, len(idx)):
+            dX_t = X_full[idx[t], 1:] - X_full[idx[t - 1], 1:]
+            y_hat[idx[t]] = y_hat[idx[t - 1]] + drift + dX_t @ beta_rw
+
+    valid = ~np.isnan(y_hat)
+    resid_orig = y_full[valid] - y_hat[valid]
+    rss_orig = float(np.sum(resid_orig ** 2))
+    tss_orig = float(np.sum((y_full[valid] - y_full[valid].mean()) ** 2))
+    r2_orig = 1.0 - rss_orig / max(tss_orig, 1e-15)
+    n_valid = int(valid.sum())
+    bic_val = _bic(n_diff, n_params, rss_diff)
+
+    col_names_rw = ["drift"] + [f"Δ{c}" for c in col_names[1:]]
+    coeff_dict = {"drift": drift}
+    for i, cn in enumerate(col_names_rw[1:]):
+        if i < len(beta_rw):
+            coeff_dict[cn] = float(beta_rw[i])
+
+    return {
+        "coefficients": np.concatenate([[drift], beta_rw]),
+        "coeff_dict": coeff_dict,
+        "residuals": y_full - y_hat,
+        "rss": rss_orig,
+        "tss": tss_orig,
+        "r2": r2_orig,
+        "adj_r2": 1.0 - (1.0 - r2_orig) * (n_valid - 1) / max(n_valid - n_params, 1),
+        "se": np.full(p_diff, np.nan),
+        "p_values": np.full(p_diff, np.nan),
+        "n": n_diff,
+        "n_orig": n_valid,
+        "col_names": col_names_rw,
+        "variables_used": list(variable_names),
+        "drift_rw": drift,
+        "sigma_rw": float(sqrt(max(rss_diff / max(n_diff - p_diff, 1), 1e-8))),
+        "bic": bic_val,
+        "n_params_total": n_params,
+        "regularization": "ridge",
+        "regularization_strength": regularization_strength,
+        "coefficient_bound": coefficient_bound,
+        "model_type": "Random_Walk",
+    }
+
+
+def fit_cluster_nur(
+    df_log: pd.DataFrame,
+    psi_col: str,
+    variable_names: list[str],
+    categorical_vars: set[str],
+    segment_col: str = "sample_id",
+    rho_bounds: tuple[float, float] = (0.85, 1.0),
+    regularization_strength: float = 1e-4,
+    coefficient_bound: float = 20.0,
+) -> Optional[dict]:
+    """
+    Fit a near-unit-root (NUR) model per cluster via constrained MLE.
+
+    Model:
+        ln(PSI_t) = ρ ln(PSI_{t-1}) + (1-ρ) μ + X_t β + ε_t
+    with ρ constrained to rho_bounds (default [0.85, 1.0]).
+
+    When ρ → 1 this reduces to the random walk; ρ < 1 gives mean reversion.
+
+    Returns
+    -------
+    dict with rho_nur, drift (long-run mean), r2, bic, model_type.
+    """
+    X, y, col_names = _build_design_matrix(
+        df_log, psi_col, variable_names, variable_names, categorical_vars)
+    n, p = X.shape
+    if n <= p + 3:
+        return None
+    if regularization_strength < 0 or coefficient_bound <= 0:
+        raise ValueError("regularization_strength must be non-negative and coefficient_bound positive")
+
+    ols = _fit_lm(X, y, col_names)
+    if ols is None:
+        return None
+    beta0 = ols["coefficients"][:p].copy()
+    sigma0 = sqrt(max(ols["rss"] / (n - p), 1e-8))
+
+    seg_ids = df_log[segment_col].values.astype(int)
+    unique_segs = np.unique(seg_ids)
+    seg_starts = {s: int(np.where(seg_ids == s)[0][0]) for s in unique_segs}
+    seg_ends = {s: int(np.where(seg_ids == s)[0][-1]) for s in unique_segs}
+    seg_starts_arr = np.array([seg_starts[s] for s in unique_segs], dtype=np.int64)
+    seg_ends_arr = np.array([seg_ends[s] for s in unique_segs], dtype=np.int64)
+    lo, hi = rho_bounds
+
+    if NUMBA_AVAILABLE:
+        def neg_ll(params):
+            likelihood = float(_nur_neg_ll_kernel(
+                np.asarray(params, dtype=float), X, y,
+                seg_starts_arr, seg_ends_arr, lo, hi))
+            return likelihood + regularization_strength * np.sum(params[1:p] ** 2)
+    else:
+        def neg_ll(params):
+            beta = params[:p]
+            # Map unconstrained → [lo, hi]
+            rho = lo + (hi - lo) / (1.0 + np.exp(-params[p]))
+            log_sig = params[p + 1]
+            sigma2 = np.exp(2 * log_sig)
+            mu = params[p + 2]
+
+            total = 0.0
+            for s in unique_segs:
+                i0, i1 = seg_starts[s], seg_ends[s]
+                T = i1 - i0 + 1
+                for t in range(i0, i1 + 1):
+                    if t == i0:
+                        r = y[t] - mu - X[t] @ beta
+                    else:
+                        r = y[t] - rho * y[t - 1] - (1.0 - rho) * mu - X[t] @ beta
+                    total += r ** 2 / (2 * sigma2)
+                total += 0.5 * (T - 1) * log(2 * pi * sigma2)
+                if abs(rho) < 0.999:
+                    var_init = sigma2 / max(1.0 - rho ** 2, 1e-10)
+                    r0 = y[i0] - mu - X[i0] @ beta
+                    total += 0.5 * log(2 * pi * var_init) + 0.5 * r0 ** 2 / var_init
+            return total + regularization_strength * np.sum(beta[1:p] ** 2)
+
+    x0 = np.zeros(p + 3)
+    x0[:p] = np.clip(beta0, -coefficient_bound, coefficient_bound)
+    x0[p] = 0.0
+    x0[p + 1] = log(max(sigma0, 1e-4))
+    x0[p + 2] = float(np.mean(y))
+
+    try:
+        res = _scipy_minimize(
+            neg_ll,
+            x0,
+            method="L-BFGS-B",
+            bounds=[(-coefficient_bound, coefficient_bound)] * p
+            + [(None, None), (None, None), (-coefficient_bound, coefficient_bound)],
+                              options={"maxiter": 400, "ftol": 1e-7})
+        params = res.x
+    except Exception:
+        return None
+
+    beta = params[:p]
+    rho = float(lo + (hi - lo) / (1.0 + np.exp(-params[p])))
+    sigma = float(np.exp(params[p + 1]))
+    mu = float(params[p + 2])
+
+    # Reconstruct predictions
+    if NUMBA_AVAILABLE:
+        est = _nur_predict_kernel(
+            np.asarray(beta, dtype=float), rho, mu, X, y,
+            seg_starts_arr, seg_ends_arr)
+    else:
+        est = np.full(n, np.nan)
+        for s in unique_segs:
+            i0, i1 = seg_starts[s], seg_ends[s]
+            for t in range(i0, i1 + 1):
+                if t == i0:
+                    est[t] = mu + X[t] @ beta
+                else:
+                    est[t] = rho * y[t - 1] + (1.0 - rho) * mu + X[t] @ beta
+
+    valid = ~np.isnan(est)
+    resid = y[valid] - est[valid]
+    rss = float(np.sum(resid ** 2))
+    tss = float(np.sum((y[valid] - y[valid].mean()) ** 2))
+    r2 = 1.0 - rss / max(tss, 1e-15)
+    n_params = p + 3
+    bic_val = _bic(int(valid.sum()), n_params, rss)
+
+    coeff_dict = {col_names[i]: float(beta[i]) for i in range(min(p, len(col_names)))}
+    coeff_dict.update({"_rho": rho, "_mu": mu, "_sigma": sigma})
+
+    return {
+        "coefficients": beta,
+        "coeff_dict": coeff_dict,
+        "residuals": y - est,
+        "rss": rss,
+        "tss": tss,
+        "r2": r2,
+        "adj_r2": 1.0 - (1.0 - r2) * (valid.sum() - 1) / max(valid.sum() - n_params, 1),
+        "se": np.full(p, np.nan),
+        "p_values": np.full(p, np.nan),
+        "n": int(valid.sum()),
+        "col_names": col_names,
+        "variables_used": list(variable_names),
+        "rho_nur": rho,
+        "drift_nur": mu,
+        "sigma_nur": sigma,
+        "bic": bic_val,
+        "n_params_total": n_params,
+        "regularization": "ridge",
+        "regularization_strength": regularization_strength,
+        "coefficient_bound": coefficient_bound,
+        "model_type": "Near_Unit_Root",
+    }
+
+
+# ============================================================
+# Standalone forecasting utilities
+# ============================================================
+
+def forecast_deterioration(
+    fit: dict,
+    df_segment: pd.DataFrame,
+    n_years: int = 20,
+    future_aadt_growth: float = 0.0,
+) -> pd.DataFrame:
+    """
+    Project single-segment PSI forward from a fitted temporal model.
+
+        Uses the most compatible forward-projection rule for the fitted model type:
+        - OLS / AR(1) / AR(2): deterministic prediction from covariates and
+            recursively expected residuals.
+    - Random Walk: drift-based drift-forward projection.
+    - Near-Unit-Root: recursive NUR projection using fitted rho.
+
+    Parameters
+    ----------
+    fit : dict
+        Fitted model dict from fit_cluster_ols / fit_cluster_ar1 /
+        fit_cluster_ar2 / fit_cluster_random_walk / fit_cluster_nur.
+    df_segment : DataFrame
+        Single-segment data (one row per year), sorted by time.
+    n_years : int
+        Number of years to project forward.
+    future_aadt_growth : float
+        Fractional annual AADT growth applied to future years.
+
+    Returns
+    -------
+    DataFrame with columns: year, PSI_pred.
+    """
+    mt = fit.get("model_type", "OLS")
+    last_row = df_segment.iloc[-1:].copy()
+    psi_col = "psi" if "psi" in df_segment.columns else None
+
+    if mt in ("Random_Walk", "Near_Unit_Root"):
+        drift = fit.get("drift_rw", fit.get("drift_nur", 0.0))
+        rho_nur = fit.get("rho_nur", 1.0) if mt == "Near_Unit_Root" else 1.0
+        last_psi = float(last_row[psi_col].values[0]) if psi_col else 0.0
+        rows = []
+        psi_val = last_psi
+        for t in range(1, n_years + 1):
+            if mt == "Near_Unit_Root":
+                psi_val = rho_nur * psi_val + (1 - rho_nur) * drift
+            else:
+                psi_val = psi_val + drift
+            rows.append({"year": int(t), "PSI_pred": exp(psi_val) if psi_col else psi_val})
+        return pd.DataFrame(rows)
+
+    # OLS / AR(1) / AR(2): deterministic conditional-mean forecast.
+    coeffs = fit.get("coeff_dict", {})
+    residuals = np.asarray(fit.get("residuals", []), dtype=float)
+    ar1_resid = float(residuals[-1]) if residuals.size else 0.0
+    ar2_resid = float(residuals[-2]) if residuals.size > 1 else 0.0
+    phi1 = float(fit.get("rho_ar2_1", 0.0))
+    phi2 = float(fit.get("rho_ar2_2", 0.0))
+    rho_ar1 = float(fit.get("rho_ar1", 0.0))
+    rows = []
+    for t in range(1, n_years + 1):
+        row = last_row.copy()
+        if "age" in row.columns:
+            row["age"] = row["age"].values + t
+        if future_aadt_growth > 0:
+            for tc in ["aadt", "AADT"]:
+                if tc in row.columns:
+                    row[tc] = row[tc].values * ((1 + future_aadt_growth) ** t)
+        val = coeffs.get("Intercept", 0.0)
+        for vname in coeffs:
+            if vname == "Intercept" or vname.startswith("_"):
+                continue
+            raw = float(row[vname].values[0]) if vname in row.columns else 0.0
+            if raw > 0:
+                val += coeffs[vname] * log(raw)
+            else:
+                val += coeffs[vname] * raw
+        if mt == "AR(1)":
+            ar_part = rho_ar1 * ar1_resid
+            ar1_resid = ar_part
+        elif mt == "AR(2)":
+            ar_part = phi1 * ar1_resid + phi2 * ar2_resid
+            ar2_resid, ar1_resid = ar1_resid, ar_part
+        else:
+            ar_part = 0.0
+        val += ar_part
+        rows.append({"year": int(t), "PSI_pred": exp(val)})
+    return pd.DataFrame(rows)
+
+
+def forecast_to_threshold(
+    fit: dict,
+    df_segment: pd.DataFrame,
+    psi_threshold: float = 2.0,
+    max_years: int = 50,
+    future_aadt_growth: float = 0.0,
+) -> int:
+    """
+    Estimate remaining years until PSI drops below a threshold.
+
+    Parameters
+    ----------
+    fit : dict
+        Fitted model dict.
+    df_segment : DataFrame
+        Single-segment data, sorted by time.
+    psi_threshold : float
+        Critical PSI value.
+    max_years : int
+        Horizon to search (returns max_years if threshold never reached).
+    future_aadt_growth : float
+        Fractional annual AADT growth.
+
+    Returns
+    -------
+    int : number of years until threshold is crossed.
+    """
+    fore = forecast_deterioration(fit, df_segment, n_years=max_years,
+                                   future_aadt_growth=future_aadt_growth)
+    below = fore[fore["PSI_pred"] <= psi_threshold]
+    if len(below) == 0:
+        return max_years
+    return int(below["year"].min())
+# PavementCLROptimizer — SA-based cluster + variable search
+# ============================================================
+
+def _adjusted_rand(a, b) -> float:
+    a = np.asarray(a)
+    b = np.asarray(b)
+    try:
+        from sklearn.metrics import adjusted_rand_score
+        return float(adjusted_rand_score(a, b))
+    except ImportError:
+        n = len(a)
+        if n < 2:
+            return 1.0
+        agree = total = 0
+        for i in range(n):
+            for j in range(i + 1, n):
+                total += 1
+                agree += int((a[i] == a[j]) == (b[i] == b[j]))
+        return agree / total if total else 1.0
+
+
+def _label_map(ref, other, K) -> dict:
+    """Best 1:1 map from other labels to ref labels (Hungarian)."""
+    from scipy.optimize import linear_sum_assignment
+    cont = np.zeros((K, K), dtype=int)
+    for k in range(1, K + 1):
+        mask = np.asarray(ref) == k
+        for j in range(1, K + 1):
+            cont[k - 1, j - 1] = int(np.sum(mask & (np.asarray(other) == j)))
+    rows, cols = linear_sum_assignment(-cont)
+    return {int(cols[i]) + 1: int(rows[i]) + 1 for i in range(K)}
+
+
+class PavementCLROptimizer:
+    """
+    Simultaneous cluster assignment and variable selection for pavement CLR.
+
+    Uses simulated annealing (SA) to minimise total BIC across clusters by
+    jointly searching over:
+    - Segment-to-cluster assignments
+    - Per-cluster variable inclusion masks
+
+    This implements the methodology in Khadka & Paz (2017/2018) extended with
+    the joint variable--cluster SA state and BIC objective.
+
+    Parameters
+    ----------
+    variable_names : list[str]
+        Names of all candidate predictor variables.
+    categorical_vars : set[str]
+        Subset of variable_names that are categorical.
+    psi_col : str
+        Column name of the (log-transformed) PSI.
+    segment_col : str
+        Column identifying pavement segments.
+    min_observations : int
+        Minimum number of observations per cluster.
+    level_of_significance : float
+        p-value threshold for coefficient retention.
+    max_vif : float
+        VIF threshold for multicollinearity removal.
+    temp_init : float
+        Initial SA temperature.
+    cooling_rate : float
+        Geometric cooling rate α: T ← T × α.
+    boltzmann : float
+        BIC scaling constant in the acceptance criterion.
+    n_changes : int
+        Number of segment reassignments per SA neighbour.
+    n_jobs : int
+        Number of parallel workers for cluster fitting (-1 = all cores).
+    temporal_model : str
+        Per-cluster error structure used by the SA objective:
+        "ols" (default), "ar1", "random_walk", or "nur".  The AR(1) and
+        near-unit-root (NUR) likelihoods are accelerated by the optional
+        Numba kernels.  Forecast helpers assume the default OLS fits.
+    temporal_search : bool
+        When True, each cluster's error structure is itself a decision
+        variable mutated inside the SA loop and scored with the
+        conditional-sample BIC (t >= 2, level scale), so the temporal
+        layer is selected jointly with the partition and variable
+        selection rather than compared post hoc.
+    temporal_candidates : sequence of str, optional
+        Candidate error structures for the joint search
+        (default: "ols", "ar1", "random_walk", "nur").
+    temporal_flip_prob : float
+        Probability that one cluster's error structure is mutated per SA
+        neighbour when temporal_search is enabled.
+
+    Examples
+    --------
+    >>> opt = PavementCLROptimizer(
+    ...     variable_names=["age", "aadt", "rut_depth", "f_class"],
+    ...     categorical_vars={"f_class"},
+    ...     psi_col="psi",
+    ... )
+    >>> result = opt.fit(df_log, n_clusters=4, seed=42)
+    >>> print(result["bic"], result["fits"][0]["r2"])
+    """
+
+    _TEMPORAL_MODELS = ("ols", "ar1", "ar2", "random_walk", "nur")
+
+    def __init__(
+        self,
+        variable_names: list[str],
+        categorical_vars: set[str],
+        psi_col: str = "psi",
+        segment_col: str = "sample_id",
+        min_observations: int = 300,
+        level_of_significance: float = 0.05,
+        max_vif: float = 10.0,
+        temp_init: float = 10.0,
+        cooling_rate: float = 0.97,
+        boltzmann: float = 80.0,
+        n_changes: int = 80,
+        n_neighbors: int = 3,
+        n_jobs: int = 1,
+        temporal_model: str = "ols",
+        temporal_search: bool = False,
+        temporal_candidates: Optional[Sequence[str]] = None,
+        temporal_flip_prob: float = 0.15,
+    ):
+        if temporal_model not in self._TEMPORAL_MODELS:
+            raise ValueError(
+                f"temporal_model must be one of {self._TEMPORAL_MODELS}, "
+                f"got {temporal_model!r}"
+            )
+        candidates = (tuple(temporal_candidates)
+                      if temporal_candidates is not None
+                      else ("ols", "ar1", "random_walk", "nur"))
+        if not candidates:
+            raise ValueError("temporal_candidates must be a non-empty sequence")
+        for cand in candidates:
+            if cand not in self._TEMPORAL_MODELS:
+                raise ValueError(
+                    f"temporal_candidates entries must be one of "
+                    f"{self._TEMPORAL_MODELS}, got {cand!r}"
+                )
+        self.variable_names = list(variable_names)
+        self.categorical_vars = set(categorical_vars)
+        self.psi_col = psi_col
+        self.segment_col = segment_col
+        self.min_observations = min_observations
+        self.level_of_significance = level_of_significance
+        self.max_vif = max_vif
+        self.temp_init = temp_init
+        self.cooling_rate = cooling_rate
+        self.boltzmann = boltzmann
+        self.n_changes = n_changes
+        self.n_neighbors = n_neighbors
+        self.n_jobs = n_jobs
+        self.temporal_model = temporal_model
+        self.temporal_search = bool(temporal_search)
+        self.temporal_candidates = candidates
+        self.temporal_flip_prob = float(temporal_flip_prob)
+
+    # ----------------------------------------------------------
+    # Public interface
+    # ----------------------------------------------------------
+
+    def fit(
+        self,
+        df_log: pd.DataFrame,
+        n_clusters: int,
+        seed: int = 42,
+        max_iterations: int = 1000,
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Run SA to find optimal cluster assignments and variable masks for K clusters.
+
+        Parameters
+        ----------
+        df_log : DataFrame
+            Log-transformed pavement data (ln PSI column already applied).
+        n_clusters : int
+            Number of clusters K.
+        seed : int
+            Random seed.
+        max_iterations : int
+            Maximum SA iterations (overrides temperature-based stopping if hit).
+        verbose : bool
+            Print progress every 10 iterations.
+
+        Returns
+        -------
+        dict with keys: clusters (array), fits (list), bic (float),
+        rss (float), iterations (int), convergence (list of (iter, bic) tuples).
+        """
+        rng = np.random.default_rng(seed)
+        seg_ids, obs_per_seg = self._build_segment_index(df_log)
+        n_seg = len(seg_ids)
+
+        temporal_search = bool(self.temporal_search)
+        if temporal_search:
+            start_code = ("ols" if "ols" in self.temporal_candidates
+                          else self.temporal_candidates[0])
+        else:
+            start_code = self.temporal_model
+        codes = [start_code] * n_clusters
+
+        clusters = self._random_init(seg_ids, obs_per_seg, n_clusters, rng)
+        fits = self._fit_all_clusters(df_log, clusters, n_clusters, codes)
+        best_bic = (self._total_bic_cond(fits) if temporal_search
+                    else self._total_bic(fits))
+
+        best_clusters = clusters.copy()
+        best_fits = [f.copy() if f else None for f in fits]
+        best_codes = list(codes)
+        convergence = [(0, best_bic)]
+        temp = self.temp_init
+        iteration = 0
+
+        while temp > 1e-15 and iteration < max_iterations:
+            for _ in range(self.n_neighbors):
+                nbr_c = self._perturb_clusters(clusters, seg_ids, obs_per_seg,
+                                               n_clusters, rng)
+                nbr_codes = (self._perturb_temporal_codes(codes, rng)
+                             if temporal_search else codes)
+                nbr_fits = self._fit_all_clusters(df_log, nbr_c, n_clusters,
+                                                  nbr_codes)
+                if any(f is None for f in nbr_fits):
+                    continue
+                nbr_bic = (self._total_bic_cond(nbr_fits) if temporal_search
+                           else self._total_bic(nbr_fits))
+                diff = nbr_bic - best_bic
+                if diff < 0 or rng.random() < exp(-abs(diff / self.boltzmann) / max(temp, 1e-30)):
+                    clusters = nbr_c
+                    fits = nbr_fits
+                    codes = list(nbr_codes)
+                    if nbr_bic < best_bic:
+                        best_bic = nbr_bic
+                        best_clusters = nbr_c.copy()
+                        best_fits = [f.copy() if f else None for f in nbr_fits]
+                        best_codes = list(nbr_codes)
+
+            temp *= self.cooling_rate
+            iteration += 1
+            convergence.append((iteration, best_bic))
+            if verbose and iteration % 10 == 0:
+                print(f"    SA iter {iteration:4d} | T={temp:.2e} | BIC={best_bic:.2f}")
+
+        total_rss = sum(f["rss"] for f in best_fits if f is not None)
+        return {
+            "clusters": best_clusters,
+            "fits": best_fits,
+            "bic": best_bic,
+            "rss": total_rss,
+            "iterations": iteration,
+            "convergence": convergence,
+            "n_clusters": n_clusters,
+            "temporal_search": temporal_search,
+            "temporal_models": list(best_codes),
+        }
+
+    def fit_consensus(
+        self,
+        df_log: pd.DataFrame,
+        n_clusters: int,
+        n_seeds: int = 10,
+        seed: int = 0,
+        max_iterations: int = 1000,
+        verbose: bool = False,
+    ) -> dict:
+        """Multi-start consensus: run the SA from several seeds and return
+        the medoid model (highest mean pairwise ARI to the other runs) plus
+        stability diagnostics.
+
+        A high ``mean_pairwise_ari`` means the recovered partition is not an
+        arbitrary SA optimum. ``temporal_code_modes`` reports the modal
+        per-cluster error structure across restarts (labels aligned to the
+        medoid by optimal matching), which is the temporal-layer analogue of
+        partition stability.
+
+        Returns dict: best (the medoid result), stability, runs, ari_matrix.
+        """
+        from collections import Counter
+
+        runs = []
+        for s in range(int(n_seeds)):
+            runs.append(self.fit(df_log, n_clusters, seed=int(seed) + s,
+                                 max_iterations=max_iterations, verbose=False))
+        labels = [np.asarray(r["clusters"], int) for r in runs]
+        n_runs = len(runs)
+        aris = np.eye(n_runs)
+        for i in range(n_runs):
+            for j in range(i + 1, n_runs):
+                a = _adjusted_rand(labels[i][1:], labels[j][1:])
+                aris[i, j] = aris[j, i] = a
+        tri = np.triu_indices(n_runs, 1)
+        mean_ari = aris.mean(axis=1)
+        med = int(np.argmax(mean_ari))
+
+        counts = [Counter() for _ in range(n_clusters)]
+        for r in range(n_runs):
+            codes = runs[r].get("temporal_models")
+            if not codes:
+                continue
+            mapping = _label_map(labels[med], labels[r], n_clusters)
+            for other_lab, ref_lab in mapping.items():
+                counts[ref_lab - 1][str(codes[other_lab - 1])] += 1
+
+        stability = {
+            "n_seeds": n_runs,
+            "medoid_run": med,
+            "mean_pairwise_ari": float(np.mean(aris[tri])) if n_runs > 1 else 1.0,
+            "min_pairwise_ari": float(np.min(aris[tri])) if n_runs > 1 else 1.0,
+            "mean_ari_per_run": [float(v) for v in mean_ari],
+            "temporal_code_modes": [dict(c) for c in counts],
+        }
+        if verbose:
+            print(f"    consensus: mean pairwise ARI="
+                  f"{stability['mean_pairwise_ari']:.3f} "
+                  f"(min {stability['min_pairwise_ari']:.3f}, "
+                  f"medoid run {med})")
+        return {"best": runs[med], "stability": stability, "runs": runs,
+                "ari_matrix": aris}
+
+    def search_k(
+        self,
+        df_log: pd.DataFrame,
+        k_min: int = 2,
+        k_max: int = 6,
+        seed: int = 42,
+        max_iterations: int = 500,
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Run `fit` for K = k_min, ..., k_max and select optimal K by BIC.
+
+        Returns dict: best_K (int), per_K (dict of K → result), bic_by_K (dict).
+        """
+        per_K = {}
+        bic_by_K = {}
+        for k in range(k_min, k_max + 1):
+            if verbose:
+                print(f"\n  K = {k}")
+            result = self.fit(df_log, k, seed=seed + k,
+                              max_iterations=max_iterations, verbose=verbose)
+            per_K[k] = result
+            bic_by_K[k] = result["bic"]
+
+        best_K = min(bic_by_K, key=bic_by_K.get)
+        return {"best_K": best_K, "per_K": per_K, "bic_by_K": bic_by_K,
+                "best_result": per_K[best_K]}
+
+    def predict(
+        self,
+        df_orig: pd.DataFrame,
+        fits: list[dict],
+        clusters: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Predict ln(PSI) for each row using cluster models.
+
+        Parameters
+        ----------
+        df_orig : DataFrame
+            Original (untransformed) data. Log transform is applied inside.
+        fits : list[dict]
+            Per-cluster model fits from `fit`.
+        clusters : ndarray
+            Cluster assignment array, indexed by segment_id.
+
+        Returns
+        -------
+        ndarray of predicted ln(PSI) values (NaN for unassigned observations).
+        """
+        est = np.full(len(df_orig), np.nan)
+        for i, row in enumerate(df_orig.itertuples(index=False)):
+            sid = int(getattr(row, self.segment_col))
+            if sid >= len(clusters) or clusters[sid] == 0:
+                continue
+            cid = clusters[sid]
+            fit = fits[cid - 1]
+            if fit is None:
+                continue
+            coeffs = fit["coeff_dict"]
+            val = coeffs.get("Intercept", 0.0)
+            for vname in self.variable_names:
+                raw = float(getattr(row, vname, 0.0))
+                if vname in self.categorical_vars:
+                    val += coeffs.get(f"{vname}_{int(raw)}", 0.0)
+                else:
+                    beta = coeffs.get(vname, 0.0)
+                    if beta != 0.0 and raw > 0.0:
+                        val += beta * log(raw)
+            est[i] = val
+        return est
+
+    def predict_psi(
+        self,
+        df_orig: pd.DataFrame,
+        fits: list[dict],
+        clusters: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Predict original-scale PSI (not ln(PSI)) for each row.
+
+        Parameters
+        ----------
+        df_orig : DataFrame
+            Original (untransformed) data.
+        fits : list[dict]
+            Per-cluster model fits from `fit`.
+        clusters : ndarray
+            Cluster assignment array, indexed by segment_id.
+
+        Returns
+        -------
+        ndarray of predicted PSI values (NaN for unassigned observations).
+        """
+        log_pred = self.predict(df_orig, fits, clusters)
+        return np.exp(log_pred)
+
+    def forecast(
+        self,
+        df_orig: pd.DataFrame,
+        fits: list[dict],
+        clusters: np.ndarray,
+        future_years: int,
+        age_col: str = "age",
+        annual_traffic_growth: float = 0.0,
+    ) -> pd.DataFrame:
+        """
+        Project pavement deterioration into future years.
+
+        Increments `age_col` by 1..future_years, updates AADT via growth rate,
+        and re-predicts PSI at each horizon. Assumes all other covariates stay
+        constant.
+
+        Parameters
+        ----------
+        df_orig : DataFrame
+            Original (untransformed) data, with one row per segment (snapshot).
+        fits : list[dict]
+            Per-cluster model fits from `fit`.
+        clusters : ndarray
+            Cluster assignment array, indexed by segment_id.
+        future_years : int
+            Number of years to project forward.
+        age_col : str
+            Column name for pavement age (will be incremented).
+        annual_traffic_growth : float
+            Fractional annual AADT growth (e.g. 0.02 = 2% per year).
+
+        Returns
+        -------
+        DataFrame with columns: segment_id, year, PSI_pred, cluster.
+        """
+        seg_ids = np.unique(df_orig[self.segment_col].values)
+        rows = []
+        for t in range(future_years + 1):
+            df_future = df_orig.copy()
+            if age_col in df_future.columns:
+                df_future[age_col] = df_future[age_col].values + t
+            if annual_traffic_growth > 0:
+                for tc in ["aadt", "AADT", "traffic", "traffic_volume"]:
+                    if tc in df_future.columns:
+                        df_future[tc] = df_future[tc].values * ((1 + annual_traffic_growth) ** t)
+            psi = self.predict_psi(df_future, fits, clusters)
+            for sid, p_val in zip(df_future[self.segment_col], psi):
+                rows.append({"segment_id": int(sid), "year": int(t), "PSI_pred": p_val})
+        return pd.DataFrame(rows)
+
+    def forecast_to_threshold(
+        self,
+        df_orig: pd.DataFrame,
+        fits: list[dict],
+        clusters: np.ndarray,
+        psi_threshold: float = 2.0,
+        max_years: int = 50,
+        age_col: str = "age",
+        annual_traffic_growth: float = 0.0,
+    ) -> pd.DataFrame:
+        """
+        Estimate remaining life until each segment reaches a PSI threshold.
+
+        Projects forward year-by-year until each segment drops below
+        `psi_threshold` (or `max_years` is reached).
+
+        Returns
+        -------
+        DataFrame with columns: segment_id, years_to_threshold, PSI_at_threshold.
+        """
+        seg_ids = np.unique(df_orig[self.segment_col].values)
+        remaining = {int(s): -1 for s in seg_ids}
+        psi_at_end = {int(s): np.nan for s in seg_ids}
+
+        for t in range(max_years + 1):
+            df_future = df_orig.copy()
+            if age_col in df_future.columns:
+                df_future[age_col] = df_future[age_col].values + t
+            if annual_traffic_growth > 0:
+                for tc in ["aadt", "AADT", "traffic", "traffic_volume"]:
+                    if tc in df_future.columns:
+                        df_future[tc] = df_future[tc].values * ((1 + annual_traffic_growth) ** t)
+            psi = self.predict_psi(df_future, fits, clusters)
+            for sid, p_val in zip(df_future[self.segment_col], psi):
+                sid_i = int(sid)
+                if remaining[sid_i] == -1 and np.isfinite(p_val) and p_val <= psi_threshold:
+                    remaining[sid_i] = t
+                    psi_at_end[sid_i] = float(p_val)
+
+        rows = [{"segment_id": sid, "years_to_threshold": remaining[sid],
+                   "PSI_at_threshold": psi_at_end[sid]} for sid in seg_ids]
+        result = pd.DataFrame(rows)
+        result.loc[result["years_to_threshold"] == -1, "years_to_threshold"] = max_years
+        return result
+
+    # ----------------------------------------------------------
+    # Private helpers
+    # ----------------------------------------------------------
+
+    def _build_segment_index(self, df: pd.DataFrame):
+        seg_ids = df[self.segment_col].unique()
+        obs_per_seg = {int(s): int((df[self.segment_col] == s).sum()) for s in seg_ids}
+        return [int(s) for s in seg_ids], obs_per_seg
+
+    def _random_init(self, seg_ids, obs_per_seg, n_cl, rng):
+        max_id = max(seg_ids) + 1
+        clusters = np.zeros(max_id, dtype=int)
+        for _ in range(100):
+            for s in seg_ids:
+                clusters[s] = int(rng.integers(1, n_cl + 1))
+            if self._valid(clusters, seg_ids, obs_per_seg, n_cl):
+                return clusters
+        # Fallback: round-robin
+        for i, s in enumerate(seg_ids):
+            clusters[s] = (i % n_cl) + 1
+        return clusters
+
+    def _valid(self, clusters, seg_ids, obs_per_seg, n_cl):
+        for c in range(1, n_cl + 1):
+            total = sum(obs_per_seg[s] for s in seg_ids if clusters[s] == c)
+            if total < self.min_observations:
+                return False
+        return True
+
+    def _perturb_clusters(self, clusters, seg_ids, obs_per_seg, n_cl, rng):
+        for _ in range(50):
+            new_c = clusters.copy()
+            picks = rng.choice(seg_ids, size=min(self.n_changes, len(seg_ids)),
+                               replace=False)
+            for s in picks:
+                old = new_c[s]
+                if n_cl > 1:
+                    cand = int(rng.integers(1, n_cl + 1))
+                    while cand == old:
+                        cand = int(rng.integers(1, n_cl + 1))
+                    new_c[s] = cand
+            if self._valid(new_c, seg_ids, obs_per_seg, n_cl):
+                return new_c
+        return clusters.copy()
+
+    def _fit_cluster(self, df_log: pd.DataFrame, cid: int, clusters: np.ndarray,
+                     temporal_model: Optional[str] = None):
+        model = str(temporal_model or self.temporal_model)
+        segs = set(np.where(clusters == cid)[0])
+        dfc = df_log[df_log[self.segment_col].isin(segs)]
+        if len(dfc) < self.min_observations:
+            return None
+        if model == "ols":
+            mf = fit_cluster_ols(dfc, self.psi_col, self.variable_names,
+                                 self.categorical_vars,
+                                 self.level_of_significance, self.max_vif)
+        elif model == "ar1":
+            mf = fit_cluster_ar1(dfc, self.psi_col, self.variable_names,
+                                 self.categorical_vars, self.segment_col)
+        elif model == "ar2":
+            mf = fit_cluster_ar2(dfc, self.psi_col, self.variable_names,
+                                 self.categorical_vars, self.segment_col)
+        elif model == "random_walk":
+            mf = fit_cluster_random_walk(dfc, self.psi_col, self.variable_names,
+                                         self.categorical_vars, self.segment_col)
+        else:
+            mf = fit_cluster_nur(dfc, self.psi_col, self.variable_names,
+                                 self.categorical_vars, self.segment_col)
+        if mf is not None:
+            rss_c, n_c = _conditional_rss(mf, model, dfc, self.segment_col)
+            k_c = int(mf.get("n_params_total", len(mf.get("coefficients", []))))
+            mf["temporal_model"] = model
+            mf["rss_cond"] = float(rss_c)
+            mf["n_cond"] = int(n_c)
+            mf["bic_cond"] = (_bic(n_c, k_c, rss_c)
+                              if np.isfinite(rss_c) and n_c > k_c else np.inf)
+        return mf
+
+    def _fit_all_clusters(self, df_log, clusters, n_cl, temporal_models=None):
+        codes = (list(temporal_models) if temporal_models is not None
+                 else [self.temporal_model] * n_cl)
+        if self.n_jobs == 1 or n_cl < 2:
+            return [self._fit_cluster(df_log, ci, clusters, codes[ci - 1])
+                    for ci in range(1, n_cl + 1)]
+        # Compile the Numba kernels once in the main thread so the AR(1)/NUR
+        # fitters do not trigger concurrent first-call compilation.
+        if any(c in ("ar1", "nur") for c in codes):
+            warm_up_numba_kernels()
+        try:
+            from joblib import Parallel, delayed
+            return Parallel(n_jobs=self.n_jobs, prefer="threads")(
+                delayed(self._fit_cluster)(df_log, ci, clusters, codes[ci - 1])
+                for ci in range(1, n_cl + 1)
+            )
+        except ImportError:
+            return [self._fit_cluster(df_log, ci, clusters, codes[ci - 1])
+                    for ci in range(1, n_cl + 1)]
+
+    def _total_bic(self, fits):
+        total = 0.0
+        for f in fits:
+            if f is None:
+                return np.inf
+            total += f.get("bic", np.inf)
+        return total
+
+    def _total_bic_cond(self, fits):
+        """Joint BIC on the conditional sample (t >= 2, level scale).
+
+        Uses rss_cond / n_cond tagged by ``_fit_cluster`` so clusterwise
+        error structures are scored like-for-like inside the SA loop.
+        """
+        total_rss, total_n, total_k = 0.0, 0, 0
+        for f in fits:
+            if f is None:
+                return np.inf
+            rss_c = float(f.get("rss_cond", np.nan))
+            n_c = int(f.get("n_cond", 0))
+            k_c = int(f.get("n_params_total", len(f.get("coefficients", []))))
+            if not np.isfinite(rss_c) or n_c <= k_c:
+                return np.inf
+            total_rss += rss_c
+            total_n += n_c
+            total_k += k_c
+        if total_n <= 0:
+            return np.inf
+        total_k += max(len(fits) - 1, 0)
+        return _bic(total_n, total_k, total_rss)
+
+    def _perturb_temporal_codes(self, codes, rng):
+        new_codes = list(codes)
+        if rng.random() < self.temporal_flip_prob:
+            k = int(rng.integers(0, len(new_codes)))
+            alts = [c for c in self.temporal_candidates if c != new_codes[k]]
+            if alts:
+                new_codes[k] = alts[int(rng.integers(0, len(alts)))]
+        return new_codes
+
+
+# ============================================================
+# PavementTemporalComparison — OLS / AR1 / RW / NUR comparison
+# ============================================================
+
+class PavementTemporalComparison:
+    """
+    Compare temporal error models within a fixed CLR cluster structure.
+
+    Models: OLS (i.i.d.), AR(1), AR(2), Random Walk with drift,
+    Near-Unit-Root.
+
+    Usage
+    -----
+    >>> cmp = PavementTemporalComparison(variable_names, categorical_vars)
+    >>> df_results = cmp.compare(df_log, clusters, n_clusters=4)
+    >>> print(df_results[["model", "r2", "bic", "rho_ar1", "drift_rw", "rho_nur"]])
+    """
+
+    def __init__(
+        self,
+        variable_names: list[str],
+        categorical_vars: set[str],
+        psi_col: str = "psi",
+        segment_col: str = "sample_id",
+        n_jobs: int = 1,
+    ):
+        self.variable_names = list(variable_names)
+        self.categorical_vars = set(categorical_vars)
+        self.psi_col = psi_col
+        self.segment_col = segment_col
+        self.n_jobs = n_jobs
+
+    def _compare_cluster(
+        self,
+        df_log: pd.DataFrame,
+        ci: int,
+        clusters: np.ndarray,
+    ) -> list:
+        """Fit all temporal models for one cluster (thread-safe)."""
+        segs = set(np.where(clusters == ci)[0])
+        dfc = df_log[df_log[self.segment_col].isin(segs)]
+        n_obs = len(dfc)
+
+        models = {
+            "OLS": fit_cluster_ols(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars),
+            "AR(1)": fit_cluster_ar1(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars, self.segment_col),
+            "AR(2)": fit_cluster_ar2(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars, self.segment_col),
+            "Random_Walk": fit_cluster_random_walk(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars, self.segment_col),
+            "Near_Unit_Root": fit_cluster_nur(
+                dfc, self.psi_col, self.variable_names,
+                self.categorical_vars, self.segment_col),
+        }
+
+        rows = []
+        for mname, mf in models.items():
+            row = {"cluster": ci, "n_obs": n_obs, "model": mname}
+            if mf is None:
+                for k in ["r2", "adj_r2", "bic", "rho_ar1", "rho_ar2_1",
+                          "rho_ar2_2", "drift_rw", "rho_nur", "sigma"]:
+                    row[k] = np.nan
+            else:
+                row["r2"] = mf["r2"]
+                row["adj_r2"] = mf["adj_r2"]
+                row["bic"] = mf.get("bic", np.nan)
+                row["rho_ar1"] = mf.get("rho_ar1", np.nan)
+                row["rho_ar2_1"] = mf.get("rho_ar2_1", np.nan)
+                row["rho_ar2_2"] = mf.get("rho_ar2_2", np.nan)
+                row["drift_rw"] = mf.get("drift_rw", np.nan)
+                row["rho_nur"] = mf.get("rho_nur", np.nan)
+                row["sigma"] = mf.get("sigma_ar1",
+                              mf.get("sigma_rw",
+                              mf.get("sigma_nur", np.nan)))
+            rows.append(row)
+        return rows
+
+    def compare(
+        self,
+        df_log: pd.DataFrame,
+        clusters: np.ndarray,
+        n_clusters: int,
+    ) -> pd.DataFrame:
+        """
+        Fit all temporal models for each cluster and return a comparison DataFrame.
+
+        Parameters
+        ----------
+        df_log : DataFrame
+            Log-transformed pavement data.
+        clusters : ndarray
+            Cluster assignment array (from PavementCLROptimizer.fit).
+        n_clusters : int
+            Number of clusters K.
+
+        Returns
+        -------
+        DataFrame with columns: cluster, n_obs, model, r2, adj_r2, bic,
+        rho_ar1, rho_ar2_1, rho_ar2_2, drift_rw, rho_nur, sigma.
+        """
+        cluster_ids = list(range(1, n_clusters + 1))
+        if self.n_jobs == 1 or n_clusters < 2:
+            row_groups = [self._compare_cluster(df_log, ci, clusters)
+                          for ci in cluster_ids]
+        else:
+            # Compile the Numba kernels once in the main thread before the
+            # parallel section (NUR/AR(1) fits call them from every worker).
+            warm_up_numba_kernels()
+            try:
+                from joblib import Parallel, delayed
+                row_groups = Parallel(n_jobs=self.n_jobs, prefer="threads")(
+                    delayed(self._compare_cluster)(df_log, ci, clusters)
+                    for ci in cluster_ids
+                )
+            except ImportError:
+                row_groups = [self._compare_cluster(df_log, ci, clusters)
+                              for ci in cluster_ids]
+
+        rows = [row for group in row_groups for row in group]
+        return pd.DataFrame(rows)
+
+    def summary(self, df_results: pd.DataFrame) -> pd.DataFrame:
+        """Aggregate comparison results by model (mean across clusters)."""
+        numeric_cols = ["r2", "adj_r2", "bic", "rho_ar1", "rho_ar2_1",
+                "rho_ar2_2", "drift_rw", "rho_nur", "sigma"]
+        return df_results.groupby("model")[numeric_cols].mean().reset_index()

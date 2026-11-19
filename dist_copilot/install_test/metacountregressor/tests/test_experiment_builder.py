@@ -1,0 +1,616 @@
+import numpy as np
+import pandas as pd
+import pytest
+from pathlib import Path
+
+from cmf_package import CMFExperimentBuilder
+from experiment_package import ExperimentBuilder
+from family_search import (
+    CMFFamilySearchProblem,
+    CMFMetaheuristicObjective,
+    DurationSearchProblem,
+    LinearSearchProblem,
+    UnifiedCMFSearchProblem,
+)
+import json
+
+from output_config import (
+    SearchOutputConfig,
+    checkpoint_path,
+    save_search_checkpoint,
+    save_search_result,
+)
+from sample_data import (
+    load_example16_3_raw_data,
+    load_example_crash_data,
+    load_example_platform_gap_duration_data,
+    load_example_platform_speed_data,
+)
+
+
+def make_panel_df():
+    # 12 observations whose continuous regressors are seeded draws, so no
+    # pair of columns is anywhere near collinear.  The original 4-row
+    # fixture used arithmetic sequences for every continuous column, which
+    # are perfectly collinear once mean-centred, so the evaluator's
+    # identification screen banned variables the tests then tried to use.
+    n = 12
+    rng = np.random.default_rng(20240517)
+
+    def _draw(loc, scale):
+        return loc + scale * rng.normal(size=n)
+
+    return pd.DataFrame(
+        {
+            "ID": np.repeat(np.arange(1, 7), 2),
+            "Y": [0, 1, 2, 1, 3, 0, 1, 2, 4, 1, 2, 3],
+            "OFFSET": np.zeros(n),
+            "FC": [1, 1, 2, 2, 3, 3, 1, 1, 2, 2, 3, 3],
+            "x_fixed": np.round(_draw(0.5, 0.2), 3),
+            "x_rnd_ind": np.round(_draw(1.2, 0.25), 3),
+            "x_rnd_cor": np.round(_draw(2.3, 0.3), 3),
+            "x_rnd_cor_2": np.round(_draw(0.7, 0.35), 3),
+            "x_grouped": [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
+            "x_hetero": np.round(_draw(4.5, 0.6), 3),
+            "x_zi": [0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1],
+            "x_member": [1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0],
+            "x_member_fixed": np.round(_draw(0.55, 0.15), 3),
+            "AADT": [9000, 10500, 12000, 13500, 15000, 16500,
+                     9500, 11000, 12500, 14000, 15500, 17000],
+            "cmf_a": [1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 1],
+            "cmf_b": [0.1, 0.25, 0.35, 0.5, 0.6, 0.75,
+                      0.15, 0.3, 0.45, 0.55, 0.7, 0.8],
+        }
+    )
+
+
+def test_build_spec_covers_heterogeneity_roles():
+    df = make_panel_df()
+    builder = ExperimentBuilder(
+        df=df,
+        id_col="ID",
+        y_col="Y",
+        offset_col="OFFSET",
+        group_id_col="FC",
+    )
+    variables = [
+        "x_fixed",
+        "x_rnd_ind",
+        "x_rnd_cor",
+        "x_rnd_cor_2",
+        "x_grouped",
+        "x_hetero",
+        "x_zi",
+        "x_member",
+        "x_member_fixed",
+    ]
+    evaluator = builder.build_evaluator(
+        variables=variables,
+        mode="single",
+        max_latent_classes=3,
+        R=8,
+        default_roles=[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    )
+
+    decision = np.array(
+        [
+            1, 2, 3, 3, 4, 5, 6, 7, 8,
+            0, 0, 1, 3, 2, 0, 0, 0, 0,
+            1, 1,
+        ]
+    )
+    spec = evaluator.build_spec(decision)
+
+    assert spec["fixed_terms"] == ["x_fixed", "x_member_fixed"]
+    assert spec["rdm_terms"] == ["x_rnd_ind:normal"]
+    assert [term.split(":")[0] for term in spec["rdm_cor_terms"]] == [
+        "x_rnd_cor",
+        "x_rnd_cor_2",
+    ]
+    assert spec["grouped_terms"][0].split(":")[0] == "x_grouped"
+    assert spec["hetro_in_means"] == ["x_hetero"]
+    assert spec["zi_terms"] == ["x_zi"]
+    assert spec["membership_terms"] == ["x_member", "x_member_fixed"]
+    assert spec["dispersion"] == 1
+    assert spec["latent_classes"] == 2
+
+
+def test_single_class_builder_strips_membership_roles():
+    """Roles 7/8 are latent-class constructs and are not offered at C == 1.
+
+    With ``max_latent_classes == 1`` there is no membership equation, so
+    ``build_evaluator`` strips codes 7 and 8 from every variable's allowed
+    role set (see the "Single-class searches must not offer membership
+    roles" block in ``experiment_package.py``).  Genes that encode 7/8 are
+    therefore rejected by ``build_spec`` rather than silently collapsed.
+    """
+    df = make_panel_df()
+    builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
+    evaluator = builder.build_evaluator(
+        variables=["x_member", "x_member_fixed"],
+        mode="single",
+        max_latent_classes=1,
+        R=8,
+        default_roles=[0, 1, 7, 8],
+    )
+
+    assert evaluator.allowed_roles["x_member"] == [0, 1]
+    assert evaluator.allowed_roles["x_member_fixed"] == [0, 1]
+
+    decision = np.array([7, 8, 0, 0, 0, 0])
+    assert evaluator.build_spec(decision) is None
+
+
+def test_membership_roles_collapse_when_single_class():
+    """``build_spec`` still decodes 7/8 degenerately at C == 1.
+
+    Role 7 is membership-only, so at C == 1 it drops the variable entirely;
+    role 8 is membership + outcome, so it falls back to a plain fixed term.
+    ``build_evaluator`` strips both codes for single-class searches, so this
+    restores them to exercise the decode path itself.
+    """
+    df = make_panel_df()
+    builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
+    evaluator = builder.build_evaluator(
+        variables=["x_member", "x_member_fixed"],
+        mode="single",
+        max_latent_classes=1,
+        R=8,
+        default_roles=[0, 1, 7, 8],
+    )
+
+    for var in evaluator.allowed_roles:
+        evaluator.allowed_roles[var] = [0, 1, 7, 8]
+
+    decision = np.array([7, 8, 0, 0, 0, 0])
+    spec = evaluator.build_spec(decision)
+
+    assert spec is not None
+    assert spec["membership_terms"] == []
+    assert spec["fixed_terms"] == ["x_member_fixed"]
+    assert spec["latent_classes"] == 1
+
+
+def test_cmf_builder_bridges_to_general_latent_class_search():
+    df = make_panel_df()
+    builder = CMFExperimentBuilder(
+        df=df,
+        y_col="Y",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+    )
+
+    general_builder, evaluator = builder.build_latent_class_evaluator(
+        id_col="ID",
+        offset_col="OFFSET",
+        max_latent_classes=2,
+        R=8,
+        default_roles=[0, 1, 2, 7, 8],
+    )
+
+    assert isinstance(general_builder, ExperimentBuilder)
+    assert evaluator.max_latent_classes == 2
+    assert evaluator.vars == ["cmf_a", "AADT", "cmf_b"]
+
+
+def test_model_family_switches_return_specialized_search_problems():
+    df = make_panel_df()
+    builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
+
+    linear_problem = builder.build_evaluator(
+        model_family="linear",
+        variables=["x_fixed", "x_rnd_ind"],
+        objective_kwargs={"algorithm": "hs", "_max_time": 1},
+    )
+    duration_problem = builder.build_evaluator(
+        model_family="duration",
+        variables=["x_fixed", "x_rnd_ind"],
+        budget_col="AADT",
+    )
+    cmf_problem = builder.build_evaluator(
+        model_family="cmf",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+    )
+    legacy_cmf_problem = builder.build_evaluator(
+        model_family="cmf",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+        cmf_driver="ga",
+    )
+
+    assert isinstance(linear_problem, LinearSearchProblem)
+    assert linear_problem.family == "linear"
+    assert linear_problem.metadata["model"] == "gaussian"
+    assert isinstance(duration_problem, DurationSearchProblem)
+    assert duration_problem.family == "duration"
+    assert duration_problem.metadata["model"] == "lognormal"
+    assert isinstance(cmf_problem, UnifiedCMFSearchProblem)
+    assert cmf_problem.family == "cmf"
+    assert isinstance(legacy_cmf_problem, CMFFamilySearchProblem)
+    assert legacy_cmf_problem.family == "cmf"
+
+
+def test_cmf_metaheuristic_objective_decodes_solution():
+    df = make_panel_df().rename(columns={"Y": "FREQ"})
+    objective = CMFMetaheuristicObjective(
+        df=df,
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+        R=8,
+    )
+
+    vector = np.array([1, 1, 1, 0, 1, 0], dtype=int)
+    decoded = objective.decode_solution(vector)
+
+    assert decoded["selected_baseline"] == ["cmf_a"]
+    assert decoded["selected_local"] == ["cmf_b"]
+    assert decoded["use_halton"] is True
+    assert decoded["model"] == "poisson"
+    assert decoded["rand_baseline"] == (True,)
+    assert decoded["rand_local"] == (False,)
+
+
+def test_cmf_default_driver_uses_main_jax_count_architecture():
+    df = make_panel_df()
+    builder = ExperimentBuilder(
+        df=df,
+        id_col="ID",
+        y_col="Y",
+        offset_col="OFFSET",
+        group_id_col="FC",
+    )
+
+    cmf_problem = builder.build_evaluator(
+        model_family="cmf",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+        variables=["x_hetero", "x_zi", "x_member"],
+        max_latent_classes=2,
+        R=8,
+    )
+
+    assert isinstance(cmf_problem, UnifiedCMFSearchProblem)
+    assert cmf_problem.metadata["driver"] == "jax_count"
+    assert cmf_problem.metadata["log_aadt_col"] == "__cmf_log_aadt"
+    assert "__cmf_local__cmf_b" in cmf_problem.metadata["interaction_cols"]
+    assert "__cmf_log_aadt" in cmf_problem.evaluator.vars
+    assert "__cmf_local__cmf_b" in cmf_problem.evaluator.vars
+    assert "x_hetero" in cmf_problem.evaluator.vars
+    assert "x_zi" in cmf_problem.evaluator.vars
+    assert "x_member" in cmf_problem.evaluator.vars
+
+
+def test_manual_spec_helper_preserves_roles_and_model_fit():
+    df = make_panel_df()
+    builder = ExperimentBuilder(
+        df=df,
+        id_col="ID",
+        y_col="Y",
+        offset_col="OFFSET",
+        group_id_col="FC",
+    )
+
+    manual_spec = builder.make_manual_spec(
+        fixed_terms=["x_fixed"],
+        rdm_terms=["x_rnd_ind:normal"],
+        hetro_in_means=["x_hetero"],
+        dispersion=1,
+        latent_classes=1,
+    )
+    fit = builder.fit_manual_model(manual_spec, model="nb", R=8)
+
+    assert fit["manual_spec"]["fixed_terms"] == ["x_fixed"]
+    assert fit["spec"].model == "nb"
+    assert fit["spec"].latent_classes == 1
+    assert fit["predictions"].shape[0] == df["ID"].nunique()
+
+
+def test_family_builders_raise_on_unexpected_kwargs():
+    df = make_panel_df()
+    builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
+
+    try:
+        builder.build_evaluator(
+            model_family="duration",
+            variables=["x_fixed"],
+            budget_col="AADT",
+            not_a_real_arg=2,
+        )
+    except ValueError as exc:
+        assert "Unexpected arguments for duration search" in str(exc)
+    else:
+        raise AssertionError("duration search should reject unexpected kwargs")
+
+
+def test_cmf_manual_helpers_build_transformed_spec_and_fit():
+    df = make_panel_df()
+    cmf_builder = CMFExperimentBuilder(
+        df=df,
+        y_col="Y",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+    )
+
+    manual_spec = cmf_builder.make_manual_cmf_spec(
+        baseline_fixed=["cmf_a"],
+        local_fixed=["cmf_b"],
+        zi_terms=["x_zi"],
+        membership_terms=["x_member"],
+        dispersion=1,
+        latent_classes=2,
+    )
+    fit = cmf_builder.fit_manual_cmf_model(
+        id_col="ID",
+        offset_col="OFFSET",
+        group_id_col="FC",
+        manual_spec=manual_spec,
+        model="nb",
+        R=8,
+    )
+
+    assert "__cmf_log_aadt" in manual_spec["fixed_terms"]
+    assert "__cmf_local__cmf_b" in manual_spec["fixed_terms"]
+    assert fit["spec"].model == "nb"
+    assert fit["spec"].latent_classes == 2
+
+
+def test_cmf_manual_helpers_support_random_parameters():
+    df = make_panel_df()
+    cmf_builder = CMFExperimentBuilder(
+        df=df,
+        y_col="Y",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+    )
+
+    manual_spec = cmf_builder.make_manual_cmf_spec(
+        baseline_random=["cmf_a"],
+        local_random=["cmf_b"],
+        dispersion=1,
+    )
+    assert manual_spec["fixed_terms"] == ["__cmf_log_aadt"]
+    assert manual_spec["rdm_terms"] == [
+        "cmf_a:normal",
+        "__cmf_local__cmf_b:normal",
+    ]
+
+    fit = cmf_builder.fit_manual_cmf_model(
+        id_col="ID",
+        manual_spec=manual_spec,
+        offset_col="OFFSET",
+        model="nb",
+        R=4,
+    )
+    assert fit["spec"].random_ind_names == (
+        "cmf_a",
+        "__cmf_local__cmf_b",
+    )
+    assert fit["predictions"].shape[0] == df["ID"].nunique()
+
+    pytest.importorskip("pymc")
+    compiled = cmf_builder.build_bayesian_model(
+        {"family": "cmf", "model_spec": manual_spec},
+        id_col="ID",
+    )
+    assert compiled.spec["rdm_terms"] == manual_spec["rdm_terms"]
+    assert "random_mean" in compiled.model.named_vars
+    assert "random_sd" in compiled.model.named_vars
+    assert any(
+        name.startswith("random_ind_") for name in compiled.model.named_vars
+    )
+
+
+def test_cmf_search_scores_random_parameter_candidate():
+    objective = CMFMetaheuristicObjective(
+        make_panel_df(),
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+        R=4,
+    )
+    vector = np.array([1, 1, 1, 1, 1, 1], dtype=int)
+
+    decoded = objective.decode_solution(vector)
+    score = objective.get_fitness(vector)
+
+    assert decoded["rand_baseline"] == (True,)
+    assert decoded["rand_local"] == (True,)
+    assert score["rand_baseline"] == (True,)
+    assert score["rand_local"] == (True,)
+    assert np.isfinite(score["bic"])
+
+
+def test_cmf_jax_search_exposes_random_parameter_roles():
+    cmf_builder = CMFExperimentBuilder(
+        df=make_panel_df(),
+        y_col="Y",
+        aadt_col="AADT",
+        baseline_vars=["cmf_a"],
+        local_vars=["cmf_b"],
+    )
+    _, evaluator, _ = cmf_builder.build_jax_count_evaluator(
+        id_col="ID",
+        R=4,
+    )
+
+    assert 2 in evaluator.allowed_roles["cmf_a"]
+    assert 3 in evaluator.allowed_roles["cmf_a"]
+    assert 2 in evaluator.allowed_roles["__cmf_local__cmf_b"]
+    assert 3 in evaluator.allowed_roles["__cmf_local__cmf_b"]
+
+    roles = np.zeros(len(evaluator.vars), dtype=int)
+    roles[evaluator.vars.index("cmf_a")] = 2
+    roles[evaluator.vars.index("__cmf_log_aadt")] = 1
+    roles[evaluator.vars.index("__cmf_local__cmf_b")] = 2
+    decision = np.concatenate([
+        roles,
+        np.zeros(len(evaluator.vars), dtype=int),
+        np.array([1]),
+    ])
+    spec = evaluator.build_spec(decision)
+    assert spec["rdm_terms"] == [
+        "cmf_a:normal",
+        "__cmf_local__cmf_b:normal",
+    ]
+
+
+def test_sample_data_loader_contains_readme_columns():
+    df = load_example_crash_data()
+    required = {
+        "ID", "FREQ", "OFFSET", "FC", "FC_ENCODED", "FC_LABEL", "AADT", "LENGTH",
+        "INCLANES", "DECLANES", "WIDTH", "MIMEDSH", "MXMEDSH", "SPEED", "URB",
+        "SINGLE", "DOUBLE", "TRAIN", "PEAKHR", "GRADEBR", "MIGRADE", "MXGRADE",
+        "MXGRDIFF", "TANGENT", "CURVES", "MINRAD", "ACCESS", "MEDWIDTH",
+        "FRICTION", "ADTLANE", "SLOPE", "INTECHAG", "AVEPRE", "AVESNOW",
+    }
+    assert required.issubset(df.columns)
+
+
+def test_example16_3_raw_loader_preserves_source_columns():
+    df = load_example16_3_raw_data()
+    assert list(df.columns) == [
+        "ID", "FREQ", "LENGTH", "INCLANES", "DECLANES", "WIDTH", "MIMEDSH", "MXMEDSH",
+        "SPEED", "URB", "FC", "AADT", "SINGLE", "DOUBLE", "TRAIN", "PEAKHR", "GRADEBR",
+        "MIGRADE", "MXGRADE", "MXGRDIFF", "TANGENT", "CURVES", "MINRAD", "ACCESS",
+        "MEDWIDTH", "FRICTION", "ADTLANE", "SLOPE", "INTECHAG", "AVEPRE", "AVESNOW",
+    ], list(df.columns)
+
+
+def test_platform_example_loaders_expose_requested_fields():
+    speed_df = load_example_platform_speed_data()
+    duration_df = load_example_platform_gap_duration_data()
+
+    assert {
+        "PLATFORM_ID",
+        "DIST_TO_PLATFORM",
+        "VEHICLE_SPEED",
+        "RELATIVE_SPEED",
+        "POSTED_SPEED",
+        "APPROACH_ACCEL",
+        "PLATFORM_TYPE",
+        "PLATFORM_HEIGHT",
+        "PLATFORM_WIDTH",
+    }.issubset(speed_df.columns)
+
+    assert {
+        "PLATFORM_ID",
+        "DURATION_UNTIL_NEXT_SPEEDING",
+        "PRECEDING_VEHICLE_SPEED",
+        "FOLLOWING_VEHICLE_SPEED",
+        "POSTED_SPEED",
+        "PLATFORM_HEIGHT",
+        "PLATFORM_WIDTH",
+        "APPROACH_VOLUME",
+    }.issubset(duration_df.columns)
+
+
+def test_output_config_saves_search_result():
+    output_dir = Path("test_results_output")
+    output_dir.mkdir(exist_ok=True)
+    config = SearchOutputConfig(output_dir=str(output_dir), experiment_name="unit_test", search_description="count search")
+    target = save_search_result({"best_score": 12.34, "family": "count"}, config, family="count", algorithm="sa")
+    assert target.exists()
+
+
+def test_master_draws_default_to_float32_and_grouped_cache_reused():
+    df = make_panel_df()
+    builder = ExperimentBuilder(
+        df=df, id_col="ID", y_col="Y", offset_col="OFFSET", group_id_col="FC")
+    evaluator = builder.build_evaluator(
+        variables=["x_fixed", "x_rnd_ind"],
+        mode="single",
+        max_latent_classes=1,
+        R=8,
+        default_roles=[0, 1, 2],
+    )
+    assert str(evaluator.master_halton_train.dtype) == "float32"
+    first = evaluator._grouped_master_draws(3)
+    second = evaluator._grouped_master_draws(3)
+    assert first is second
+    assert str(first.dtype) == "float32"
+    assert len(evaluator._grouped_draw_cache) == 1
+
+    evaluator64 = builder.build_evaluator(
+        variables=["x_fixed", "x_rnd_ind"],
+        mode="single",
+        max_latent_classes=1,
+        R=8,
+        default_roles=[0, 1, 2],
+        draw_dtype="float64",
+    )
+    assert str(evaluator64.master_halton_train.dtype) == "float64"
+
+
+def test_decode_distribution_accepts_float_codes():
+    from main_hpc import decode_distribution
+
+    assert decode_distribution(1.0, ["normal", "lognormal"]) == "lognormal"
+    assert decode_distribution(np.float64(3.0), ["a", "b", "c"]) == "a"
+
+
+def test_search_checkpoint_round_trip():
+    output_dir = Path("test_results_output")
+    output_dir.mkdir(exist_ok=True)
+    config = SearchOutputConfig(
+        output_dir=str(output_dir),
+        experiment_name="unit_test_ckpt",
+        checkpoint_every=5,
+    )
+    payload = {
+        "best_score": 1.5,
+        "best_decision": [1.0, 0.0, 2.0],
+        "gen": 10,
+        "variables": ["logexp", "in_event", "rel_hour"],
+    }
+    target = save_search_checkpoint(config, payload)
+
+    assert target.exists()
+    assert target == checkpoint_path(config)
+    body = json.loads(target.read_text(encoding="utf-8"))
+    assert body["checkpoint"]["best_score"] == 1.5
+    assert body["checkpoint"]["best_decision"] == [1.0, 0.0, 2.0]
+    assert not target.with_suffix(target.suffix + ".tmp").exists()
+
+
+def test_run_sa_checkpoint_callback_and_refit_flag(tmp_path):
+    df = make_panel_df()
+    builder = ExperimentBuilder(df=df, id_col="ID", y_col="Y", offset_col="OFFSET")
+    variables = ["x_fixed", "x_rnd_ind"]
+    evaluator = builder.build_evaluator(
+        variables=variables,
+        mode="single",
+        max_latent_classes=1,
+        R=8,
+        default_roles=[0, 1, 2],
+    )
+    config = SearchOutputConfig(
+        output_dir=str(tmp_path),
+        experiment_name="ckpt_run",
+        checkpoint_every=1,
+    )
+    result = builder.run(
+        evaluator,
+        algo="sa",
+        max_iter=2,
+        n_starts=1,
+        seed=3,
+        max_time=300.0,
+        refit=False,
+        warm_start_cache=False,
+        output_config=config,
+    )
+
+    assert "best_solution" in result
+    assert result["best_score"] == float(np.min(result["scores"]))
+    ckpt = checkpoint_path(config)
+    assert ckpt.exists()
+    body = json.loads(ckpt.read_text(encoding="utf-8"))
+    assert len(body["checkpoint"]["best_decision"]) == 2 * len(variables) + 1
+    assert body["checkpoint"]["variables"] == variables
+    assert body["checkpoint"]["max_iter"] == 2

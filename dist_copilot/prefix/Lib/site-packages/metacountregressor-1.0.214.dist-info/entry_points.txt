@@ -1,0 +1,2 @@
+[console_scripts]
+metacount-copilot = metacountregressor.copilot.cli:main
