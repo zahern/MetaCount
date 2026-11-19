@@ -187,7 +187,10 @@ class CMFMetaheuristicObjective:
             return self._cache[key]
 
         decoded = self.decode_solution(vec)
-        score = evaluate_model(
+        # GA_CMF_AADT_JAX.evaluate_model returns (bic, std_info); the search
+        # objective needs the scalar BIC and keeps the standard-error block
+        # for downstream reporting.
+        score, std_info = evaluate_model(
             vec,
             self.df.rename(columns={"Y": "FREQ"}) if "FREQ" not in self.df.columns and "Y" in self.df.columns else self.df,
             self.baseline_vars,
@@ -201,6 +204,7 @@ class CMFMetaheuristicObjective:
 
         result = {
             "bic": float(score),
+            "std_info": std_info,
             "layout": vec.tolist(),
             "fixed_fit": None,
             "rdm_fit": None,

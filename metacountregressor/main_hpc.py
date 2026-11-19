@@ -3818,10 +3818,14 @@ def print_summary(result, objective, data, spec, param_index, se = None, return_
         chol_rows = df[df["Parameter"].isin(chol_names)]
 
         idx = 0
+        # When PARTE shrinkage is applied the table column has been renamed
+        # from "Estimate" to "Estimate (PARTE)"; using the old name here
+        # raised KeyError: 'Estimate' from deep inside refit_and_print().
+        est_col = "Estimate (PARTE)" if parte_applied else "Estimate"
         for i in range(K):
             for j in range(i + 1):
                 row = chol_rows.iloc[idx]
-                L[i, j] = row["Estimate"]   # already transformed
+                L[i, j] = row[est_col]   # already transformed
                 idx += 1
 
         Sigma = L @ L.T
