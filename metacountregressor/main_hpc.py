@@ -4566,7 +4566,7 @@ class CountModel:
     '''
     def fit(
         self,
-        use_prefit=False,
+        use_prefit=True,
         use_continuous_de=False,
         de_maxiter=12,
         de_popsize=8,

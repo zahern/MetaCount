@@ -310,7 +310,7 @@ def _run_delphos(spec: ExperimentSpec, *, verbose: bool = False) -> Dict[str, An
         evaluator,
         space,
         max_steps=max(8, 2 * space.n_variables + 2),
-        reward_mode="linear",
+        reward_mode="bic",
         start_mode="mixed",
         seed=spec.seed,
     )

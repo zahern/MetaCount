@@ -221,8 +221,8 @@ class DelphosCountEnv:
         self.max_steps = int(max_steps or (2 * space.n_variables + 4))
         self.failure_penalty = float(failure_penalty)
         self.reward_mode = str(reward_mode)
-        if self.reward_mode not in ("tanh", "linear"):
-            raise ValueError("reward_mode must be 'tanh' or 'linear'")
+        if self.reward_mode not in ("tanh", "linear", "bic"):
+            raise ValueError("reward_mode must be 'tanh', 'linear' or 'bic'")
         self.start_mode = str(start_mode)
         if self.start_mode not in ("linear", "null", "mixed"):
             raise ValueError("start_mode must be 'linear', 'null' or 'mixed'")
@@ -431,6 +431,11 @@ class DelphosCountEnv:
             delta = 0.0
         if self.reward_mode == "linear":
             return float(np.clip(delta, -5.0, 5.0))
+        if self.reward_mode == "bic":
+            if math.isfinite(base.bic):
+                scale = max(100.0, 0.2 * abs(base.bic))
+                return float(np.clip((base.bic - bic) / scale, -5.0, 5.0))
+            return float(np.clip((base.bic - bic) / 1000.0, -5.0, 5.0))
         return float(np.tanh(delta))
 
     # ------------------------------------------------------------------

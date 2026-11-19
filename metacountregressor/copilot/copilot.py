@@ -443,6 +443,23 @@ class ExperimentCopilot:
     # ------------------------------------------------------------------
     # Questions
     # ------------------------------------------------------------------
+    def _offset_details(self) -> List[str]:
+        lines = []
+        for name in self.profile.offset_candidates:
+            col = self.profile.column(name)
+            if col is not None and col.min is not None:
+                lines.append(
+                    f"{name}: min={col.min:.3g}, max={col.max:.3g}, "
+                    f"mean={col.mean:.3g}"
+                )
+        names = set(self.profile.names)
+        if "EXPOSE" in names and "OFFSET" in names:
+            lines.append(
+                "EXPOSE is raw exposure; OFFSET may not be its log. "
+                "Use log(EXPOSE) unless you know OFFSET is already logged."
+            )
+        return lines
+
     def _variable_table(self, proposals: List[VariableDecision]) -> List[str]:
         lines = [
             "#   variable         kind      miss  uniq  proposal   reason"
@@ -506,6 +523,7 @@ class ExperimentCopilot:
                     "An expression is evaluated row-wise.",
                     "A positive, non-logged expression (exposure) is automatically wrapped in log(...) .",
                     "Allowed: + - * / ** and log, log1p, log10, sqrt, exp, abs, minimum, maximum, clip.",
+                    *self._offset_details(),
                 ],
                 hint=(
                     "Example: LENGTH*AADT*365/1e8 becomes "
