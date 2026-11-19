@@ -142,8 +142,10 @@ The turns are:
 6. AADT column (CMF only)
 7. variable catalogue (LLM/rule screen; user can exclude or add back)
 8. baseline vs local CMF blocks (CMF only)
-9. constraint hierarchy (accept or natural-language edit)
-10. objective, driver, budget, draws
+9. random-parameter scope: `NAME=dist` for upper-level terms,
+   `NAME@logAADT=dist` for lower-level terms, or `none` / `accept`
+10. constraint hierarchy (accept or natural-language edit)
+11. objective, driver, budget, draws
 
 ## Constraint hierarchy
 

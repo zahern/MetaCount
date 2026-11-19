@@ -253,6 +253,7 @@ def _auto_answer(cp: ExperimentCopilot, turn: Turn, args: argparse.Namespace) ->
         "baseline_vars": args.baseline_vars,
         "local_vars": args.local_vars,
         "variables": args.variables,
+        "random_params": args.random_params,
         "constraints": args.constraints,
         "objective": args.objective,
         "algo": args.algo,
@@ -363,6 +364,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline-vars", dest="baseline_vars", default=None, help="CMF baseline variables")
     p.add_argument("--local-vars", dest="local_vars", default=None, help="CMF local variables")
     p.add_argument("--variables", default=None, help="'accept' or comma-separated columns to exclude")
+    p.add_argument(
+        "--random-params",
+        dest="random_params",
+        default="accept",
+        help=(
+            "'accept', 'none', or NAME=dist pairs, e.g. "
+            "'CURVES@logAADT=lognormal, WIDTH@logAADT=normal'"
+        ),
+    )
     p.add_argument("--constraints", default=None, help="'accept' or a constraint edit")
     p.add_argument("--objective", default="bic", help="bic/aic/loglik")
     p.add_argument("--algo", default="sa", help="sa/ga/hs/de/delphos_rl")
@@ -372,6 +382,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--output-dir", dest="output_dir", default="metacount_results")
     p.add_argument("--llm", action="store_true", help="use the OpenAI-compatible LLM advisor")
+    p.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="force the deterministic rule-based advisor even if env vars are set",
+    )
     p.add_argument("--llm-base-url", dest="llm_base_url", default=None)
     p.add_argument("--llm-model", dest="llm_model", default=None)
     p.add_argument("--llm-api-key", dest="llm_api_key", default=None)
@@ -405,7 +420,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     advisor = None
-    if args.llm or os.environ.get("METACOUNT_LLM_BASE_URL"):
+    if args.no_llm:
+        advisor = RuleBasedAdvisor()
+    elif args.llm or os.environ.get("METACOUNT_LLM_BASE_URL"):
         try:
             advisor = OpenAICompatibleAdvisor(
                 base_url=args.llm_base_url or "",

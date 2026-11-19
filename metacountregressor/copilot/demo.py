@@ -36,6 +36,7 @@ def main() -> int:
         "OFFSET",    # offset
         "none",      # group
         "accept",    # variable catalogue
+        "accept",    # random-parameter scope
         "accept",    # constraint hierarchy
         "bic",       # objective
         "sa",        # search driver

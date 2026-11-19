@@ -105,6 +105,7 @@ class ExperimentSpec:
     group_id_col: Optional[str] = None
     family: str = "count"  # count | cmf | duration | linear | multivariate | survival
     variables: List[VariableDecision] = field(default_factory=list)
+    random_params: Dict[str, List[str]] = field(default_factory=dict)
     constraints: List[ConstraintTier] = field(default_factory=list)
     max_latent_classes: int = 1
     R: int = 50
@@ -190,6 +191,10 @@ def spec_from_dict(data: Dict[str, Any]) -> ExperimentSpec:
         group_id_col=data.get("group_id_col"),
         family=str(data.get("family", "count")),
         variables=variables,
+        random_params={
+            str(k): [str(d) for d in v]
+            for k, v in (data.get("random_params") or {}).items()
+        },
         constraints=constraints,
         max_latent_classes=int(data.get("max_latent_classes", 1)),
         R=int(data.get("R", 50)),

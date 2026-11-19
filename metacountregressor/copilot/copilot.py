@@ -113,6 +113,7 @@ class ExperimentCopilot:
         if self.spec.family == "cmf":
             order += ["baseline_vars", "local_vars"]
         order += [
+            "random_params",
             "constraints",
             "objective",
             "algo",
@@ -187,6 +188,88 @@ class ExperimentCopilot:
         if not names:
             raise ValueError("local_vars cannot be empty")
         self.spec.cmf["local_vars"] = names
+
+    def _handle_random_params(self, value, raw: str) -> None:
+        included = [v.name for v in self.spec.variables if v.include]
+        local_labels = [
+            f"{v}@logAADT"
+            for v in (self.spec.cmf.get("local_vars", []) or [])
+        ]
+        allowed = list(dict.fromkeys(included + local_labels))
+        text = str(raw).strip().lower()
+        if text in {"", "accept", "auto", "default", "advisor"}:
+            self.spec.random_params = {}
+            return
+        if text in {"none", "no", "fixed", "fixed only"}:
+            self.spec.random_params = {}
+            self.spec.constraints.append(
+                ConstraintTier(
+                    tier="plausibility",
+                    rationale="User selected a fixed-effects-only model.",
+                    rules=[{"method": "no_random", "variables": allowed}],
+                )
+            )
+            return
+
+        mapping: Dict[str, List[str]] = {}
+        for token in parse_list(raw):
+            if "=" in token:
+                name, dist_text = token.split("=", 1)
+                dists = [
+                    d.strip()
+                    for d in re.split(r"[|/]", dist_text)
+                    if d.strip()
+                ]
+            else:
+                name, dists = token, []
+            name = name.strip()
+            if name not in allowed:
+                continue
+            mapping[name] = dists or ["normal", "lognormal", "triangular"]
+        if not mapping:
+            raise ValueError(
+                "no known included variable names; expected e.g. "
+                "'CURVES=lognormal, WIDTH=normal' or 'none'"
+            )
+        self.spec.random_params = mapping
+        rules = []
+        for name, dists in mapping.items():
+            rules.append(
+                {
+                    "method": "allow_random",
+                    "variables": [name],
+                    "distributions": dists,
+                }
+            )
+        baseline = set(self.spec.cmf.get("baseline_vars", []) or [])
+        local = list(self.spec.cmf.get("local_vars", []) or [])
+        # Bare names belong to the upper (baseline) block; lower-level terms
+        # use the explicit NAME@logAADT label.  Keep the two scopes separate.
+        others_baseline = [
+            n for n in baseline if n in included and n not in mapping
+        ]
+        others_local = [
+            f"{v}@logAADT"
+            for v in local
+            if f"{v}@logAADT" not in mapping
+        ]
+        others_plain = [
+            n
+            for n in included
+            if n not in mapping
+            and n not in baseline
+            and n not in local
+        ]
+        for group in (others_baseline, others_local, others_plain):
+            if group:
+                rules.append({"method": "no_random", "variables": group})
+        self.spec.constraints.append(
+            ConstraintTier(
+                tier="plausibility",
+                rationale="User-specified random-parameter scope.",
+                rules=rules,
+            )
+        )
 
     def _handle_variables(self, value, raw: str) -> None:
         proposals = self._pending_variables
@@ -265,7 +348,15 @@ class ExperimentCopilot:
         if text not in {"accept", "ok", "yes", "default", "looks good"}:
             # Apply simple natural-language edits on top of the proposal.
             tiers = self._apply_constraint_feedback(tiers, raw)
-        self.spec.constraints = tiers
+        # Keep the random-parameter scope the user chose earlier; this turn
+        # is allowed to add/remove plausibility rules, not to erase it.
+        user_tiers = [
+            t
+            for t in self.spec.constraints
+            if t.rationale.startswith("User selected a fixed-effects-only")
+            or t.rationale.startswith("User-specified random-parameter")
+        ]
+        self.spec.constraints = list(tiers) + user_tiers
 
     def _handle_objective(self, value, raw: str) -> None:
         objective = str(value).strip().lower()
@@ -386,6 +477,37 @@ class ExperimentCopilot:
                     f"{len(included)} included / {len(excluded)} excluded. "
                     "Roles and allowed distributions are set in the next step."
                 ),
+            )
+        if self.stage == "random_params":
+            included = [v.name for v in self.spec.variables if v.include]
+            local_labels = [
+                f"{v}@logAADT"
+                for v in (self.spec.cmf.get("local_vars", []) or [])
+            ]
+            choices = list(dict.fromkeys(included + local_labels))
+            examples = ["none", "accept"]
+            if choices:
+                examples.insert(
+                    0,
+                    f"{choices[0]}=lognormal, "
+                    f"{choices[-1]}=normal",
+                )
+            hint = (
+                "Use NAME=dist or NAME (defaults to normal/lognormal/"
+                "triangular). 'none' forces a fixed-effects-only model; "
+                "'accept' keeps the advisor's role proposals."
+            )
+            if self.spec.family == "cmf":
+                hint += (
+                    " For the lower (log-AADT) block, use the label shown "
+                    "in the variable list, e.g. CURVES@logAADT."
+                )
+            return self._turn(
+                "Which variables may be random parameters?",
+                "random_params",
+                options=choices,
+                examples=examples,
+                hint=hint,
             )
         if self.stage == "constraints":
             self._pending_constraints = self.advisor.suggest_constraints(

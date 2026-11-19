@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -52,25 +53,50 @@ def build_constraints(spec: ExperimentSpec) -> ModelConstraints:
     constraints = ModelConstraints()
     known = {v.name for v in spec.variables}
 
+    baseline_vars = set(spec.cmf.get("baseline_vars", []) or [])
+    local_vars = list(spec.cmf.get("local_vars", []) or [])
+
+    def _safe(name: str) -> str:
+        return re.sub(r"[^0-9A-Za-z_]+", "_", str(name)).strip("_") or "var"
+
+    def _evaluator_name(name: str) -> str:
+        """Map friendly CMF upper/lower labels to evaluator columns."""
+        if spec.family == "cmf":
+            if name in baseline_vars:
+                return f"__cmf_baseline__{_safe(name)}"
+            for local in local_vars:
+                if name == f"{local}@logAADT":
+                    return f"__cmf_local__{_safe(local)}"
+        return name
+
     # Variable-level proposals are the base layer; tier rules below can only
     # restrict them further.
     for v in spec.variables:
+        name = _evaluator_name(v.name)
         if v.include and v.allowed_roles:
             codes = [_ROLE_CODES[r] for r in v.allowed_roles if r in _ROLE_CODES]
             if codes:
-                constraints.set_roles(v.name, codes)
+                constraints.set_roles(name, codes)
         if not v.include:
-            constraints.exclude(v.name)
+            constraints.exclude(name)
 
     for tier in spec.constraints:
         if not isinstance(tier, ConstraintTier):
             continue
         for rule in tier.rules:
             method = str(rule.get("method", "")).strip()
-            variables = [str(v) for v in rule.get("variables", []) if str(v) in known]
+            variables = [
+                _evaluator_name(str(v))
+                for v in rule.get("variables", [])
+                if str(v) in known
+            ]
             if method == "mutual_exclusion":
                 groups = [
-                    [str(v) for v in group if str(v) in known]
+                    [
+                        _evaluator_name(str(v))
+                        for v in group
+                        if str(v) in known
+                    ]
                     for group in rule.get("groups", [])
                 ]
                 groups = [g for g in groups if len(g) >= 2]
@@ -128,11 +154,21 @@ def build_experiment(spec: ExperimentSpec):
         local = list(spec.cmf.get("local_vars", []))
         if not baseline or not local:
             raise ValueError("CMF experiments need baseline_vars and local_vars")
+        # Give the upper-level terms unique column names.  Otherwise a
+        # variable that appears in both blocks (e.g. CURVES) collides with
+        # the lower-level __cmf_local__CURVES interaction in the CMF
+        # constraint translation, and "no random CURVES" would silently
+        # switch off the local random effect instead of the upper one.
+        baseline_cols = []
+        for var in baseline:
+            col = f"__cmf_baseline__{re.sub(r'[^0-9A-Za-z_]+', '_', str(var)).strip('_') or 'var'}"
+            df[col] = df[var]
+            baseline_cols.append(col)
         cmf = CMFExperimentBuilder(
             df=df,
             y_col=spec.response,
             aadt_col=aadt,
-            baseline_vars=baseline,
+            baseline_vars=baseline_cols,
             local_vars=local,
         )
         builder, evaluator, meta = cmf.build_jax_count_evaluator(
@@ -192,6 +228,7 @@ def run_search(
             seed=int(spec.seed),
             refit=refit,
             output_config=output_config,
+            **({"n_starts": 1} if spec.algo in {"sa", "hc", "ga"} else {}),
         )
     best_solution = np.asarray(result.get("best_solution", []), dtype=float)
     best_spec = (
