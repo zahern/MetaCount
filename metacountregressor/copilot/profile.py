@@ -13,9 +13,17 @@ import pandas as pd
 from .schema import ColumnProfile, DataProfile
 
 
+def _clean_path(path: str) -> Path:
+    """Accept paths pasted with surrounding single/double quotes."""
+    text = str(path).strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    return Path(text).expanduser()
+
+
 def load_data(path: str, **kwargs) -> pd.DataFrame:
     """Read a tabular data source by extension."""
-    p = Path(path).expanduser()
+    p = _clean_path(path)
     if not p.exists():
         raise FileNotFoundError(f"data source not found: {p}")
     suffix = p.suffix.lower()

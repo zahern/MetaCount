@@ -1,4 +1,4 @@
-# metacountregressor
+﻿# metacountregressor
 
 JAX-first hierarchical search and fitting for count, CMF, duration, linear, and pavement CLR models.
 
@@ -12,7 +12,7 @@ You do not need the reference dataset, a source checkout, an HPC account, or PBS
 python -m pip install metacountregressor
 ```
 
-This also installs the package’s declared JAX dependencies. For a special JAX CPU/GPU build, follow the upstream JAX installation instructions after this step.
+This also installs the packageâ€™s declared JAX dependencies. For a special JAX CPU/GPU build, follow the upstream JAX installation instructions after this step.
 
 2. Verify the installation:
 
@@ -26,7 +26,7 @@ print(load_example16_3_raw_data().shape)
 
 ### Experiment copilot CLI
 
-From version **1.0.214**, `pip install metacountregressor` also installs an
+From version **1.0.216**, `pip install metacountregressor` also installs an
 interactive experiment-setup wizard. No separate `metacount-copilot` package
 is needed:
 
@@ -971,3 +971,4 @@ Use these builder patterns:
 - CMF: `build_evaluator(model_family="cmf", ...)`
 - duration: `build_evaluator(model_family="duration", ...)`
 - linear: `build_evaluator(model_family="linear", ...)`
+

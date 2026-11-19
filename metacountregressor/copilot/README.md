@@ -37,7 +37,7 @@ environments.
 
 ## Install
 
-The copilot is shipped **inside** `metacountregressor` (version 1.0.214+).
+The copilot is shipped **inside** `metacountregressor` (version 1.0.216+).
 One install provides both the estimator and the CLI:
 
 ```powershell
@@ -218,4 +218,5 @@ even a valid one.  What is guaranteed by this design is:
 * The Delphos RL driver lives in `metacountregressor.copilot.delphos` and can
   be run explicitly; it is intentionally not hidden behind the generic
   `ExperimentBuilder.run()`.
+
 

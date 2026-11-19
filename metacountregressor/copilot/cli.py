@@ -82,6 +82,13 @@ Typical flow
 """
 
 
+def _stdin_is_tty() -> bool:
+    try:
+        return bool(sys.stdin and sys.stdin.isatty())
+    except Exception:
+        return False
+
+
 def _print_turn(turn: Optional[Turn]) -> None:
     if turn is None:
         return
@@ -132,10 +139,18 @@ def _print_diagnosis(diag: Dict[str, Any]) -> None:
         print("  A patched spec is available.  Use /apply (or /rerun).")
 
 
+def _clean_path_arg(arg: str) -> str:
+    text = arg.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    return text
+
+
 def _handle_command(cp: ExperimentCopilot, line: str, turn: Optional[Turn]):
     parts = line.strip().split(maxsplit=1)
     cmd = parts[0].lower()
     arg = parts[1].strip() if len(parts) > 1 else ""
+    path_arg = _clean_path_arg(arg)
 
     if cmd in {"/quit", "/exit", "/q"}:
         raise SystemExit(0)
@@ -146,7 +161,7 @@ def _handle_command(cp: ExperimentCopilot, line: str, turn: Optional[Turn]):
         if not arg:
             print("usage: /start PATH")
             return turn
-        turn = cp.start(os.path.expanduser(arg))
+        turn = cp.start(os.path.expanduser(path_arg))
         print(f"loaded {cp.profile.n_rows} rows x {cp.profile.n_cols} columns")
         _print_turn(turn)
         return turn
@@ -206,7 +221,7 @@ def _handle_command(cp: ExperimentCopilot, line: str, turn: Optional[Turn]):
         if not arg:
             print("usage: /save PATH")
             return turn
-        path = Path(os.path.expanduser(arg))
+        path = Path(os.path.expanduser(path_arg))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(cp.build_spec().to_dict(), indent=2))
         print(f"saved {path}")
@@ -215,7 +230,7 @@ def _handle_command(cp: ExperimentCopilot, line: str, turn: Optional[Turn]):
         if not arg:
             print("usage: /load PATH")
             return turn
-        data = json.loads(Path(os.path.expanduser(arg)).read_text())
+        data = json.loads(Path(os.path.expanduser(path_arg)).read_text())
         cp.spec = spec_from_dict(data)
         cp.profile = load_and_profile(cp.spec.data_path)
         cp.stage = "done"
@@ -365,6 +380,30 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # The Run/Debug output panes in IDEs are read-only.  Starting the
+    # interactive wizard there looks like a hang, so give the user the two
+    # useful alternatives instead.
+    if not args.auto and not _stdin_is_tty() and os.environ.get(
+        "MCR_FORCE_INTERACTIVE"
+    ) != "1":
+        print(
+            "This is the interactive copilot, but stdin is not a terminal. "
+            "Run it in the IDE Terminal or a normal PowerShell/Command Prompt."
+        )
+        print("")
+        print("Non-interactive example:")
+        print(
+            "  python -m metacountregressor.copilot --auto --data PATH "
+            "--response FREQ --family count --run --diagnose"
+        )
+        print("")
+        print(
+            "Or set MCR_FORCE_INTERACTIVE=1 if your console does support "
+            "typed input."
+        )
+        return 2
+
     advisor = None
     if args.llm or os.environ.get("METACOUNT_LLM_BASE_URL"):
         try:

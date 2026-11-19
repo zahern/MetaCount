@@ -1,6 +1,6 @@
-# metacountregressor
+﻿# metacountregressor
 
-A JAX-first Python package for hierarchical model fitting and metaheuristic-driven model structure search.  Supports count, CMF, duration, and linear models with random parameters, latent classes, zero-inflation, and heterogeneity in means — all with one unified API.
+A JAX-first Python package for hierarchical model fitting and metaheuristic-driven model structure search.  Supports count, CMF, duration, and linear models with random parameters, latent classes, zero-inflation, and heterogeneity in means â€” all with one unified API.
 
 ---
 
@@ -44,7 +44,7 @@ python -c "from metacountregressor import __version__, load_example16_3_raw_data
 
 ### Experiment copilot CLI
 
-From version **1.0.214**, the installed package includes an interactive
+From version **1.0.216**, the installed package includes an interactive
 experiment-setup wizard. No separate `metacount-copilot` package is needed:
 
 ```bash
@@ -70,7 +70,7 @@ python -m metacountregressor.copilot
 ### GPU acceleration (optional)
 
 The package runs on CPU out of the box and **automatically uses a GPU when
-JAX can see one** — no code changes required.  Install the CUDA flavour of
+JAX can see one** â€” no code changes required.  Install the CUDA flavour of
 JAX instead of the CPU wheel:
 
 ```bash
@@ -90,9 +90,9 @@ Behaviour and controls:
 | Concern | Default | Override |
 | ------- | ------- | -------- |
 | Platform choice | Auto-detect (GPU if visible, else CPU) | `METACOUNT_JAX_PLATFORM=cpu\|gpu\|tpu` or `configure_jax(platform='cpu')` |
-| Float precision | float64 enabled (required by the estimators) | — |
-| GPU memory | Grows on demand — safe for shared clusters (XLA's default grabs ~75% of VRAM up front) | `METACOUNT_GPU_PREALLOCATE=1` for exclusive nodes |
-| GPU out-of-memory | Fits transparently retry once after clearing JAX caches, then fall back to the CPU device instead of crashing the search | — |
+| Float precision | float64 enabled (required by the estimators) | â€” |
+| GPU memory | Grows on demand â€” safe for shared clusters (XLA's default grabs ~75% of VRAM up front) | `METACOUNT_GPU_PREALLOCATE=1` for exclusive nodes |
+| GPU out-of-memory | Fits transparently retry once after clearing JAX caches, then fall back to the CPU device instead of crashing the search | â€” |
 
 Transient GPU failures never poison a structure search: candidate structures
 that fail *only* because of device memory are retried, not blacklisted.
@@ -106,7 +106,7 @@ Everything you need to learn the package in one place.
 ### Bundled notebook tutorials
 
 Six tutorial notebooks ship **inside the wheel** and use the bundled
-Example 16-3 crash-frequency dataset, so every cell runs out of the box —
+Example 16-3 crash-frequency dataset, so every cell runs out of the box â€”
 no need to source your own data. Copy them into your working directory:
 
 ```python
@@ -117,9 +117,9 @@ get_templates()          # copies all six .ipynb files to the current folder
 | # | Notebook | What you learn | Time |
 | --- | -------- | -------------- | ---- |
 | 00 | [00_quickstart.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/00_quickstart.ipynb) | Install, load bundled data, first search run end-to-end | ~10 min |
-| 01 | [01_crash_frequency_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/01_crash_frequency_search.ipynb) | Mixed Negative Binomial search — constraints, roles, re-fit with more draws | ~20 min |
-| 02 | [02_latent_class_fc_validation.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/02_latent_class_fc_validation.ipynb) | 2-class latent class model — fit, extract class probabilities, validate against functional class | ~20 min |
-| 03 | [03_cmf_aadt_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/03_cmf_aadt_search.ipynb) | CMF model — baseline + AADT-interaction structure search | ~20 min |
+| 01 | [01_crash_frequency_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/01_crash_frequency_search.ipynb) | Mixed Negative Binomial search â€” constraints, roles, re-fit with more draws | ~20 min |
+| 02 | [02_latent_class_fc_validation.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/02_latent_class_fc_validation.ipynb) | 2-class latent class model â€” fit, extract class probabilities, validate against functional class | ~20 min |
+| 03 | [03_cmf_aadt_search.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/03_cmf_aadt_search.ipynb) | CMF model â€” baseline + AADT-interaction structure search | ~20 min |
 | 04 | [04_linear_speed_prediction.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/04_linear_speed_prediction.ipynb) | Gaussian linear model search (platform speed prediction) | ~20 min |
 | 05 | [05_batch_script_tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/metacountregressor/metacountregressor/templates/05_batch_script_tutorial.ipynb) | Batch scripts, parallel seeds, PBS/SLURM HPC job templates, result collection | ~30 min |
 
@@ -135,7 +135,7 @@ jupyter lab   # after get_templates(), the notebooks are in your working directo
 | -------- | ------ | ---- |
 | Hierarchical CMF tutorial (full worked analysis) | Python script | [examples/manual_hierarchical_cmf_tutorial.py](https://github.com/zahern/MetaCount/blob/master/metacountregressor/examples/manual_hierarchical_cmf_tutorial.py) |
 | Hierarchical CMF narrative guide | Markdown | [examples/TUTORIAL_HIERARCHICAL_CMF.md](https://github.com/zahern/MetaCount/blob/master/metacountregressor/examples/TUTORIAL_HIERARCHICAL_CMF.md) |
-| General tutorial (search → fit → interpret) | Jupyter notebook | [Tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/Tutorial.ipynb) |
+| General tutorial (search â†’ fit â†’ interpret) | Jupyter notebook | [Tutorial.ipynb](https://github.com/zahern/MetaCount/blob/master/Tutorial.ipynb) |
 | Batch / HPC workflow deep dive | Jupyter notebook | [Tutorial_Batch.ipynb](https://github.com/zahern/MetaCount/blob/master/Tutorial_Batch.ipynb) |
 | Batch / HPC workflow deep dive | Markdown | [Tutorial_Batch.md](https://github.com/zahern/MetaCount/blob/master/Tutorial_Batch.md) |
 
@@ -151,7 +151,7 @@ get_help()                    # list all available topics
 
 | Topic | Contents |
 | ----- | -------- |
-| `get_help('roles')` | Role-code reference (0–8) and random-parameter distributions |
+| `get_help('roles')` | Role-code reference (0â€“8) and random-parameter distributions |
 | `get_help('constraints')` | Full `ModelConstraints` API with examples |
 | `get_help('metaheuristics')` | SA / DE / HS comparison and tuning parameters |
 | `get_help('crash_frequency')` | End-to-end count-model workflow |
@@ -182,12 +182,12 @@ from metacountregressor import (
     get_help,
 )
 
-# ── 1. Load the bundled crash-frequency dataset ──────────────────────────────
+# â”€â”€ 1. Load the bundled crash-frequency dataset â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 df = load_example16_3_model_data()
 exposure = df['LENGTH'] * df['AADT'] * 365 / 1e8
 df['OFFSET'] = np.log(exposure.clip(lower=1e-9))
 
-# ── 2. Build constraints ──────────────────────────────────────────────────────
+# â”€â”€ 2. Build constraints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 c = (
     ModelConstraints()
     .force_include('OFFSET')
@@ -197,12 +197,12 @@ c = (
     .mutual_exclusion(['SPEED', 'CURVES'])   # at most one active at a time
 )
 
-# ── 3. Create the experiment ──────────────────────────────────────────────────
+# â”€â”€ 3. Create the experiment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 builder = ExperimentBuilder(df, id_col='ID', y_col='FREQ', offset_col='OFFSET')
 builder.describe()              # print data summary
 get_help('crash_frequency')     # print end-to-end workflow guide
 
-# ── 4. Build the structure evaluator ─────────────────────────────────────────
+# â”€â”€ 4. Build the structure evaluator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 evaluator = builder.build_evaluator(
     variables=['AADT', 'LENGTH', 'SPEED', 'CURVES', 'URB', 'AVEPRE'],
     constraints=c,
@@ -211,7 +211,7 @@ evaluator = builder.build_evaluator(
     R=200,
 )
 
-# ── 5. Run the search ─────────────────────────────────────────────────────────
+# â”€â”€ 5. Run the search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 result = builder.run(
     evaluator,
     algo='sa',          # 'sa' | 'de' | 'hs'
@@ -222,7 +222,7 @@ result = builder.run(
 print('Best BIC:', result['best_score'])
 print('Saved to:', result.get('saved_to'))
 
-# ── 6. Re-fit with more draws ─────────────────────────────────────────────────
+# â”€â”€ 6. Re-fit with more draws â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 fit = builder.fit_manual_model(manual_spec=result['model_spec'], model='nb', R=500)
 print(fit)
 ```
@@ -235,7 +235,7 @@ Keep the Quick Start structure and change only the data mapping:
 | --- | --- |
 | `load_example16_3_model_data()` | `pd.read_csv('my_segments.csv')` |
 | `id_col='ID'` | your row-identifier column |
-| `y_col='FREQ'` | your outcome column (counts, durations, speeds…) |
+| `y_col='FREQ'` | your outcome column (counts, durations, speedsâ€¦) |
 | `offset_col='OFFSET'` | your log-exposure column, or `None` |
 | `group_id_col='FC'` | your grouping column, or `None` |
 | `variables=[...]` | your candidate predictor columns |
@@ -255,8 +255,8 @@ builder = ExperimentBuilder(
 builder.describe()   # check column types before searching
 ```
 
-For a first run on your data, keep the search small — `default_roles=[0, 1, 2]`,
-`R=50`, `max_iter=20` — then refit the winning specification with a larger
+For a first run on your data, keep the search small â€” `default_roles=[0, 1, 2]`,
+`R=50`, `max_iter=20` â€” then refit the winning specification with a larger
 `R` for final standard errors. Pick the worked notebook matching your outcome
 from [Tutorials & resources](#tutorials--resources) and mirror its constraint
 block.
@@ -267,9 +267,9 @@ block.
 
 `metacountregressor` solves two related problems:
 
-1. **Structure search** — automatically discover which variables to include, whether each coefficient should be fixed or random, and whether the model needs latent classes, zero-inflation, or heterogeneity in means.  The search is driven by metaheuristic algorithms (SA, DE, HS) that minimise BIC.
+1. **Structure search** â€” automatically discover which variables to include, whether each coefficient should be fixed or random, and whether the model needs latent classes, zero-inflation, or heterogeneity in means.  The search is driven by metaheuristic algorithms (SA, DE, HS) that minimise BIC.
 
-2. **Model estimation** — fit the discovered (or manually specified) model structure using JAX-accelerated simulation-based maximum likelihood with Halton draws.
+2. **Model estimation** â€” fit the discovered (or manually specified) model structure using JAX-accelerated simulation-based maximum likelihood with Halton draws.
 
 The same API handles crash-frequency count models, CMF (Crash Modification Factor) models, duration models, and linear (Gaussian) models.
 
@@ -317,10 +317,10 @@ from metacountregressor import ExperimentBuilder
 
 builder = ExperimentBuilder(
     df=df,
-    id_col='ID',           # required — observation identifier
-    y_col='FREQ',          # required — outcome variable
-    offset_col='OFFSET',   # optional — log-exposure offset (count models)
-    group_id_col='FC',     # optional — group/panel identifier
+    id_col='ID',           # required â€” observation identifier
+    y_col='FREQ',          # required â€” outcome variable
+    offset_col='OFFSET',   # optional â€” log-exposure offset (count models)
+    group_id_col='FC',     # optional â€” group/panel identifier
 )
 ```
 
@@ -453,7 +453,7 @@ get_help('constraints')
 | `4` | Grouped | Group-level random effect (shared within group) |
 | `5` | Heterogeneity | Explains variation in random-parameter means |
 | `6` | Zero Inflation | Enters the zero-inflation probability equation |
-| `7` | Membership only | Drives latent-class probability — not the outcome |
+| `7` | Membership only | Drives latent-class probability â€” not the outcome |
 | `8` | Membership + Fixed | Drives class membership AND has class-specific outcome effect |
 
 Random-parameter distributions: `normal`, `lognormal`, `triangular`, `uniform`.
@@ -468,9 +468,9 @@ get_help('roles')   # full reference with examples
 
 | Alias | Algorithm | Best for |
 | ----- | --------- | -------- |
-| `'sa'` | Simulated Annealing | Robust default — escapes local minima via cooling schedule |
-| `'de'` | Differential Evolution | Thorough population-based search — use when SA converges early |
-| `'hs'` | Harmony Search | Fast initial convergence — good for a quick first pass |
+| `'sa'` | Simulated Annealing | Robust default â€” escapes local minima via cooling schedule |
+| `'de'` | Differential Evolution | Thorough population-based search â€” use when SA converges early |
+| `'hs'` | Harmony Search | Fast initial convergence â€” good for a quick first pass |
 
 ```python
 # Run the same evaluator with different algorithms
@@ -711,7 +711,7 @@ get_help('batch')             # batch script and HPC guide
 
 ### Automatic walltime detection
 
-On PBS/Torque or SLURM, the package reads the scheduler walltime automatically and uses it as a `max_time` limit — the search stops cleanly before the job is killed.
+On PBS/Torque or SLURM, the package reads the scheduler walltime automatically and uses it as a `max_time` limit â€” the search stops cleanly before the job is killed.
 
 | Scheduler | Environment variable | Format |
 | --------- | ------------------- | ------ |
@@ -771,7 +771,7 @@ get_help('batch')   # inline guide
 
 ## Getting help
 
-- Revisit the [Tutorials & resources](#tutorials--resources) section — the six bundled notebooks cover the full API surface with runnable examples.
+- Revisit the [Tutorials & resources](#tutorials--resources) section â€” the six bundled notebooks cover the full API surface with runnable examples.
 - Ask the package itself: `get_help()` lists every built-in guide.
 - Found a bug or want a feature? Open an issue at [github.com/zahern/MetaCount/issues](https://github.com/zahern/MetaCount/issues).
 
@@ -785,3 +785,4 @@ If you use `metacountregressor` in research, please cite the package:
   url     = {https://github.com/zahern/MetaCount},
 }
 ```
+
