@@ -24,6 +24,33 @@ print(metacountregressor.__version__)
 print(load_example16_3_raw_data().shape)
 ```
 
+### Experiment copilot CLI
+
+From version **1.0.214**, `pip install metacountregressor` also installs an
+interactive experiment-setup wizard. No separate `metacount-copilot` package
+is needed:
+
+```bash
+metacount-copilot
+```
+
+or:
+
+```python
+from metacountregressor import run_cli
+
+run_cli()
+```
+
+The wizard profiles a data file, asks for the response/model family, proposes
+a pruned variable catalogue and a tiered constraint hierarchy, then lets you
+run `/run`, inspect `/diagnose`, and `/rerun` with an updated specification.
+The same entry point is available as:
+
+```bash
+python -m metacountregressor.copilot
+```
+
 3. Copy all runnable tutorials into a local folder:
 
 ```python

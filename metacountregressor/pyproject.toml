@@ -28,6 +28,9 @@ dependencies = [
   "texttable>=1.6",
 ]
 
+[project.scripts]
+metacount-copilot = "metacountregressor.copilot.cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 # Optional Numba acceleration for the NumPy-only fitting paths (pavement
@@ -90,3 +93,5 @@ include = ["metacountregressor*"]
 
 [tool.setuptools.package-data]
 metacountregressor = ["data/*.csv", "templates/*.ipynb", "scripts/*.py"]
+"metacountregressor.copilot" = ["README.md"]
+"metacountregressor.copilot.delphos" = ["README.md"]

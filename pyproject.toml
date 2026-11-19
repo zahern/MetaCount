@@ -137,6 +137,9 @@ Homepage = "https://github.com/zahern/MetaCount"
 Documentation = "https://github.com/zahern/MetaCount/blob/master/README.md"
 Changelog = "https://github.com/zahern/MetaCount/releases"
 
+[project.scripts]
+metacount-copilot = "metacountregressor.copilot.cli:main"
+
 [tool.setuptools.dynamic]
 version = { file = "version.txt" }
 
@@ -157,6 +160,8 @@ metacountregressor = [
     "templates/*.ipynb",
     "data/*.csv",
 ]
+"metacountregressor.copilot" = ["README.md"]
+"metacountregressor.copilot.delphos" = ["README.md"]
 
 [tool.setuptools.packages.find]
 where = ["."]

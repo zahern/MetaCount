@@ -38,6 +38,11 @@ __all__ = [
     "CMFExperimentBuilder",
     "ExperimentBuilder",
     "StructureEvaluatorLC",
+    # Experiment copilot / CLI
+    "ExperimentCopilot",
+    "OpenAICompatibleAdvisor",
+    "RuleBasedAdvisor",
+    "run_cli",
     # Constraints & config
     "ModelConstraints",
     "SearchOutputConfig",
@@ -195,6 +200,11 @@ __all__ = [
 ]
 
 _EXPORTS = {
+    # Experiment copilot / CLI (shipped inside metacountregressor)
+    "ExperimentCopilot": ("copilot", "ExperimentCopilot"),
+    "OpenAICompatibleAdvisor": ("copilot", "OpenAICompatibleAdvisor"),
+    "RuleBasedAdvisor": ("copilot", "RuleBasedAdvisor"),
+    "run_cli": ("copilot.cli", "run_cli"),
     "CMFExperimentBuilder": ("cmf_package", "CMFExperimentBuilder"),
     "CMFFamilySearchProblem": ("family_search", "CMFFamilySearchProblem"),
     "DurationSearchProblem": ("family_search", "DurationSearchProblem"),

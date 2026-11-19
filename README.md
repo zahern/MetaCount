@@ -7,6 +7,7 @@ A JAX-first Python package for hierarchical model fitting and metaheuristic-driv
 ## Table of Contents
 
 - [Install](#install)
+- [Experiment copilot CLI](#experiment-copilot-cli)
 - [Tutorials & resources](#tutorials--resources)
 - [Quick Start](#quick-start)
 - [What the package does](#what-the-package-does)
@@ -39,6 +40,31 @@ Quick import check:
 
 ```bash
 python -c "from metacountregressor import __version__, load_example16_3_raw_data; print(__version__, load_example16_3_raw_data().shape)"
+```
+
+### Experiment copilot CLI
+
+From version **1.0.214**, the installed package includes an interactive
+experiment-setup wizard. No separate `metacount-copilot` package is needed:
+
+```bash
+metacount-copilot
+```
+
+or:
+
+```python
+from metacountregressor import run_cli
+run_cli()
+```
+
+The wizard reads your data file, asks for the response and model family,
+proposes a pruned variable catalogue and a tiered constraint hierarchy, then
+supports `/run`, `/diagnose`, `/apply`, and `/rerun` from the same prompt. It
+can also drive the Delphos RL search:
+
+```bash
+python -m metacountregressor.copilot
 ```
 
 ### GPU acceleration (optional)
