@@ -657,7 +657,16 @@ def _jax_fit(X_df: pd.DataFrame, y_np: np.ndarray,
                 # ── PARTE shrinkage (post-MLE) ──────────────────────────
                 if Kf >= 2:
                     try:
-                        from regularization import apply_parte_to_fixed_effects
+                        # Package-qualified first: the flat import only
+                        # resolved with the package dir on sys.path.
+                        try:
+                            from metacountregressor.regularization import (
+                                apply_parte_to_fixed_effects,
+                            )
+                        except ImportError:
+                            from regularization import (
+                                apply_parte_to_fixed_effects,
+                            )
                         parte_result = apply_parte_to_fixed_effects(
                             params_final[:Kf], hess_beta, variant="k3d3"
                         )

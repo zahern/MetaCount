@@ -435,6 +435,7 @@ try:
         run_with_oom_recovery,
         _to_f64,
         random_parameter_convergence_diagnostics,
+        random_parameter_identification_status,
     )
     from .main_hpc_lc_patch import (
         ModelSpec,
@@ -479,6 +480,7 @@ except ImportError:
         run_with_oom_recovery,
         _to_f64,
         random_parameter_convergence_diagnostics,
+        random_parameter_identification_status,
     )
     from main_hpc_lc_patch import (
         ModelSpec,
@@ -2320,6 +2322,9 @@ class ExperimentBuilder:
                     else "time_ratio"
                 ),
                 "random_parameter_diagnostics": {},
+                "random_parameter_identified": True,
+                "random_parameter_identification_reason": "",
+                "optimization_trace": None,
                 "_summary_text": summary_text,
             })
 
@@ -2664,6 +2669,10 @@ class ExperimentBuilder:
             spec,
             param_index,
         )
+        (
+            random_parameter_identified,
+            random_parameter_identification_reason,
+        ) = random_parameter_identification_status(random_parameter_diagnostics)
 
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -2703,6 +2712,14 @@ class ExperimentBuilder:
         summary_text = buf.getvalue()
         if print_report:
             print(summary_text, end="")
+
+        if isinstance(summary, dict):
+            summary["random_parameter_identified"] = bool(
+                random_parameter_identified
+            )
+            summary["random_parameter_identification_reason"] = (
+                random_parameter_identification_reason
+            )
 
         # Named estimates/SEs/p-values so callers never have to scrape
         # summary_text.  print_summary returns the fit-stats dict unless
@@ -2746,6 +2763,11 @@ class ExperimentBuilder:
                 else "time_ratio"
             ) if _surv_family is not None else None,
             "random_parameter_diagnostics": random_parameter_diagnostics,
+            "random_parameter_identified": bool(random_parameter_identified),
+            "random_parameter_identification_reason": (
+                random_parameter_identification_reason
+            ),
+            "optimization_trace": getattr(fitted, "last_optimization_trace", None),
             "_summary_text": summary_text,
         })
 

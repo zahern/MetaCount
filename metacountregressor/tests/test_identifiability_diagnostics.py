@@ -8,6 +8,7 @@ from metacountregressor.main_hpc import (
     ModelSpec,
     compute_standard_errors,
     print_summary,
+    random_parameter_identification_status,
 )
 
 
@@ -44,6 +45,38 @@ def test_print_summary_does_not_turn_nan_se_into_p_one():
     assert np.isnan(float(row["Std.Err"]))
     assert np.isnan(float(row["z-value"]))
     assert np.isnan(float(row["p-value"]))
+
+
+def test_random_parameter_identification_flags_boundary_and_nonstationary():
+    report = {
+        "has_random_parameters": True,
+        "stationary": False,
+        "boundary_parameters": ["sd(r)"],
+        "divergent_mean_parameters": [],
+        "max_mean_scale_coupling": 0.2,
+        "random_hessian_condition": 1e16,
+    }
+    identified, reason = random_parameter_identification_status(report)
+
+    assert not identified
+    assert "boundary" in reason
+    assert "not stationary" in reason
+    assert "Hessian" in reason
+
+
+def test_random_parameter_identification_accepts_clean_fit():
+    report = {
+        "has_random_parameters": True,
+        "stationary": True,
+        "boundary_parameters": [],
+        "divergent_mean_parameters": [],
+        "max_mean_scale_coupling": 0.2,
+        "random_hessian_condition": 100.0,
+    }
+    identified, reason = random_parameter_identification_status(report)
+
+    assert identified
+    assert reason == ""
 
 
 def test_checker_labels_contiguous_random_mean_and_sd_blocks():

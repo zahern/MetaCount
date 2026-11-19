@@ -2172,6 +2172,15 @@ def print_summary(result, objective, data, spec: ModelSpec,
                                else result.x)
         final_ll = float(-objective(params_np))
         k, n = len(params_np), data["y"].shape[0]
+        # The delegated printer already applied PARTE and recorded the
+        # likelihood at the PARTE vector (``loglik_parte``, plus aic_parte /
+        # bic_parte and the SE diagnostics) in its fit-stats dict.  Rebuilding
+        # the dict from scratch below used to drop all of that, so callers
+        # could not tell a shrunken vector from a collapsed one; keep the
+        # MLE-based entries above and carry the rest over.
+        inherited: dict = {}
+        if _named_df is not None:
+            inherited = dict(getattr(_named_df, "attrs", {}).get("fit_stats") or {})
         stats_out = {
             "loglik":   final_ll,
             "num_parm": k,
@@ -2179,6 +2188,8 @@ def print_summary(result, objective, data, spec: ModelSpec,
             "aic":      2 * k - 2 * final_ll,
             "bic":      k * np.log(n) - 2 * final_ll,
         }
+        for _key, _val in inherited.items():
+            stats_out.setdefault(_key, _val)
         if return_df is not None and return_df and _named_df is not None:
             # Carry the fit-stats dict along on the DataFrame so callers can
             # get BOTH from one (expensive) summary call -- the Hessian-based

@@ -15,7 +15,7 @@ except ImportError as _jaxopt_exc:  # pragma: no cover - dependency guard
         "metacountregressor requires the 'jaxopt' package.  "
         "Install the backend with:  pip install jax jaxlib jaxopt"
     ) from _jaxopt_exc
-from jaxopt import LBFGS, GradientDescent, NonlinearCG, BFGS
+from jaxopt import LBFGS, GradientDescent, NonlinearCG, BFGS, OptStep
 import pandas as pd
 import scipy.stats as stats
 try:
@@ -4133,6 +4133,65 @@ def _random_mean_scale_pairs(spec, param_index):
     return pairs
 
 
+def run_lbfgs_with_trace(solver, init_params, *, label="LBFGS"):
+    """Run an L-BFGS solver while recording the objective at every iteration.
+
+    ``jaxopt.LBFGS.run`` compiles the update loop and returns only the final
+    state, so the optimizer does not otherwise expose a loss trajectory.  This
+    helper applies the same ``update`` calls and stopping rule as
+    ``LBFGS._run``, but keeps the state values in a Python list.  The trace is
+    therefore the actual objective used by the fit, not a post-hoc refit from
+    the optimum.
+
+    Returns
+    -------
+    (result, trace)
+        ``result`` is a ``jaxopt.OptStep`` with the final parameters/state;
+        ``trace`` is a list of ``{iteration, objective, gradient_norm}``
+        dictionaries.  The loop is wrapped in ``run_with_oom_recovery`` so
+        GPU OOM handling remains unchanged.
+    """
+    maxiter = int(solver.maxiter)
+
+    def _run():
+        state = solver.init_state(init_params)
+        trace = [{
+            "iteration": int(state.iter_num),
+            "objective": float(state.value),
+            "gradient_norm": float(state.error),
+        }]
+
+        if maxiter == 0:
+            return OptStep(params=init_params, state=state), trace
+
+        # LBFGS._run always performs the first update, even when the initial
+        # gradient already satisfies the tolerance.  Mirror that behaviour so
+        # the traced fit is numerically identical to solver.run(init).
+        step = solver.update(init_params, state)
+        trace.append({
+            "iteration": int(step.state.iter_num),
+            "objective": float(step.state.value),
+            "gradient_norm": float(step.state.error),
+        })
+
+        for _ in range(maxiter - 1):
+            state = step.state
+            keep_going = bool(state.error > solver.tol)
+            if solver.stop_if_linesearch_fails:
+                keep_going = keep_going and not bool(state.failed_linesearch)
+            if not keep_going:
+                break
+            step = solver.update(step.params, state)
+            trace.append({
+                "iteration": int(step.state.iter_num),
+                "objective": float(step.state.value),
+                "gradient_norm": float(step.state.error),
+            })
+        return step, trace
+
+    return run_with_oom_recovery(_run, label=label)
+
+
 def random_parameter_convergence_diagnostics(
     params,
     objective,
@@ -4208,6 +4267,24 @@ def random_parameter_convergence_diagnostics(
             + ", ".join(report["boundary_parameters"])
         )
 
+    # A random coefficient whose mean drifts far outside a plausible scale
+    # is the other common boundary/degeneracy failure for GSE fits: the
+    # random scale and the mean compensate each other and the likelihood is
+    # flat in that direction.  Report these means explicitly instead of
+    # letting a finite log-likelihood hide the non-identification.
+    report["means"] = {}
+    report["divergent_mean_parameters"] = []
+    for pair in pairs:
+        mean_value = float(params_np[pair["mean_index"]])
+        report["means"][pair["label"]] = mean_value
+        if not np.isfinite(mean_value) or abs(mean_value) > 10.0:
+            report["divergent_mean_parameters"].append(pair["label"])
+    if report["divergent_mean_parameters"]:
+        report["warnings"].append(
+            "random-parameter mean diverged: "
+            + ", ".join(report["divergent_mean_parameters"])
+        )
+
     if not include_hessian:
         return report
 
@@ -4261,6 +4338,52 @@ def random_parameter_convergence_diagnostics(
     return report
 
 
+def random_parameter_identification_status(report):
+    """Return whether a random-parameter fit is identified and why not.
+
+    A finite log-likelihood is not sufficient evidence that a random-effect
+    model is estimable.  A boundary variance, a runaway random mean, a
+    near-singular random-parameter Hessian, or strong mean/scale coupling
+    means the random-effect block is not identified and must not be
+    presented as a clean fit.
+    """
+    if not report or not report.get("has_random_parameters"):
+        return True, ""
+
+    reasons = []
+    boundary = list(report.get("boundary_parameters") or [])
+    if boundary:
+        reasons.append(
+            "random SD at boundary: " + ", ".join(map(str, boundary))
+        )
+    divergent = list(report.get("divergent_mean_parameters") or [])
+    if divergent:
+        reasons.append(
+            "random mean diverged: " + ", ".join(map(str, divergent))
+        )
+
+    coupling = report.get("max_mean_scale_coupling")
+    try:
+        coupling = float(coupling)
+    except (TypeError, ValueError):
+        coupling = np.nan
+    if np.isfinite(coupling) and coupling >= 0.99:
+        reasons.append(f"random mean/log-SD coupling={coupling:.3f}")
+
+    condition = report.get("random_hessian_condition")
+    try:
+        condition = float(condition)
+    except (TypeError, ValueError):
+        condition = np.nan
+    if np.isfinite(condition) and condition >= 1e14:
+        reasons.append(f"random Hessian condition={condition:.1e}")
+
+    if not bool(report.get("stationary", False)):
+        reasons.append("random-parameter gradient is not stationary")
+
+    return (not reasons), "; ".join(reasons)
+
+
 class CountModel:
 
     def __init__(self, spec, data):
@@ -4271,6 +4394,7 @@ class CountModel:
         self.last_de_report = None
         self.last_rp_diagnostics = None
         self.last_multistart_report = None
+        self.last_optimization_trace = None
 
     def objective(self, params):
         return _call_loglik(params, self.data, self.spec)
@@ -4430,6 +4554,9 @@ class CountModel:
         de_rel_span=1.5,
         de_abs_span=1.0,
         de_seed=0,
+        lbfgs_maxiter=2000,
+        lbfgs_tol=1e-6,
+        lbfgs_history_size=20,
     ):
 
         n_params = self.param_index["total_params"]
@@ -4525,13 +4652,30 @@ class CountModel:
             solver = jaxopt.ScipyMinimize(
                 fun=self.objective, method="SLSQP", maxiter=3000, tol=1e-8
             )
+            # SLSQP does not expose the L-BFGS state loop; keep convergence
+            # diagnostics but leave the iteration trace unavailable.
+            result = run_with_oom_recovery(
+                solver.run, init, label="CountModel.fit"
+            )
+            self.last_optimization_trace = None
         else:
-            solver = LBFGS(fun=self.objective)
-        # OOM-aware: on a GPU out-of-memory the call is retried after cache
-        # clears and finally falls back to the CPU device instead of crashing.
-        result = run_with_oom_recovery(
-            solver.run, init, label="CountModel.fit"
-        )
+            # The previous default (500 iterations, tol=1e-3) could stop
+            # while the GSE random-parameter block was still moving and leave
+            # every random SD at the variance floor.  Use the longer settings
+            # already documented in this module: 2,000 iterations, tighter
+            # gradient tolerance, and a 20-step L-BFGS history.
+            solver = LBFGS(
+                fun=self.objective,
+                maxiter=int(lbfgs_maxiter),
+                tol=float(lbfgs_tol),
+                history_size=int(lbfgs_history_size),
+            )
+            # OOM-aware: on a GPU out-of-memory the call is retried after
+            # cache clears and finally falls back to CPU.  The trace is the
+            # actual objective sequence from the successful L-BFGS run.
+            result, self.last_optimization_trace = run_lbfgs_with_trace(
+                solver, init, label="CountModel.fit"
+            )
 
         try:
             self.last_de_report["final_obj"] = float(self.objective(result.params))

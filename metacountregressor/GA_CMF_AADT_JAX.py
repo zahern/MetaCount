@@ -1000,7 +1000,15 @@ def compute_se(result, y_jax, AADT_jax, baseline_jax, locals_jax,
         # uniform ridge penalty that collapses to 1/Î» when the Hessian is
         # near-singular (producing identical SEs for all parameters).
         try:
-            from regularization import apply_parte_to_fixed_effects
+            # Package-qualified first: the flat import only resolved when the
+            # package directory itself was on sys.path, so PARTE silently
+            # never ran otherwise.
+            try:
+                from metacountregressor.regularization import (
+                    apply_parte_to_fixed_effects,
+                )
+            except ImportError:
+                from regularization import apply_parte_to_fixed_effects
             pr = apply_parte_to_fixed_effects(
                 np.asarray(p_star, dtype=float), H, variant="k3d3"
             )
