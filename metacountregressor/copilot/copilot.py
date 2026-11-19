@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from .advisor import Advisor, RuleBasedAdvisor
+from .derived import evaluate_expression, is_log_offset
 from .profile import load_and_profile, load_data, profile_dataframe
 from .schema import (
     ConstraintTier,
@@ -163,7 +164,39 @@ class ExperimentCopilot:
         self.spec.id_col = self._optional_name(value, "id_col")
 
     def _handle_offset_col(self, value, raw: str) -> None:
-        self.spec.offset_col = self._optional_name(value, "offset_col")
+        text = str(value).strip()
+        if text.lower() in {"none", "no", "n/a", "na", "skip", ""}:
+            self.spec.offset_col = None
+            self.spec.offset_expr = None
+            return
+        if text in self.profile.names:
+            # An existing column is taken as the already-transformed offset.
+            self.spec.offset_col = text
+            self.spec.offset_expr = None
+            return
+
+        # Otherwise treat it as an exposure/offset expression.
+        df = load_data(self.profile.path)
+        values = evaluate_expression(text, df)
+        expr = text
+        if not is_log_offset(expr):
+            if np.all(values > 0):
+                expr = f"log({text})"
+                print(
+                    f"  treating {text!r} as exposure; using offset "
+                    f"log({text})",
+                    flush=True,
+                )
+            else:
+                raise ValueError(
+                    "expression is not logged and has non-positive values; "
+                    "write an explicit log expression, e.g. "
+                    "log(LENGTH*AADT*365/1e8)"
+                )
+        # Re-evaluate the final expression to validate it.
+        evaluate_expression(expr, df)
+        self.spec.offset_expr = expr
+        self.spec.offset_col = "__mcr_offset__"
 
     def _handle_group_id_col(self, value, raw: str) -> None:
         self.spec.group_id_col = self._optional_name(value, "group_id_col")
@@ -280,7 +313,19 @@ class ExperimentCopilot:
         proposals = self._validate_variable_proposals(proposals)
         text = str(raw).strip().lower()
         if text not in {"accept", "ok", "yes", "default", "looks good"}:
-            if "include" in text or "add " in text:
+            if text.startswith(("exclude", "drop", "remove")):
+                drop = set(_mentioned_names(text, self.profile.names))
+                if not drop:
+                    raise ValueError(
+                        "no known variable names found; use "
+                        "'exclude NAME1, NAME2' or 'include NAME3'"
+                    )
+                for v in proposals:
+                    if v.name in drop:
+                        v.include = False
+                        v.role_hint = "exclude"
+                        v.reason = "excluded by user"
+            elif "include" in text or "add " in text:
                 add = _mentioned_names(text, self.profile.names)
                 for v in proposals:
                     if v.name in add:
@@ -371,6 +416,11 @@ class ExperimentCopilot:
         if algo not in {"sa", "ga", "hs", "de", "delphos_rl"}:
             raise ValueError("algo must be sa, ga, hs, de or delphos_rl")
         self.spec.algo = algo
+        if algo == "delphos_rl" and self.spec.max_iter > 50:
+            # Each RL episode is one full model fit.  A cold-start run of
+            # several hundred episodes is a research experiment, not a
+            # scoping run.
+            self.spec.max_iter = 10
 
     def _handle_max_latent_classes(self, value, raw: str) -> None:
         k = int(value)
@@ -393,6 +443,32 @@ class ExperimentCopilot:
     # ------------------------------------------------------------------
     # Questions
     # ------------------------------------------------------------------
+    def _variable_table(self, proposals: List[VariableDecision]) -> List[str]:
+        lines = [
+            "#   variable         kind      miss  uniq  proposal   reason"
+        ]
+        for i, v in enumerate(proposals, start=1):
+            col = self.profile.column(v.name)
+            if col is None:
+                kind = "?"
+                miss = 0
+                uniq = 0
+            else:
+                kind = (
+                    "binary"
+                    if col.is_binary
+                    else ("count" if col.is_integer else "numeric")
+                )
+                miss = col.n_missing
+                uniq = col.n_unique
+            status = "INCLUDE" if v.include else "exclude"
+            reason = (v.reason or "").replace("\n", " ")[:48]
+            lines.append(
+                f"{i:2d}  {v.name:<16} {kind:<9} {miss:>4} {uniq:>5}  "
+                f"{status:<8} {v.role_hint:<10} {reason}"
+            )
+        return lines
+
     def _question_for_stage(self) -> Turn:
         if self.stage == "family":
             return self._turn(
@@ -416,11 +492,25 @@ class ExperimentCopilot:
             )
         if self.stage == "offset_col":
             return self._turn(
-                "Which column is the exposure offset (already logged)?",
+                "How should the exposure offset be defined?",
                 "offset_col",
                 options=self.profile.offset_candidates,
-                examples=["OFFSET", "none"],
-                hint="Use 'none' if the model has no exposure offset.",
+                examples=[
+                    "OFFSET",
+                    "log(LENGTH*AADT*365/1e8)",
+                    "LENGTH*AADT*365/1e8",
+                    "none",
+                ],
+                details=[
+                    "A column name is used as-is (it must already be log scale).",
+                    "An expression is evaluated row-wise.",
+                    "A positive, non-logged expression (exposure) is automatically wrapped in log(...) .",
+                    "Allowed: + - * / ** and log, log1p, log10, sqrt, exp, abs, minimum, maximum, clip.",
+                ],
+                hint=(
+                    "Example: LENGTH*AADT*365/1e8 becomes "
+                    "log(LENGTH*AADT*365/1e8). Use 'none' for no offset."
+                ),
             )
         if self.stage == "group_id_col":
             return self._turn(
@@ -445,10 +535,15 @@ class ExperimentCopilot:
             included = [v.name for v in self.spec.variables if v.include]
             default = self.spec.cmf.get("baseline_vars", included[:3])
             return self._turn(
-                "Which variables enter the baseline CMF block (independent of AADT)?",
+                "Which variables enter the upper (baseline) CMF block?",
                 "baseline_vars",
                 options=included,
                 examples=[", ".join(default)],
+                hint=(
+                    "Upper-level effects are independent of AADT. A variable "
+                    "may appear in both blocks; the local block uses a "
+                    "separate log(AADT) interaction."
+                ),
             )
         if self.stage == "local_vars":
             included = [v.name for v in self.spec.variables if v.include]
@@ -456,10 +551,15 @@ class ExperimentCopilot:
             candidates = [n for n in included if n != aadt]
             default = self.spec.cmf.get("local_vars", candidates[:2])
             return self._turn(
-                "Which variables enter the local block (their effect is multiplied by log AADT)?",
+                "Which variables enter the lower (local) CMF block?",
                 "local_vars",
                 options=candidates,
                 examples=[", ".join(default)],
+                hint=(
+                    "Lower-level effects are multiplied by log(AADT). A "
+                    "variable can be in both blocks; use NAME@logAADT when "
+                    "scoping random parameters for this block."
+                ),
             )
         if self.stage == "variables":
             proposals = self.advisor.suggest_variables(
@@ -468,14 +568,21 @@ class ExperimentCopilot:
             self._pending_variables = proposals
             included = [v.name for v in proposals if v.include]
             excluded = [v.name for v in proposals if not v.include]
+            examples = ["accept"]
+            if included:
+                examples.append(f"exclude {included[-1]}")
+            if excluded:
+                examples.append(f"include {excluded[0]}")
             return self._turn(
-                "I propose this variable catalogue. Accept it, or list columns to exclude.",
+                "Review the variable catalogue.",
                 "variables",
                 options=included,
-                examples=["accept", ", ".join(excluded[:5])] if excluded else ["accept"],
+                examples=examples,
+                details=self._variable_table(proposals),
                 hint=(
                     f"{len(included)} included / {len(excluded)} excluded. "
-                    "Roles and allowed distributions are set in the next step."
+                    "Type 'accept', 'exclude NAME1, NAME2', or "
+                    "'include NAME3'. Roles and distributions come next."
                 ),
             )
         if self.stage == "random_params":
@@ -555,10 +662,21 @@ class ExperimentCopilot:
                 hint="1 disables latent classes; 2-3 are typical.",
             )
         if self.stage == "max_iter":
+            if self.spec.algo == "delphos_rl":
+                return self._turn(
+                    "How many Delphos RL episodes? (one full model fit each)",
+                    "max_iter",
+                    examples=[str(self.spec.max_iter), "5", "10"],
+                    hint=(
+                        "Use 5-10 for scoping; 100+ is a long research run. "
+                        "Each episode estimates one complete specification."
+                    ),
+                )
             return self._turn(
                 "Search budget (iterations / generations)?",
                 "max_iter",
                 examples=[str(self.spec.max_iter)],
+                hint="For SA this is the number of proposals, not unique fits.",
             )
         if self.stage == "R":
             return self._turn(

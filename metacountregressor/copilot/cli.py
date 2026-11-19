@@ -96,7 +96,11 @@ def _print_turn(turn: Optional[Turn]) -> None:
     if turn.options:
         print(f"  options : {', '.join(map(str, turn.options[:20]))}")
     if turn.examples:
-        print(f"  examples: {' | '.join(map(str, turn.examples[:5]))}")
+        print(f"  examples: {' | '.join(map(str, turn.examples[:6]))}")
+    if turn.details:
+        print("  details :")
+        for line in turn.details:
+            print(f"    - {line}")
     if turn.hint:
         print(f"  note    : {turn.hint}")
 
@@ -108,7 +112,7 @@ def _spec_summary(cp: ExperimentCopilot) -> str:
     included = spec.included_variables
     return (
         f"family={spec.family} response={spec.response} "
-        f"id={spec.id_col} offset={spec.offset_col} "
+        f"id={spec.id_col} offset={spec.offset_expr or spec.offset_col} "
         f"group={spec.group_id_col} variables={len(included)} "
         f"algo={spec.algo} max_iter={spec.max_iter} R={spec.R}"
     )

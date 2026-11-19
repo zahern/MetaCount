@@ -173,7 +173,8 @@ class DelphosSearch:
                     f"reward={ep_reward:+.3f} bic={rec.bic:.2f} "
                     f"best={best_bic:.2f} eps={eps:.2f} len={ep_length} "
                     f"loss={loss if loss is None else round(loss, 4)} "
-                    f"t={rec.elapsed:.1f}s"
+                    f"t={rec.elapsed:.1f}s",
+                    flush=True,
                 )
 
         return self.history

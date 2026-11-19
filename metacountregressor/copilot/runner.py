@@ -1,4 +1,4 @@
-"""Deterministic execution layer: validate a spec, build and run the search."""
+﻿"""Deterministic execution layer: validate a spec, build and run the search."""
 
 from __future__ import annotations
 
@@ -142,6 +142,12 @@ def build_experiment(spec: ExperimentSpec):
             f"{spec.family!r} needs its family_search adapter"
         )
     df = load_data(spec.data_path)
+    offset_col = spec.offset_col
+    if spec.offset_expr:
+        from .derived import evaluate_expression
+
+        df["__mcr_offset__"] = evaluate_expression(spec.offset_expr, df)
+        offset_col = "__mcr_offset__"
     _validate_variables(spec, df)
     constraints = build_constraints(spec)
     variables = [v.name for v in spec.variables if v.include]
@@ -173,7 +179,7 @@ def build_experiment(spec: ExperimentSpec):
         )
         builder, evaluator, meta = cmf.build_jax_count_evaluator(
             id_col=spec.id_col or "ID",
-            offset_col=spec.offset_col,
+            offset_col=offset_col,
             constraints=constraints,
             max_latent_classes=spec.max_latent_classes,
             R=spec.R,
@@ -184,7 +190,7 @@ def build_experiment(spec: ExperimentSpec):
         df=df,
         id_col=spec.id_col,
         y_col=spec.response,
-        offset_col=spec.offset_col,
+        offset_col=offset_col,
         group_id_col=spec.group_id_col,
     )
     evaluator = builder.build_count_evaluator(
@@ -308,10 +314,23 @@ def _run_delphos(spec: ExperimentSpec, *, verbose: bool = False) -> Dict[str, An
         start_mode="mixed",
         seed=spec.seed,
     )
+    n_episodes = max(1, int(spec.max_iter))
+    if n_episodes > 50:
+        print(
+            f"  [RL] {n_episodes} episodes requested. Each episode is one "
+            "full model fit; use 5-10 for scoping and 100+ only for a real run.",
+            flush=True,
+        )
+    print(
+        f"  [RL] starting {n_episodes} episodes "
+        f"(R={spec.R}, one model fit per episode)...",
+        flush=True,
+    )
     cfg = SearchConfig(
-        n_episodes=max(1, int(spec.max_iter)),
+        n_episodes=n_episodes,
         seed=spec.seed,
         verbose=verbose,
+        log_every=1 if n_episodes <= 50 else 5,
         agent=AgentConfig(),
     )
     t0 = time.time()
@@ -505,3 +524,4 @@ def _apply_issues(spec: ExperimentSpec, issues: List[Dict[str, Any]]) -> Experim
                     )
                 )
     return new
+

@@ -102,6 +102,7 @@ class ExperimentSpec:
     response: str = ""
     id_col: Optional[str] = None
     offset_col: Optional[str] = None
+    offset_expr: Optional[str] = None
     group_id_col: Optional[str] = None
     family: str = "count"  # count | cmf | duration | linear | multivariate | survival
     variables: List[VariableDecision] = field(default_factory=list)
@@ -131,6 +132,7 @@ class Turn:
     field: str
     options: List[str] = field(default_factory=list)
     examples: List[str] = field(default_factory=list)
+    details: List[str] = field(default_factory=list)
     done: bool = False
     hint: str = ""
 
@@ -188,6 +190,7 @@ def spec_from_dict(data: Dict[str, Any]) -> ExperimentSpec:
         response=str(data.get("response", "")),
         id_col=data.get("id_col"),
         offset_col=data.get("offset_col"),
+        offset_expr=data.get("offset_expr"),
         group_id_col=data.get("group_id_col"),
         family=str(data.get("family", "count")),
         variables=variables,
