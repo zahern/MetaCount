@@ -225,6 +225,17 @@ def run_search(
             f"LLM-orchestrated {spec.family} search; objective={spec.objective}"
         ),
     )
+    # Start the metaheuristic from the same full linear-additive model the
+    # RL agent starts from.  Without this warm start a short SA run can
+    # return a much worse random configuration even though a sensible
+    # incumbent exists.
+    seed_decision = _default_decision(evaluator)
+    extra = {}
+    if spec.algo in {"sa", "hc"}:
+        extra = {"n_starts": 1, "init_solutions": [seed_decision]}
+    elif spec.algo == "ga":
+        extra = {"n_starts": 1, "init_solutions": [seed_decision]}
+
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         result = builder.run(
@@ -234,7 +245,7 @@ def run_search(
             seed=int(spec.seed),
             refit=refit,
             output_config=output_config,
-            **({"n_starts": 1} if spec.algo in {"sa", "hc", "ga"} else {}),
+            **extra,
         )
     best_solution = np.asarray(result.get("best_solution", []), dtype=float)
     best_spec = (
@@ -254,6 +265,20 @@ def run_search(
         "search_result": result,
         "log_tail": buf.getvalue().splitlines()[-20:],
     }
+
+
+def _default_decision(evaluator) -> np.ndarray:
+    """Decision vector for the full linear-additive NB starting model."""
+    d = len(evaluator.vars)
+    roles = np.zeros(d, dtype=float)
+    for i, var in enumerate(evaluator.vars):
+        allowed = evaluator.allowed_roles.get(var, [0])
+        roles[i] = 1.0 if 1 in allowed else (allowed[0] if allowed else 0)
+    parts = [roles, np.zeros(d, dtype=float), np.ones(1, dtype=float)]
+    if getattr(evaluator, "max_latent_classes", 1) > 1:
+        parts.append(np.zeros(1, dtype=float))  # one class
+        parts.append(np.zeros(d, dtype=float))  # class masks
+    return np.concatenate(parts)
 
 
 def _run_delphos(spec: ExperimentSpec, *, verbose: bool = False) -> Dict[str, Any]:
