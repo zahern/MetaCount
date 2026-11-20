@@ -514,6 +514,7 @@ class ExperimentCopilot:
                 options=self.profile.offset_candidates,
                 examples=[
                     "OFFSET",
+                    *(["log(EXPOSE)"] if "EXPOSE" in self.profile.names else []),
                     "log(LENGTH*AADT*365/1e8)",
                     "LENGTH*AADT*365/1e8",
                     "none",
